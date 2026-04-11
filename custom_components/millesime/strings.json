@@ -1,0 +1,17 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Millésime — Cave à Vin",
+        "description": "Configurez votre cave à vin Millésime dans Home Assistant.",
+        "data": {
+          "cellar_name": "Nom de la cave"
+        }
+      }
+    },
+    "error": {},
+    "abort": {
+      "already_configured": "Millésime est déjà configuré."
+    }
+  }
+}

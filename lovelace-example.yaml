@@ -1,0 +1,34 @@
+title: Millésime
+views:
+  - title: Ma Cave
+    path: millesime
+    icon: mdi:bottle-wine
+    cards:
+      # Carte principale Millésime — visualisation animée
+      - type: custom:millesime-card
+
+      # Statistiques rapides
+      - type: entities
+        title: Statistiques Millésime
+        icon: mdi:chart-bar
+        entities:
+          - entity: sensor.millesime_total_bouteilles
+            name: Total bouteilles
+            icon: mdi:bottle-wine
+          - entity: sensor.millesime_etages
+            name: Nombre d'étages
+            icon: mdi:layers
+          - entity: sensor.millesime_valeur_totale
+            name: Valeur estimée
+            icon: mdi:currency-eur
+
+      # Vue glance résumé
+      - type: glance
+        title: Résumé Cave
+        entities:
+          - entity: sensor.millesime_total_bouteilles
+            name: Bouteilles
+          - entity: sensor.millesime_etages
+            name: Étages
+          - entity: sensor.millesime_valeur_totale
+            name: Valeur (€)
