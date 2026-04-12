@@ -1,54 +1,59 @@
 # 🍷 Millésime — Cave à Vin pour Home Assistant
 
-Visualisation animée et gestion complète de votre cave à vin dans Home Assistant.
+> Gérez et visualisez votre cave à vin directement dans Home Assistant.  
+> Design inspiré de Vinotag — cercles colorés sur clayette bois, thème noir élégant.  
+> Auto-complétion des informations via l'API Vivino.
 
-## Fonctionnalités
-
-- **Visualisation animée** — affichage graphique de votre cave avec tous ses étages
-- **Multi-étages** — créez autant d'étages que vous voulez, nommez-les librement
-- **Deux dispositions** — côte à côte ou tête-bêche par étage
-- **Gestion complète** — ajout, modification, suppression de bouteilles via l'interface
-- **Fiche bouteille** — prix, millésime, arômes, accords mets-vins, fenêtre de dégustation, note /100
-- **Filtres par type** — rouge, blanc, rosé, effervescent, liquoreux
-- **Capteurs HA** — total bouteilles, valeur estimée, nombre d'étages
+![Version](https://img.shields.io/badge/version-3.0.1-C0392B?style=flat-square)
+![HA](https://img.shields.io/badge/Home%20Assistant-2024%2B-41BDF5?style=flat-square)
+![Licence](https://img.shields.io/badge/licence-MIT-green?style=flat-square)
 
 ---
 
-## Installation
+## ✨ Fonctionnalités
 
-### Méthode manuelle
+- 🍾 **Visualisation animée** — cercles colorés par type sur clayette bois
+- 🏗️ **Multi-étages** — créez autant d'étages que vous voulez
+- ↕️ **Deux dispositions** — côte à côte ou tête-bêche par étage
+- 🔍 **Auto-complétion Vivino** — tapez 3 lettres, tout se remplit automatiquement (nom, millésime, appellation, région, note, photo)
+- 📋 **Fiche bouteille complète** — prix, millésime, région, fenêtre de dégustation, note Vivino, lien Vivino
+- 🎨 **Filtres par type** — rouge, blanc, rosé, effervescent, liquoreux
+- 📊 **3 capteurs HA** — total bouteilles, valeur estimée, nombre d'étages
+- 📱 **Mobile friendly** — modal bottom-sheet, compatible iPhone et Android
 
-1. Copiez `custom_components/millesime/` dans votre dossier `config/custom_components/`
-2. Copiez `www/millesime/millesime-card.js` dans `config/www/millesime/`
-3. Redémarrez Home Assistant
+---
 
-### Enregistrement de la ressource Lovelace
+## 🚀 Installation
 
-Dans **Paramètres → Tableaux de bord → Ressources**, ajoutez :
+### Étape 1 — Copier les fichiers dans Home Assistant
+
+Via **File Editor** (addon HA) :
+
+| Source (ce repo) | Destination dans HA |
+|---|---|
+| `custom_components/millesime/` | `/homeassistant/custom_components/millesime/` |
+| `www/millesime/millesime-card.js` | `/homeassistant/www/millesime/millesime-card.js` |
+
+### Étape 2 — Enregistrer la ressource Lovelace
+
+**Paramètres → Tableaux de bord → Ressources → +**
 
 ```
 URL  : /local/millesime/millesime-card.js
 Type : Module JavaScript
 ```
 
-Ou dans `configuration.yaml` :
+### Étape 3 — Redémarrer Home Assistant
 
-```yaml
-lovelace:
-  resources:
-    - url: /local/millesime/millesime-card.js
-      type: module
-```
+**Paramètres → Système → Redémarrer**
 
----
+### Étape 4 — Ajouter l'intégration
 
-## Configuration
+**Paramètres → Appareils & Services → + Ajouter une intégration → Millésime**
 
-### 1. Ajouter l'intégration
+### Étape 5 — Ajouter la carte dans un tableau de bord
 
-**Paramètres → Appareils & Services → + Ajouter → Millésime**
-
-### 2. Ajouter la carte Lovelace
+Éditez un tableau de bord → **+ Ajouter une carte** → **Manuel** :
 
 ```yaml
 type: custom:millesime-card
@@ -56,101 +61,89 @@ type: custom:millesime-card
 
 ---
 
-## Services disponibles
+## 🖥️ Utilisation
 
-### `millesime.add_floor`
-```yaml
-service: millesime.add_floor
-data:
-  name: "Bordeaux"
-  columns: 6
-  rows: 2
-  layout: side_by_side   # ou alternating (tête-bêche)
-```
+### Créer un étage
+Cliquez sur **+ Étage** → donnez un nom, choisissez le nombre de colonnes/rangées et la disposition.
 
-### `millesime.add_bottle`
-```yaml
-service: millesime.add_bottle
-data:
-  floor_id: "abc12345"
-  slot: 0
-  name: "Château Pétrus"
-  vintage: "2015"
-  type: red
-  appellation: "Pomerol"
-  producer: "Château Pétrus"
-  price: 3500
-  quantity: 1
-  drink_from: "2025"
-  drink_until: "2050"
-  aromas: ["Fruits noirs", "Truffe", "Chocolat"]
-  pairings: ["Filet de bœuf", "Agneau"]
-  rating: 98
-  notes: "Exceptionnel, à garder précieusement."
-```
+### Ajouter une bouteille
+- Cliquez sur **+ Vin** ou directement sur un emplacement vide
+- Tapez le nom du vin dans le champ de recherche → Vivino remplit tout automatiquement
+- Ajustez si besoin, choisissez l'étage et l'emplacement, validez
 
-### `millesime.update_bottle`
-```yaml
-service: millesime.update_bottle
-data:
-  bottle_id: "xyz67890"
-  notes: "Ouvert le 15/12/2024, parfait avec l'agneau."
-  rating: 99
-```
-
-### `millesime.remove_bottle`
-```yaml
-service: millesime.remove_bottle
-data:
-  bottle_id: "xyz67890"
-```
-
-### `millesime.remove_floor`
-```yaml
-service: millesime.remove_floor
-data:
-  floor_id: "abc12345"
-```
+### Consulter une bouteille
+- **1er clic** sur un cercle → sélection (contour doré)
+- **2e clic** → fiche complète avec tous les détails
 
 ---
 
-## Capteurs
-
-| Capteur | Description |
-|---|---|
-| `sensor.millesime_total_bouteilles` | Nombre total de bouteilles |
-| `sensor.millesime_etages` | Nombre d'étages |
-| `sensor.millesime_valeur_totale` | Valeur totale estimée (€) |
-
----
-
-## Structure des fichiers
+## 📁 Structure du projet
 
 ```
 ha-millesime/
 ├── custom_components/
 │   └── millesime/
-│       ├── __init__.py
-│       ├── config_flow.py
-│       ├── sensor.py
+│       ├── __init__.py          ← Backend : WebSocket + services + stockage JSON
+│       ├── config_flow.py       ← Configuration via UI HA
+│       ├── sensor.py            ← 3 capteurs (bouteilles, valeur, étages)
 │       ├── manifest.json
-│       ├── services.yaml
 │       ├── strings.json
 │       └── translations/
 │           └── fr.json
 ├── www/
 │   └── millesime/
-│       └── millesime-card.js
-├── lovelace-example.yaml
+│       └── millesime-card.js    ← Carte Lovelace custom
 ├── hacs.json
 └── README.md
 ```
 
+Les données sont stockées dans `/homeassistant/millesime_data.json`.
+
 ---
 
-## Licence
+## 📡 Capteurs disponibles
 
-MIT
+| Entité | Description | Unité |
+|---|---|---|
+| `sensor.millesime_bouteilles` | Nombre total de bouteilles | bouteilles |
+| `sensor.millesime_valeur` | Valeur estimée de la cave | € |
+| `sensor.millesime_etages` | Nombre d'étages | étages |
+
+---
+
+## 🔧 Architecture technique
+
+La carte Lovelace communique avec le backend Python via une **commande WebSocket HA native** (`millesime/get_data`), en utilisant la connexion déjà authentifiée de Home Assistant. Cela évite tout problème de token HTTP ou d'authentification.
+
+Les données sont persistées dans un fichier **JSON local** (`millesime_data.json`) dans le répertoire de configuration HA.
+
+---
+
+## 📋 Changelog
+
+### v3.0.1 *(actuelle)*
+- ✅ Correction import `websocket_api` compatible HA 2024+
+- ✅ Lecture données via commande WebSocket native (zéro problème d'auth)
+- ✅ Design épuré : fond noir `#080808`, rouge rubis `#C0392B`, clayette bois
+- ✅ Verre de vin rouge SVG animé dans le header
+- ✅ Modal bottom-sheet stable (indépendant du re-render HA)
+- ✅ Auto-complétion Vivino via proxy allorigins
+
+### v3.0.0
+- Réécriture complète — stockage fichier JSON
+- Nouveau design inspiré Vinotag
+
+### v2.x
+- Tentatives diverses — instable
+
+### v1.x
+- Version initiale
+
+---
+
+## 📄 Licence
+
+MIT — libre d'utilisation, modification et distribution.
 
 ---
 
