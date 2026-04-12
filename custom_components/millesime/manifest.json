@@ -1,11 +1,11 @@
 {
   "domain": "millesime",
   "name": "Millésime",
-  "version": "2.0.0",
+  "version": "3.0.1",
   "documentation": "https://github.com/yourusername/ha-millesime",
-  "description": "Cave à vin — visualisation et gestion avec auto-complétion Vivino",
+  "description": "Cave à vin — visualisation Vinotag + auto-complétion Vivino",
   "requirements": [],
-  "dependencies": [],
+  "dependencies": ["websocket_api"],
   "codeowners": ["@yourusername"],
   "iot_class": "local_push",
   "config_flow": true
