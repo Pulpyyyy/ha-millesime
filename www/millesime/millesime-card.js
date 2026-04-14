@@ -449,7 +449,7 @@ class MillesimeCard extends HTMLElement {
         // On ne l'affiche que si la recherche a produit des résultats
         if (wines.length > 0) {
           banner.innerHTML = `<div class="mm-search-banner mm-search-banner--info">
-            ℹ️ Résultats Open Food Facts — configurez Gemini pour plus de détails.
+            ℹ️ Résultats Open Food Facts — ajoutez une clé Gemini pour les notes de dégustation.
           </div>`;
         }
       }
