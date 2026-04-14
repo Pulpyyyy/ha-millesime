@@ -2,16 +2,38 @@
   "config": {
     "step": {
       "user": {
-        "title": "Millésime — Cave à Vin",
-        "description": "Configurez votre cave à vin Millésime dans Home Assistant.",
+        "title": "Millésime",
+        "description": "Configurez votre cave à vin. La clé Gemini est optionnelle mais recommandée pour une recherche riche (notes de dégustation, accords mets-vins).",
         "data": {
-          "cellar_name": "Nom de la cave"
+          "cellar_name": "Nom de la cave",
+          "gemini_api_key": "Clé API Gemini (optionnelle)"
+        },
+        "data_description": {
+          "gemini_api_key": "Obtenez votre clé gratuite sur https://aistudio.google.com/app/apikey"
         }
       }
     },
-    "error": {},
+    "error": {
+      "invalid_key": "Format de clé invalide (doit commencer par 'AI')"
+    },
     "abort": {
       "already_configured": "Millésime est déjà configuré."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options Millésime",
+        "data": {
+          "gemini_api_key": "Clé API Gemini (optionnelle)"
+        },
+        "data_description": {
+          "gemini_api_key": "Modifiez ou supprimez votre clé Gemini. Laissez vide pour utiliser Open Food Facts."
+        }
+      }
+    },
+    "error": {
+      "invalid_key": "Format de clé invalide (doit commencer par 'AI')"
     }
   }
 }
