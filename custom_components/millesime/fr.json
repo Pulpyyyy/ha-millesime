@@ -1,0 +1,40 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "🍷 Millésime — Cave à Vin",
+        "description": "Bienvenue ! Configurez votre cave à vin.",
+        "data": {
+          "cellar_name": "Nom de la cave",
+          "gemini_api_key": "Clé API Gemini (optionnelle)"
+        },
+        "data_description": {
+          "gemini_api_key": "🔗 Obtenez votre clé GRATUITE ici :\nhttps://aistudio.google.com/app/apikey\n\n1. Connectez-vous avec votre compte Google\n2. Cliquez « Create API Key »\n3. Copiez la clé et collez-la ci-dessus\n\n✅ 1 500 requêtes/jour gratuites (gemini-1.5-flash)\n✅ Chaque utilisateur utilise sa propre clé\n\nSans clé → Open Food Facts (150 000+ vins, gratuit)\nAvec clé → Notes de dégustation, accords mets-vins, scan d'étiquette 📷"
+        }
+      }
+    },
+    "error": {
+      "invalid_key": "❌ Format invalide — la clé Gemini doit commencer par 'AI'"
+    },
+    "abort": {
+      "already_configured": "Millésime est déjà configuré."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "🔑 Modifier la clé Gemini",
+        "description": "Mettez à jour votre clé Gemini API.",
+        "data": {
+          "gemini_api_key": "Clé API Gemini"
+        },
+        "data_description": {
+          "gemini_api_key": "🔗 Nouvelle clé : https://aistudio.google.com/app/apikey\nLaissez vide pour revenir à Open Food Facts (sans notes de dégustation)."
+        }
+      }
+    },
+    "error": {
+      "invalid_key": "❌ Format invalide — la clé Gemini doit commencer par 'AI'"
+    }
+  }
+}
