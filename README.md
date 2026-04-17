@@ -12,7 +12,9 @@
 </p>
 
 <p align="center">
-  [![Buy Me A Glass of Wine](https://img.shields.io/badge/🍷%20Buy%20Me%20a%20Glass%20of%20Wine-purple?style=for-the-badge)](https://www.paypal.com/donate/?business=MWJCVFGTNC4T4&no_recurring=1&currency_code=EUR)
+  <a href="https://www.paypal.com/donate/?business=MWJCVFGTNC4T4&amp;no_recurring=1&amp;currency_code=EUR">
+    <img src="https://img.shields.io/badge/🍷_Buy_Me_a_Glass_of_Wine-purple?style=for-the-badge" alt="Buy Me A Glass of Wine"/>
+  </a>
 </p>
 
 > Gérez et visualisez votre cave à vin dans Home Assistant.  
