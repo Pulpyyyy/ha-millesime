@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="280" height="54">
+  <rect width="280" height="54" rx="10" fill="#8B1A2A"/>
+  <text x="22" y="36" font-size="26" font-family="Arial">🍷</text>
+  <text x="62" y="35" font-family="Georgia, serif" font-size="20" font-weight="bold"
+        fill="white" letter-spacing="0.5">Buy me a glass of wine</text>
+</svg>
