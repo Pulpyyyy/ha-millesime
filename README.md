@@ -11,6 +11,10 @@
   <img src="https://img.shields.io/badge/licence-MIT-green?style=flat-square"/>
 </p>
 
+<p align="center">
+  [![Buy Me A Glass of Wine](https://img.shields.io/badge/🍷%20Buy%20Me%20a%20Glass%20of%20Wine-purple?style=for-the-badge)](https://www.paypal.com/donate/?business=MWJCVFGTNC4T4&no_recurring=1&currency_code=EUR)
+</p>
+
 > Gérez et visualisez votre cave à vin dans Home Assistant.  
 > Design inspiré Vinotag — cercles colorés sur clayettes bois.  
 > Recherche automatique via **Gemini 1.5 Flash** (notes de dégustation, accords) avec fallback **Open Food Facts**.
