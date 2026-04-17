@@ -1,0 +1,16 @@
+{
+  "domain": "millesime",
+  "name": "Millésime",
+  "version": "4.0.0",
+  "documentation": "https://github.com/yourusername/ha-millesime",
+  "description": "Cave à vin — visualisation Vinotag, recherche Gemini 1.5 Flash + Open Food Facts",
+  "requirements": [],
+  "dependencies": [
+    "websocket_api"
+  ],
+  "codeowners": [
+    "@yourusername"
+  ],
+  "iot_class": "local_push",
+  "config_flow": true
+}
