@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="https://www.paypal.com/donate/?business=MWJCVFGTNC4T4&amp;no_recurring=1&amp;currency_code=EUR">
-    <img src="https://img.shields.io/badge/🍷_Buy_Me_a_Glass_of_Wine-purple?style=for-the-badge" alt="Buy Me A Glass of Wine"/>
+    <img src="https://img.buymeacoffee.com/button-api/?text=Buy me a glass of wine&emoji=%F0%9F%8D%B7&slug=millesime&button_colour=8B1A2A&font_colour=ffffff&font_family=Cookie&outline_colour=ffffff&coffee_colour=ffffff" alt="Buy me a glass of wine"/>
   </a>
 </p>
 
