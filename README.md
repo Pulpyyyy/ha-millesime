@@ -12,8 +12,8 @@
 </p>
 
 <p align="center">
-  <a href="https://www.paypal.com/donate/?business=MWJCVFGTNC4T4&amp;no_recurring=1&amp;currency_code=EUR">
-    <img src="assets/donate.svg" alt="🍷 Buy me a glass of wine" height="54"/>
+  <a href="https://www.paypal.com/donate/?business=MWJCVFGTNC4T4&no_recurring=1&currency_code=EUR" target="_blank">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="54" width="217"/>
   </a>
 </p>
 
