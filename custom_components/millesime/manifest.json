@@ -1,9 +1,9 @@
 {
   "domain": "millesime",
   "name": "Millésime",
-  "version": "4.0.0",
+  "version": "5.0.0",
   "documentation": "https://github.com/yourusername/ha-millesime",
-  "description": "Cave à vin — visualisation Vinotag, recherche Gemini 1.5 Flash + Open Food Facts",
+  "description": "Cave à vin Home Assistant — Vinotag, Gemini AI, prix auto, historique de valeur",
   "requirements": [],
   "dependencies": [
     "websocket_api"
