@@ -2,14 +2,14 @@
   "domain": "millesime",
   "name": "Millésime",
   "version": "5.0.0",
-  "documentation": "https://github.com/yourusername/ha-millesime",
+  "documentation": "https://github.com/Redsklns/ha-millesime",
   "description": "Cave à vin Home Assistant — Vinotag, Gemini AI, prix auto, historique de valeur",
   "requirements": [],
   "dependencies": [
     "websocket_api"
   ],
   "codeowners": [
-    "@yourusername"
+    "@Redsklns"
   ],
   "iot_class": "local_push",
   "config_flow": true
