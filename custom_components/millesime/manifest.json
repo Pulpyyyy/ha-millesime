@@ -1,16 +1,16 @@
 {
   "domain": "millesime",
   "name": "Millésime",
-  "version": "5.0.0",
-  "documentation": "https://github.com/Redsklns/ha-millesime",
-  "issue_tracker": "https://github.com/Redsklns/ha-millesime/issues",
+  "after_dependencies": [
+    "websocket_api"
+  ],
   "codeowners": [
     "@Redsklns"
   ],
-  "iot_class": "local_push",
   "config_flow": true,
+  "documentation": "https://github.com/Redsklns/ha-millesime",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/Redsklns/ha-millesime/issues",
   "requirements": [],
-  "after_dependencies": [
-    "websocket_api"
-  ]
+  "version": "5.0.0"
 }
