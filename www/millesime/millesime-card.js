@@ -1,798 +1,1488 @@
-"""Millesime v5.0.1 - Cave a Vin pour Home Assistant.
+/**
+ * Millésime Card v5.0.0
+ * Cave à vin pour Home Assistant
+ * - Recherche texte avec suggestions temps réel
+ * - Lecture d'étiquette par photo (Gemini Vision)
+ * - Messages d'erreur pro : quota, clé invalide, indisponibilité
+ */
 
-Recherche texte : Gemini 2.0 Flash Lite (1000 req/jour gratuit par utilisateur)
-Lecture photo   : Gemini Vision (meme quota, meme cle)
-Fallback        : Open Food Facts (sans cle, illimite)
-"""
-from __future__ import annotations
+const DOMAIN = "millesime";
 
-import asyncio
-import base64
-import json
-import logging
-import os
-import re
-import time
-import unicodedata
-import uuid
-from datetime import datetime
+const WINE_TYPES = {
+  red:       { color: "#C0392B", glow: "rgba(192,57,43,0.6)",   label: "Rouge",        emoji: "🔴" },
+  white:     { color: "#D4AC0D", glow: "rgba(212,172,13,0.5)",  label: "Blanc",        emoji: "🟡" },
+  rose:      { color: "#E74C8B", glow: "rgba(231,76,139,0.5)",  label: "Rosé",         emoji: "🌸" },
+  sparkling: { color: "#27AE8F", glow: "rgba(39,174,143,0.5)",  label: "Effervescent", emoji: "✨" },
+  dessert:   { color: "#D68910", glow: "rgba(214,137,16,0.5)",  label: "Liquoreux",    emoji: "🍯" },
+};
 
-import voluptuous as vol
-from homeassistant.components import websocket_api
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+const EVENT_TYPES = [
+  { v: "",              l: "— Non défini —",   emoji: "" },
+  { v: "no_touch",      l: "Ne pas toucher",   emoji: "🚫" },
+  { v: "keep",          l: "À garder",         emoji: "📦" },
+  { v: "special",       l: "Grande occasion",  emoji: "🎉" },
+  { v: "small_occasion",l: "Petite Occasion",   emoji: "🥂" },
+  { v: "table",         l: "Vin de table",     emoji: "🍽️" },
+];
+const EVENT_LABEL = Object.fromEntries(EVENT_TYPES.map(e => [e.v, e]));
 
-_LOGGER = logging.getLogger(__name__)
+// Messages d'erreur affichés à l'utilisateur selon le code retourné par le backend
+const ERROR_MESSAGES = {
+  quota_exceeded:      "⚠️ Quota Gemini dépassé (1 500/jour). Les résultats viennent d'Open Food Facts — ajoutez votre clé demain ou vérifiez votre quota sur aistudio.google.com.",
+  invalid_key:         "🔑 Clé Gemini invalide ou expirée. Allez dans Paramètres → Appareils → Millésime → ⚙️ pour la mettre à jour.",
+  service_unavailable: "🔄 Gemini temporairement indisponible. Les résultats viennent d'Open Food Facts.",
+  parse_error:         "⚠️ Réponse Gemini inattendue. Réessayez ou remplissez manuellement.",
+  no_key:              "ℹ️ Résultats Open Food Facts. Configurez une clé Gemini pour obtenir notes de dégustation et accords mets-vins.",
+  no_wine_found:       "📷 Aucune étiquette de vin reconnue. Assurez-vous que l'étiquette est nette et bien éclairée.",
+};
 
-DOMAIN    = "millesime"
-PLATFORMS = ["sensor"]
-DATA_FILE = "millesime_data.json"
-VERSION   = "5.0.0"
+const GLASS_SVG = `<svg viewBox="0 0 40 56" xmlns="http://www.w3.org/2000/svg">
+  <path d="M8 2 Q8 20 20 30 Q32 20 32 2 Z" fill="#C0392B" opacity="0.92"/>
+  <path d="M11 6 Q11 19 20 28" fill="none" stroke="#E74C3C" stroke-width="1" opacity="0.35"/>
+  <path d="M14 22 Q17 27 20 29 Q23 27 26 22" fill="#922B21" opacity="0.5"/>
+  <rect x="18.5" y="30" width="3" height="17" rx="1.5" fill="#7B241C"/>
+  <ellipse cx="20" cy="48" rx="8" ry="2.2" fill="#6E2118"/>
+</svg>`;
 
-OFF_UA       = f"Millesime-HA/{VERSION} (github.com/yourusername/ha-millesime)"
-# Deux modèles séparés = deux pools de quota indépendants (free tier)
-# Texte  : gemini-2.5-flash-lite — 1 000 req/jour, léger, rapide
-# Photo  : gemini-2.5-flash      —   500 req/jour, meilleur en vision
-GEMINI_TEXT_MODEL  = "gemini-2.5-flash-lite"
-GEMINI_VISION_MODEL = "gemini-2.5-flash"
-GEMINI_BASE_URL    = "https://generativelanguage.googleapis.com/v1beta/models/"
-# Alias pour compatibilité
-GEMINI_MODEL = GEMINI_TEXT_MODEL
+// ── Classe principale ──────────────────────────────────────────────────────────
 
-# ── Cache ─────────────────────────────────────────────────────────────────────
-# Clé texte : évite de refrapper Gemini sur chaque frappe clavier
-# Clé photo : une image = une requête, pas de cache utile
-_SEARCH_CACHE: dict[str, tuple[float, list]] = {}
-_CACHE_TTL = 300  # 5 minutes
+class MillesimeCard extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._hass       = null;
+    this._data       = null;
+    this._filter     = "all";
+    this._filterEvent= "all";
+    this._selected   = null;  // id bouteille sélectionnée
+    this._modal      = null;
+    this._modalStyle = null;
+    this._unsubs     = [];
+  }
 
-# ── Codes d'erreur retournés au frontend ─────────────────────────────────────
-# Le frontend affiche un message adapté à chaque code.
-ERR_QUOTA_EXCEEDED = "quota_exceeded"   # HTTP 429
-ERR_INVALID_KEY    = "invalid_key"      # HTTP 400/401/403
-ERR_UNAVAILABLE    = "service_unavailable"  # HTTP 5xx / timeout
-ERR_PARSE_ERROR    = "parse_error"      # JSON invalide dans la réponse
+  setConfig(config) { this._config = config || {}; this._renderLoading(); }
 
-DEFAULT_DATA: dict = {
-    "cellar": {"name": "Millésime", "floors": []},
-    "bottles": [],
-}
+  set hass(hass) {
+    const first = !this._hass;
+    this._hass = hass;
+    if (first) { this._subscribeUpdates(); this._fetchData(); }
+  }
 
+  getCardSize() { return 8; }
 
-# ── Stockage JSON ─────────────────────────────────────────────────────────────
+  // ── WebSocket ────────────────────────────────────────────────────────────────
 
-def _path(hass: HomeAssistant) -> str:
-    return hass.config.path(DATA_FILE)
-
-
-def _load(hass: HomeAssistant) -> dict:
-    try:
-        p = _path(hass)
-        if os.path.exists(p):
-            with open(p, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception as exc:
-        _LOGGER.error("Millésime — erreur lecture : %s", exc)
-    return json.loads(json.dumps(DEFAULT_DATA))
-
-
-def _save(hass: HomeAssistant, data: dict) -> None:
-    try:
-        with open(_path(hass), "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception as exc:
-        _LOGGER.error("Millésime — erreur sauvegarde : %s", exc)
-
-
-def _uid() -> str:
-    return str(uuid.uuid4())[:8]
-
-
-def _normalize(text: str) -> str:
-    t = "".join(
-        c for c in unicodedata.normalize("NFD", text.lower())
-        if unicodedata.category(c) != "Mn"
-    )
-    t = re.sub(r"\b(19|20)\d{2}\b", "", t)
-    return re.sub(r"\s+", " ", t).strip()
-
-
-# ── Prompt Gemini (partagé texte + photo) ────────────────────────────────────
-
-_GEMINI_SYSTEM = """\
-Tu es un expert mondial en vins et sommelière.
-Retourne UNIQUEMENT un tableau JSON valide [], sans markdown ni backticks.
-Chaque objet doit avoir exactement ces champs (string, jamais null) :
-  name, vintage, type, appellation, region, country, producer,
-  tasting_notes, food_pairing, drink_from, drink_until, vivino_rating, price
-Règles :
-- type : "red" | "white" | "rose" | "sparkling" | "dessert" uniquement
-- vintage / drink_from / drink_until : "YYYY" ou ""
-- vivino_rating : décimal 0.0–5.0 (0 si inconnu)
-- price : prix moyen constaté en euros, UNIQUEMENT le nombre décimal (ex: 18.5). 0.0 si inconnu. Jamais de texte.
-- tasting_notes : 1–2 phrases en français (arômes, texture, finale)
-- food_pairing : 2–3 accords en français séparés par des virgules
-- Couvrir différents millésimes si possible
-- Priorité : vins français > européens > mondiaux\
-"""
-
-
-def _parse_gemini_response(raw: str, source: str) -> tuple[list[dict], str | None]:
-    """Parse la réponse JSON de Gemini.
-
-    Retourne (résultats, code_erreur_ou_None).
-    """
-    if not raw:
-        return [], ERR_PARSE_ERROR
-
-    # Nettoyer les backticks résiduels
-    raw = re.sub(r"^```(?:json)?\s*", "", raw.strip())
-    raw = re.sub(r"\s*```$", "", raw)
-
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        _LOGGER.warning("Gemini — JSON invalide (%s) : %.200s", source, raw)
-        return [], ERR_PARSE_ERROR
-
-    if not isinstance(parsed, list):
-        parsed = [parsed]
-
-    results = []
-    valid_types = {"red", "white", "rose", "sparkling", "dessert"}
-    for w in parsed:
-        if not isinstance(w, dict) or not str(w.get("name", "")).strip():
-            continue
-        results.append({
-            "name":          str(w.get("name", "")).strip(),
-            "vintage":       str(w.get("vintage", "") or ""),
-            "type":          w.get("type") if w.get("type") in valid_types else "red",
-            "appellation":   str(w.get("appellation", "") or ""),
-            "region":        str(w.get("region", "") or ""),
-            "country":       str(w.get("country", "") or ""),
-            "producer":      str(w.get("producer", "") or ""),
-            "tasting_notes": str(w.get("tasting_notes", "") or ""),
-            "food_pairing":  str(w.get("food_pairing", "") or ""),
-            "drink_from":    str(w.get("drink_from", "") or ""),
-            "drink_until":   str(w.get("drink_until", "") or ""),
-            "vivino_rating": round(float(w.get("vivino_rating") or 0), 1),
-            "price":         round(float(w.get("price") or 0), 2),
-            "image_url":     "",
-            "vivino_url":    "",
-        })
-    return results, None
-
-
-def _gemini_error_code(status: int) -> str:
-    """Convertit un code HTTP Gemini en code d'erreur Millésime."""
-    if status == 429:
-        return ERR_QUOTA_EXCEEDED
-    if status in (400, 401, 403):
-        return ERR_INVALID_KEY
-    return ERR_UNAVAILABLE
-
-
-# ── Recherche Gemini par texte ────────────────────────────────────────────────
-
-async def _gemini_search_text(
-    hass: HomeAssistant, query: str, api_key: str
-) -> tuple[list[dict], str | None]:
-    """Recherche Gemini via texte.
-
-    Retourne (résultats, code_erreur_ou_None).
-    """
-    session = async_get_clientsession(hass)
-    body = {
-        "system_instruction": {"parts": [{"text": _GEMINI_SYSTEM}]},
-        "contents": [{"parts": [{"text": (
-            f'Recherche de vin : "{query}"\n'
-            f"Retourne jusqu'à 6 vins correspondants."
-        )}]}],
-        "generationConfig": {
-            "temperature":      0.2,
-            "maxOutputTokens":  2048,
-            "responseMimeType": "application/json",
-        },
+  async _fetchData() {
+    if (!this._hass) return;
+    try {
+      this._data = await this._hass.connection.sendMessagePromise({ type: "millesime/get_data" });
+    } catch (err) {
+      console.error("[Millésime] fetchData:", err);
+      this._data = this._data || DEFAULT_DATA();
     }
-    try:
-        async with session.post(
-            f"{GEMINI_BASE_URL}{GEMINI_TEXT_MODEL}:generateContent",
-            params={"key": api_key},
-            json=body,
-            headers={"Content-Type": "application/json"},
-            timeout=15,
-        ) as resp:
-            if resp.status != 200:
-                code = _gemini_error_code(resp.status)
-                _LOGGER.warning("Gemini texte HTTP %s ('%s') → %s", resp.status, query, code)
-                return [], code
-            data = await resp.json(content_type=None)
+    if (!this._modal) this._render();
+  }
 
-        raw = (
-            data.get("candidates", [{}])[0]
-            .get("content", {})
-            .get("parts", [{}])[0]
-            .get("text", "")
-        )
-        results, err = _parse_gemini_response(raw, f"texte:'{query}'")
-        _LOGGER.info("Gemini texte: %d résultat(s) pour '%s'", len(results), query)
-        return results, err
+  _subscribeUpdates() {
+    this._hass.connection
+      .subscribeEvents(() => { if (!this._modal) this._fetchData(); }, `${DOMAIN}_updated`)
+      .then((u) => this._unsubs.push(u));
+  }
 
-    except asyncio.TimeoutError:
-        _LOGGER.warning("Gemini texte timeout pour '%s'", query)
-        return [], ERR_UNAVAILABLE
-    except Exception as exc:
-        _LOGGER.warning("Gemini texte erreur pour '%s': %s", query, exc)
-        return [], ERR_UNAVAILABLE
-
-
-# ── Lecture d'étiquette par photo ─────────────────────────────────────────────
-
-async def _gemini_analyze_photo(
-    hass: HomeAssistant, image_b64: str, mime_type: str, api_key: str
-) -> tuple[list[dict], str | None]:
-    """Analyse une photo d'étiquette via Gemini Vision.
-
-    image_b64 : image encodée en base64
-    mime_type : "image/jpeg" | "image/png" | "image/webp"
-    Retourne (résultats, code_erreur_ou_None).
-    """
-    session = async_get_clientsession(hass)
-
-    photo_prompt = (
-        "Analyse cette étiquette de bouteille de vin. "
-        "Identifie le vin et retourne UN objet JSON avec les informations du vin. "
-        "Si l'image n'est pas une étiquette de vin, retourne []."
-    )
-
-    body = {
-        "system_instruction": {"parts": [{"text": _GEMINI_SYSTEM}]},
-        "contents": [{
-            "parts": [
-                {"text": photo_prompt},
-                {"inline_data": {"mime_type": mime_type, "data": image_b64}},
-            ]
-        }],
-        "generationConfig": {
-            "temperature":      0.1,
-            "maxOutputTokens":  2048,
-            "responseMimeType": "application/json",
-        },
+  async _callService(service, data) {
+    try {
+      await this._hass.callService(DOMAIN, service, data);
+      this._closeModal();
+      setTimeout(() => this._fetchData(), 500);
+      return true;
+    } catch (err) {
+      this._showToast("error", `Erreur : ${err.message || JSON.stringify(err)}`);
+      return false;
     }
-    # Modèles à essayer en cascade : vision d'abord, lite en fallback
-    _PHOTO_MODELS = [GEMINI_VISION_MODEL, GEMINI_TEXT_MODEL]
-    data = None
-    last_code = ERR_UNAVAILABLE
+  }
 
-    for model in _PHOTO_MODELS:
-        for attempt in range(2):
-            try:
-                async with session.post(
-                    f"{GEMINI_BASE_URL}{model}:generateContent",
-                    params={"key": api_key},
-                    json=body,
-                    headers={"Content-Type": "application/json"},
-                    timeout=30,
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json(content_type=None)
-                        _LOGGER.info("Gemini photo: modele %s OK", model)
-                        break
-                    last_code = _gemini_error_code(resp.status)
-                    _LOGGER.warning(
-                        "Gemini photo %s HTTP %s -> %s (tentative %d/2)",
-                        model, resp.status, last_code, attempt + 1
-                    )
-                    if resp.status in (503, 429) and attempt == 0:
-                        await asyncio.sleep(3.0)
-                        continue
-                    # Erreur non-retryable ou 2e tentative → passer au modèle suivant
-                    break
-            except asyncio.TimeoutError:
-                _LOGGER.warning("Gemini photo timeout %s (tentative %d/2)", model, attempt + 1)
-                if attempt == 0:
-                    await asyncio.sleep(2.0)
-            except Exception as exc:
-                _LOGGER.warning("Gemini photo erreur %s: %s", model, exc)
-                break
-        if data is not None:
-            break
+  // ── Recherche texte ───────────────────────────────────────────────────────────
 
-    # Tous les modèles ont échoué
-    if data is None:
-        _LOGGER.warning("Gemini photo: tous les modeles ont echoue (%s)", last_code)
-        return [], last_code
-
-    # Parsing de la réponse
-    candidate = data.get("candidates", [{}])[0]
-    finish = candidate.get("finishReason", "STOP")
-    if finish == "MAX_TOKENS":
-        _LOGGER.warning(
-            "Gemini photo: reponse tronquee (MAX_TOKENS). "
-            "Augmentez maxOutputTokens si le probleme persiste."
-        )
-    raw = (
-        candidate
-        .get("content", {})
-        .get("parts", [{}])[0]
-        .get("text", "")
-    )
-    # Tentative de réparation si JSON tronqué
-    raw = raw.strip()
-    if raw and not raw.endswith("]"):
-        raw = raw.rstrip(",").rstrip() + "}]" if not raw.endswith("}") else raw + "]"
-    results, err = _parse_gemini_response(raw, "photo")
-    _LOGGER.info("Gemini photo: %d vin(s) identifie(s)", len(results))
-    return results, err
-
-
-
-
-# ── Open Food Facts (fallback texte) ─────────────────────────────────────────
-
-_WINE_TYPE_MAP: dict[str, str] = {
-    "en:red-wines": "red",       "fr:vins-rouges": "red",
-    "en:white-wines": "white",   "fr:vins-blancs": "white",
-    "en:rose-wines": "rose",     "fr:vins-roses": "rose",
-    "en:sparkling-wines": "sparkling", "en:champagnes": "sparkling",
-    "fr:champagnes": "sparkling",      "fr:cremants": "sparkling",
-    "en:dessert-wines": "dessert",     "fr:vins-liquoreux": "dessert",
-}
-_APPELLATION_MAP: dict[str, str] = {
-    "bordeaux": "Bordeaux",       "bourgogne": "Bourgogne",
-    "burgundy": "Bourgogne",      "champagne": "Champagne",
-    "alsace": "Alsace",           "loire": "Vallée de la Loire",
-    "rhone": "Vallée du Rhône",   "cotes-du-rhone": "Côtes du Rhône",
-    "provence": "Provence",       "languedoc": "Languedoc",
-    "beaujolais": "Beaujolais",   "saint-emilion": "Saint-Émilion",
-    "pomerol": "Pomerol",         "medoc": "Médoc",
-    "pauillac": "Pauillac",       "sauternes": "Sauternes",
-    "chablis": "Chablis",         "roussillon": "Roussillon",
-    "minervois": "Minervois",     "corbieres": "Corbières",
-    "fitou": "Fitou",             "bergerac": "Bergerac",
-    "cahors": "Cahors",           "madiran": "Madiran",
-    "bandol": "Bandol",           "banyuls": "Banyuls",
-    "gigondas": "Gigondas",       "chateauneuf": "Châteauneuf-du-Pape",
-    "chinon": "Chinon",           "sancerre": "Sancerre",
-    "vouvray": "Vouvray",         "muscadet": "Muscadet",
-    "pouilly": "Pouilly-Fumé",
-}
-_COUNTRY_MAP: dict[str, str] = {
-    "france": "France",       "fr": "France",
-    "italy": "Italie",        "it": "Italie",
-    "spain": "Espagne",       "es": "Espagne",
-    "portugal": "Portugal",   "pt": "Portugal",
-    "germany": "Allemagne",   "de": "Allemagne",
-    "austria": "Autriche",    "argentina": "Argentine",
-    "chile": "Chili",         "australia": "Australie",
-    "united-states": "États-Unis", "us": "États-Unis",
-    "south-africa": "Afrique du Sud", "new-zealand": "Nouvelle-Zélande",
-}
-
-
-def _parse_off_product(p: dict) -> dict | None:
-    raw = (p.get("product_name") or "").strip()
-    if not raw or len(raw) < 3:
-        return None
-    m = re.search(r"\b((19|20)\d{2})\b", raw)
-    vintage = m.group(1) if m else ""
-    name    = re.sub(r"\s*\b" + vintage + r"\b\s*", " ", raw).strip() if vintage else raw
-
-    brands   = (p.get("brands") or "").split(",")
-    producer = brands[0].strip() if brands else ""
-    cats     = p.get("categories_tags") or []
-    labels   = p.get("labels_tags") or []
-    countries = p.get("countries_tags") or []
-    origins  = (p.get("origins") or "").strip()
-    image    = p.get("image_url") or p.get("image_front_url") or ""
-
-    wine_type   = "red"
-    appellation = ""
-    for cat in cats:
-        for k, v in _WINE_TYPE_MAP.items():
-            if k in cat.lower():
-                wine_type = v; break
-    for src in labels + cats:
-        s = src.lower()
-        for k, v in _APPELLATION_MAP.items():
-            if k in s and not appellation:
-                appellation = v; break
-
-    country = ""
-    txt = " ".join(countries).lower() + " " + origins.lower()
-    for k, v in _COUNTRY_MAP.items():
-        if k in txt:
-            country = v; break
-
-    if producer.lower() == name.lower():
-        producer = ""
-
-    return {
-        "name": name, "vintage": vintage, "type": wine_type,
-        "appellation": appellation, "region": appellation,
-        "country": country, "producer": producer,
-        "tasting_notes": "", "food_pairing": "",
-        "drink_from": "", "drink_until": "",
-        "vivino_rating": 0, "image_url": image, "vivino_url": "",
+  async _searchWine(query) {
+    try {
+      return await this._hass.connection.sendMessagePromise({
+        type: "millesime/search_wine",
+        query,
+      });
+    } catch (err) {
+      console.error("[Millésime] searchWine:", err);
+      return { results: [], error: "service_unavailable", source: "off" };
     }
+  }
 
+  // ── Analyse photo ─────────────────────────────────────────────────────────────
 
-async def _off_get(session, params: dict) -> dict | None:
-    for attempt in range(3):
-        try:
-            async with session.get(
-                "https://world.openfoodfacts.org/cgi/search.pl",
-                params=params,
-                headers={"User-Agent": OFF_UA},
-                timeout=14,
-            ) as resp:
-                if resp.status == 200:
-                    return await resp.json(content_type=None)
-                if resp.status == 503 and attempt < 2:
-                    await asyncio.sleep(1.5 * (attempt + 1))
-                    continue
-                return None
-        except asyncio.TimeoutError:
-            if attempt < 2:
-                await asyncio.sleep(1.0)
-        except Exception:
-            return None
-    return None
-
-
-async def _off_search(hass: HomeAssistant, query: str) -> list[dict]:
-    session = async_get_clientsession(hass)
-    results: list[dict] = []
-    seen: set[str] = set()
-    plain = "".join(
-        c for c in unicodedata.normalize("NFD", query)
-        if unicodedata.category(c) != "Mn"
-    )
-    fields = (
-        "product_name,brands,categories_tags,labels_tags,"
-        "image_url,image_front_url,origins,countries_tags"
-    )
-    for q in list(dict.fromkeys([query, plain])):
-        if len(results) >= 8:
-            break
-        data = await _off_get(session, {
-            "search_terms": q, "search_simple": "1",
-            "action": "process", "json": "1",
-            "tagtype_0": "categories", "tag_contains_0": "contains",
-            "tag_0": "wines", "sort_by": "unique_scans_n",
-            "fields": fields, "page_size": "20", "lc": "fr,en",
-        })
-        if not data:
-            continue
-        for p in (data.get("products") or []):
-            item = _parse_off_product(p)
-            if not item:
-                continue
-            key = _normalize(item["name"])
-            if key not in seen:
-                seen.add(key)
-                results.append(item)
-                if len(results) >= 8:
-                    break
-    _LOGGER.info("OFF: %d résultat(s) pour '%s'", len(results), query)
-    return results
-
-
-# ── Orchestrateur principal ───────────────────────────────────────────────────
-
-async def _search_wines(
-    hass: HomeAssistant, query: str, gemini_key: str = ""
-) -> dict:
-    """Orchestrer la recherche texte.
-
-    Retourne {"results": [...], "error": null|code, "source": "gemini"|"off"}.
-    """
-    cache_key = _normalize(query) + ("_g" if gemini_key else "_o")
-    if cache_key in _SEARCH_CACHE:
-        ts, cached = _SEARCH_CACHE[cache_key]
-        if time.time() - ts < _CACHE_TTL:
-            _LOGGER.debug("Cache hit pour '%s'", query)
-            return cached
-
-    if gemini_key:
-        results, err = await _gemini_search_text(hass, query, gemini_key)
-        if err == ERR_QUOTA_EXCEEDED:
-            # Quota dépassé → fallback OFF + signaler l'erreur
-            _LOGGER.warning("Quota Gemini dépassé, fallback OFF")
-            off_results = await _off_search(hass, query)
-            response = {"results": off_results, "error": ERR_QUOTA_EXCEEDED, "source": "off"}
-        elif err:
-            # Autre erreur Gemini → fallback OFF silencieux
-            off_results = await _off_search(hass, query)
-            response = {"results": off_results, "error": err, "source": "off"}
-        elif not results:
-            # Gemini OK mais aucun résultat → fallback OFF
-            off_results = await _off_search(hass, query)
-            response = {"results": off_results, "error": None, "source": "off"}
-        else:
-            response = {"results": results, "error": None, "source": "gemini"}
-    else:
-        results = await _off_search(hass, query)
-        response = {"results": results, "error": None, "source": "off"}
-
-    _SEARCH_CACHE[cache_key] = (time.time(), response)
-    if len(_SEARCH_CACHE) > 200:
-        oldest = min(_SEARCH_CACHE, key=lambda k: _SEARCH_CACHE[k][0])
-        del _SEARCH_CACHE[oldest]
-
-    return response
-
-
-# ── Setup ─────────────────────────────────────────────────────────────────────
-
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Initialise Millésime."""
-    hass.data.setdefault(DOMAIN, {})
-    data = await hass.async_add_executor_job(_load, hass)
-
-    gemini_key = (
-        entry.options.get("gemini_api_key")
-        or entry.data.get("gemini_api_key")
-        or ""
-    ).strip()
-
-    hass.data[DOMAIN][entry.entry_id] = {
-        "data":       data,
-        "gemini_key": gemini_key,
+  async _analyzePhoto(imageB64, mimeType) {
+    try {
+      return await this._hass.connection.sendMessagePromise({
+        type:      "millesime/analyze_photo",
+        image_b64: imageB64,
+        mime_type: mimeType,
+      });
+    } catch (err) {
+      console.error("[Millésime] analyzePhoto:", err);
+      return { results: [], error: "service_unavailable", source: "gemini" };
     }
+  }
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+  async _estimatePrice(query) {
+    try {
+      return await this._hass.connection.sendMessagePromise({
+        type:  "millesime/estimate_price",
+        query,
+      });
+    } catch (err) {
+      return { price: 0, error: "service_unavailable" };
+    }
+  }
 
-    # ── WebSocket : get_data ──────────────────────────────────────────────────
+  // ── Toast notifications ───────────────────────────────────────────────────────
 
-    @websocket_api.websocket_command({vol.Required("type"): "millesime/get_data"})
-    @websocket_api.async_response
-    async def ws_get_data(hass: HomeAssistant, connection, msg: dict) -> None:
-        result = await hass.async_add_executor_job(_load, hass)
-        connection.send_result(msg["id"], result)
+  _showToast(type, message) {
+    const existing = document.querySelector(".mm-toast");
+    if (existing) existing.remove();
 
-    websocket_api.async_register_command(hass, ws_get_data)
+    const toast = document.createElement("div");
+    toast.className = `mm-toast mm-toast--${type}`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
 
-    # ── WebSocket : search_wine (texte) ───────────────────────────────────────
-
-    @websocket_api.websocket_command({
-        vol.Required("type"):  "millesime/search_wine",
-        vol.Required("query"): str,
-    })
-    @websocket_api.async_response
-    async def ws_search_wine(hass: HomeAssistant, connection, msg: dict) -> None:
-        gkey = hass.data[DOMAIN][entry.entry_id]["gemini_key"]
-        response = await _search_wines(hass, msg["query"], gkey)
-        connection.send_result(msg["id"], response)
-
-    websocket_api.async_register_command(hass, ws_search_wine)
-
-    # ── WebSocket : analyze_photo ─────────────────────────────────────────────
-
-    @websocket_api.websocket_command({
-        vol.Required("type"):      "millesime/analyze_photo",
-        vol.Required("image_b64"): str,
-        vol.Required("mime_type"): str,
-    })
-    @websocket_api.async_response
-    async def ws_analyze_photo(hass: HomeAssistant, connection, msg: dict) -> None:
-        gkey = hass.data[DOMAIN][entry.entry_id]["gemini_key"]
-        if not gkey:
-            connection.send_result(msg["id"], {
-                "results": [],
-                "error":   ERR_INVALID_KEY,
-                "source":  "gemini",
-            })
-            return
-        results, err = await _gemini_analyze_photo(
-            hass, msg["image_b64"], msg["mime_type"], gkey
-        )
-        connection.send_result(msg["id"], {
-            "results": results,
-            "error":   err,
-            "source":  "gemini",
-        })
-
-    websocket_api.async_register_command(hass, ws_analyze_photo)
-
-    # ── WebSocket : estimate_price ────────────────────────────────────────────
-    @websocket_api.websocket_command({
-        vol.Required("type"):  "millesime/estimate_price",
-        vol.Required("query"): str,
-    })
-    @websocket_api.async_response
-    async def ws_estimate_price(hass: HomeAssistant, connection, msg: dict) -> None:
-        gkey = hass.data[DOMAIN][entry.entry_id]["gemini_key"]
-        if not gkey:
-            connection.send_result(msg["id"], {"price": 0, "error": ERR_INVALID_KEY})
-            return
-        # Recherche Gemini ciblée prix uniquement
-        price_prompt = (
-            f"Quel est le prix moyen constate en euros pour ce vin : {msg['query']} ? "
-            "Reponds UNIQUEMENT avec un nombre decimal (ex: 18.5). Rien d'autre."
-        )
-        session = async_get_clientsession(hass)
-        body = {
-            "contents": [{"parts": [{"text": price_prompt}]}],
-            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 32},
+    // Injection CSS toast si pas déjà là
+    if (!document.querySelector("#mm-toast-css")) {
+      const s = document.createElement("style");
+      s.id = "mm-toast-css";
+      s.textContent = `
+        .mm-toast {
+          position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+          max-width: 420px; width: calc(100% - 32px);
+          padding: 12px 16px; border-radius: 10px;
+          font-family: Inter, sans-serif; font-size: 13px; line-height: 1.5;
+          z-index: 999999; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+          animation: mm-toast-in 0.2s ease;
         }
-        try:
-            async with session.post(
-                f"{GEMINI_BASE_URL}{GEMINI_TEXT_MODEL}:generateContent",
-                params={"key": gkey},
-                json=body,
-                headers={"Content-Type": "application/json"},
-                timeout=15,
-            ) as resp:
-                if resp.status != 200:
-                    connection.send_result(msg["id"], {"price": 0, "error": _gemini_error_code(resp.status)})
-                    return
-                data_r = await resp.json(content_type=None)
-                raw = (data_r.get("candidates", [{}])[0]
-                       .get("content", {}).get("parts", [{}])[0].get("text", "0"))
-                raw = re.sub(r"[^0-9.,]", "", raw.strip()).replace(",", ".")
-                price = round(float(raw), 2) if raw else 0
-                connection.send_result(msg["id"], {"price": price, "error": None})
-        except Exception as exc:
-            _LOGGER.warning("estimate_price erreur: %s", exc)
-            connection.send_result(msg["id"], {"price": 0, "error": ERR_UNAVAILABLE})
+        @keyframes mm-toast-in { from { opacity:0; transform:translateX(-50%) translateY(10px); } }
+        .mm-toast--error   { background:#2A0A0A; color:#ff8f8f; border:1px solid #5A1010; }
+        .mm-toast--warning { background:#2A1E00; color:#ffc85a; border:1px solid #5A3F00; }
+        .mm-toast--info    { background:#0A1A2A; color:#7db8f7; border:1px solid #1A4070; }
+        .mm-toast--success { background:#0A2A15; color:#6ee098; border:1px solid #1A5030; }
+      `;
+      document.head.appendChild(s);
+    }
 
-    websocket_api.async_register_command(hass, ws_estimate_price)
+    setTimeout(() => toast.remove(), type === "error" ? 8000 : 5000);
+  }
 
-    # ── Services ──────────────────────────────────────────────────────────────
+  // ── Gestion des erreurs de recherche ─────────────────────────────────────────
 
-    def _get() -> dict:
-        return hass.data[DOMAIN][entry.entry_id]["data"]
+  _handleSearchError(error, source, resultsEl) {
+    if (!error) return;
+    const msg = ERROR_MESSAGES[error];
+    if (!msg) return;
 
-    async def _persist(d: dict) -> None:
-        hass.data[DOMAIN][entry.entry_id]["data"] = d
-        await hass.async_add_executor_job(_save, hass, d)
-        hass.bus.async_fire(f"{DOMAIN}_updated", {})
+    // Quota dépassé = warning visible (mais résultats OFF disponibles)
+    const level = error === "quota_exceeded" || error === "service_unavailable"
+      ? "warning" : "error";
 
-    async def svc_add_floor(call: ServiceCall) -> None:
-        d = _get()
-        cols = int(call.data.get("columns", 8))
-        rows = int(call.data.get("rows", 2))
-        d["cellar"]["floors"].append({
-            "id":      _uid(),
-            "name":    call.data.get("name", f"Étage {len(d['cellar']['floors']) + 1}"),
-            "columns": cols, "rows": rows, "slots": cols * rows,
-            "layout":  call.data.get("layout", "side_by_side"),
-        })
-        await _persist(d)
+    // Afficher sous la barre de recherche si des résultats OFF existent
+    const banner = document.createElement("div");
+    banner.className = `mm-search-banner mm-search-banner--${level}`;
+    banner.textContent = msg;
+    if (resultsEl && resultsEl.parentNode) {
+      resultsEl.parentNode.insertBefore(banner, resultsEl);
+    }
 
-    async def svc_update_floor(call: ServiceCall) -> None:
-        d = _get()
-        for f in d["cellar"]["floors"]:
-            if f["id"] == call.data["floor_id"]:
-                for k in ["name", "columns", "rows", "layout"]:
-                    if k in call.data:
-                        f[k] = call.data[k]
-                f["slots"] = f.get("columns", 8) * f.get("rows", 2)
-                break
-        await _persist(d)
+    // Toast si c'est une erreur critique (pas de résultats)
+    if (error === "invalid_key" || error === "parse_error") {
+      this._showToast(level, msg);
+    }
+  }
 
-    async def svc_remove_floor(call: ServiceCall) -> None:
-        d = _get()
-        fid = call.data["floor_id"]
-        d["cellar"]["floors"] = [f for f in d["cellar"]["floors"] if f["id"] != fid]
-        d["bottles"]          = [b for b in d["bottles"] if b.get("floor_id") != fid]
-        await _persist(d)
+  // ── Modal ─────────────────────────────────────────────────────────────────────
 
-    async def svc_add_bottle(call: ServiceCall) -> None:
-        d = _get()
-        d["bottles"].append({
-            "id":           _uid(),
-            "floor_id":     call.data.get("floor_id", ""),
-            "slot":         int(call.data.get("slot", 0)),
-            "name":         call.data.get("name", ""),
-            "vintage":      call.data.get("vintage", ""),
-            "type":         call.data.get("type", "red"),
-            "appellation":  call.data.get("appellation", ""),
-            "region":       call.data.get("region", ""),
-            "producer":     call.data.get("producer", ""),
-            "country":      call.data.get("country", ""),
-            "price":        float(call.data.get("price", 0)),
-            "quantity":     int(call.data.get("quantity", 1)),
-            "drink_from":   call.data.get("drink_from", ""),
-            "drink_until":  call.data.get("drink_until", ""),
-            "notes":        call.data.get("notes", ""),
-            "tasting_notes":call.data.get("tasting_notes", ""),
-            "food_pairing": call.data.get("food_pairing", ""),
-            "vivino_rating":float(call.data.get("vivino_rating", 0)),
-            "image_url":    call.data.get("image_url", ""),
-            "vivino_url":   call.data.get("vivino_url", ""),
-            "added_date":   datetime.now().strftime("%Y-%m-%d"),
-        })
-        await _persist(d)
+  _openModal(type, opts = {}) {
+    this._closeModal();
+    const style = document.createElement("style");
+    style.textContent = MODAL_CSS;
+    document.head.appendChild(style);
+    this._modalStyle = style;
 
-    async def svc_remove_bottle(call: ServiceCall) -> None:
-        d = _get()
-        d["bottles"] = [b for b in d["bottles"] if b["id"] != call.data["bottle_id"]]
-        await _persist(d)
+    const overlay = document.createElement("div");
+    overlay.className = "mm-overlay";
+    const box = document.createElement("div");
+    box.className = "mm-box";
 
-    async def svc_duplicate_bottle(call: ServiceCall) -> None:
-        d = _get()
-        src = next((b for b in d["bottles"] if b["id"] == call.data["bottle_id"]), None)
-        if not src:
-            return
-        import copy
-        new_b = copy.deepcopy(src)
-        new_b["id"]       = _uid()
-        new_b["floor_id"] = call.data.get("floor_id", src["floor_id"])
-        new_b["slot"]     = int(call.data.get("slot", src["slot"]))
-        new_b["added_date"] = datetime.now().strftime("%Y-%m-%d")
-        d["bottles"].append(new_b)
-        await _persist(d)
+    if (type === "floor")     box.innerHTML = this._floorFormHTML(opts.floor);
+    if (type === "bottle")    box.innerHTML = this._bottleFormHTML(opts.bottle, opts.slot);
+    if (type === "detail")    box.innerHTML = this._detailHTML(opts.bottle);
+    if (type === "duplicate") box.innerHTML = this._duplicateFormHTML(opts.bottle);
+    if (type === "history")   box.innerHTML = this._historyHTML();
 
-    async def svc_update_bottle(call: ServiceCall) -> None:
-        d = _get()
-        updatable = [
-            "name", "vintage", "type", "appellation", "region", "producer",
-            "country", "price", "quantity", "drink_from", "drink_until",
-            "notes", "tasting_notes", "food_pairing", "event",
-            "vivino_rating", "image_url", "vivino_url",
-        ]
-        for b in d["bottles"]:
-            if b["id"] == call.data["bottle_id"]:
-                for k in updatable:
-                    if k in call.data:
-                        b[k] = call.data[k]
-                break
-        await _persist(d)
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    this._modal = overlay;
 
-    async def svc_rename_cellar(call: ServiceCall) -> None:
-        d = _get()
-        d["cellar"]["name"] = call.data.get("name", "Millésime")
-        await _persist(d)
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) this._closeModal(); });
+    box.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", () => this._closeModal()));
 
-    async def svc_value_snapshot(call: ServiceCall) -> None:
-        """Enregistre la valeur actuelle de la cave dans l'historique."""
-        d = _get()
-        bottles = d.get("bottles", [])
-        total_value = sum(
-            float(b.get("price", 0)) * int(b.get("quantity", 1))
-            for b in bottles
-        )
-        total_bottles = sum(int(b.get("quantity", 1)) for b in bottles)
-        today = datetime.now().strftime("%Y-%m-%d")
-        history = d["cellar"].setdefault("value_history", [])
-        # Remplacer si même date, sinon ajouter
-        history = [h for h in history if h.get("date") != today]
-        history.append({
-            "date":     today,
-            "value":    round(total_value, 2),
-            "bottles":  total_bottles,
-        })
-        # Garder les 365 derniers points
-        d["cellar"]["value_history"] = sorted(history, key=lambda x: x["date"])[-365:]
-        await _persist(d)
+    if (type === "floor")     this._bindFloorForm(box, opts.floor);
+    if (type === "bottle")    this._bindBottleForm(box, opts.bottle, opts.slot);
+    if (type === "detail")    this._bindDetailButtons(box, opts.bottle);
+    if (type === "duplicate") this._bindDuplicateForm(box, opts.bottle);
+    if (type === "history") {
+      this._bindHistory(box);
+    }
+  }
 
-    hass.services.async_register(DOMAIN, "add_floor",        svc_add_floor)
-    hass.services.async_register(DOMAIN, "update_floor",     svc_update_floor)
-    hass.services.async_register(DOMAIN, "remove_floor",     svc_remove_floor)
-    hass.services.async_register(DOMAIN, "add_bottle",       svc_add_bottle)
-    hass.services.async_register(DOMAIN, "remove_bottle",    svc_remove_bottle)
-    hass.services.async_register(DOMAIN, "update_bottle",    svc_update_bottle)
-    hass.services.async_register(DOMAIN, "duplicate_bottle", svc_duplicate_bottle)
-    hass.services.async_register(DOMAIN, "rename_cellar",    svc_rename_cellar)
-    hass.services.async_register(DOMAIN, "value_snapshot",   svc_value_snapshot)
+  _closeModal() {
+    this._modal?.remove();     this._modal      = null;
+    this._modalStyle?.remove(); this._modalStyle = null;
+  }
 
-    mode = "Gemini 1.5 Flash + photo" if gemini_key else "Open Food Facts"
-    _LOGGER.info("Millésime v%s démarré — %s", VERSION, mode)
-    return True
+  // ── HTML formulaire étage ──────────────────────────────────────────────────────
+
+  _floorFormHTML(floor) {
+    const next  = (this._data?.cellar?.floors?.length || 0) + 1;
+    const isEdit = !!floor;
+    return `
+      <div class="mm-header">
+        <span class="mm-title">${isEdit ? "Modifier l'étage" : "Nouvel étage"}</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        <div class="mm-field">
+          <label class="mm-label">Nom</label>
+          <input class="mm-input" id="fl-name" type="text"
+            value="${floor?.name || "Étage " + next}" placeholder="Bordeaux, Bourgogne...">
+        </div>
+        <div class="mm-row">
+          <div class="mm-field">
+            <label class="mm-label">Colonnes</label>
+            <input class="mm-input" id="fl-cols" type="number" value="${floor?.columns || 8}" min="1" max="20">
+          </div>
+          <div class="mm-field">
+            <label class="mm-label">Rangées</label>
+            <input class="mm-input" id="fl-rows" type="number" value="${floor?.rows || 2}" min="1" max="10">
+          </div>
+        </div>
+        <div class="mm-field">
+          <label class="mm-label">Disposition</label>
+          <select class="mm-input" id="fl-layout">
+            <option value="side_by_side" ${(floor?.layout || "side_by_side") === "side_by_side" ? "selected" : ""}>Côte à côte</option>
+            <option value="alternating" ${floor?.layout === "alternating" ? "selected" : ""}>Tête bêche</option>
+          </select>
+        </div>
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
+        <button class="mm-btn mm-btn-primary" id="fl-submit">${isEdit ? "Enregistrer" : "Créer l'étage"}</button>
+      </div>`;
+  }
+
+  _bindFloorForm(box, floor) {
+    box.querySelector("#fl-submit").addEventListener("click", async () => {
+      const name   = box.querySelector("#fl-name").value.trim() || "Nouvel étage";
+      const cols   = parseInt(box.querySelector("#fl-cols").value) || 8;
+      const rows   = parseInt(box.querySelector("#fl-rows").value) || 2;
+      const layout = box.querySelector("#fl-layout").value;
+      if (floor) {
+        await this._callService("update_floor", { floor_id: floor.id, name, columns: cols, rows, layout });
+      } else {
+        await this._callService("add_floor", { name, columns: cols, rows, layout, slots: cols * rows });
+      }
+    });
+  }
+
+  // ── HTML formulaire bouteille ──────────────────────────────────────────────────
+
+  _bottleFormHTML(bottle, pendingSlot) {
+    const floors = this._data?.cellar?.floors || [];
+    const isEdit = !!bottle;
+    const b = bottle || {};
+    return `
+      <div class="mm-header">
+        <span class="mm-title">${isEdit ? "Modifier le vin" : "Ajouter un vin"}</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+
+        <!-- Bloc recherche / photo -->
+        <div class="mm-search-block">
+          <div class="mm-search-row">
+            <div class="mm-search-wrap">
+              <span class="mm-search-icon">🔍</span>
+              <input class="mm-input mm-search-input" id="viv-query"
+                placeholder="Rechercher : château, domaine, appellation..."
+                value="${b.name || ""}">
+            </div>
+            <button class="mm-btn-photo" id="btn-photo" title="Scanner l'étiquette">📷</button>
+            <input type="file" id="photo-input" accept="image/*" style="display:none">
+          </div>
+          <div id="search-banner"></div>
+          <div id="viv-results" class="mm-viv-results"></div>
+        </div>
+
+        <!-- Aperçu image -->
+        <div id="viv-img-preview"></div>
+
+        <!-- Champs principaux -->
+        <div class="mm-row">
+          <div class="mm-field">
+            <label class="mm-label">Nom du vin *</label>
+            <input class="mm-input" id="bt-name" value="${b.name || ""}" placeholder="Château Pétrus">
+          </div>
+          <div class="mm-field">
+            <label class="mm-label">Millésime</label>
+            <input class="mm-input" id="bt-vintage" value="${b.vintage || ""}" placeholder="2019" maxlength="4">
+          </div>
+        </div>
+        <div class="mm-row">
+          <div class="mm-field">
+            <label class="mm-label">Type</label>
+            <select class="mm-input" id="bt-type">
+              ${Object.entries(WINE_TYPES).map(([v, t]) =>
+                `<option value="${v}" ${(b.type || "red") === v ? "selected" : ""}>${t.emoji} ${t.label}</option>`
+              ).join("")}
+            </select>
+          </div>
+          <div class="mm-field">
+            <label class="mm-label">Prix (€)</label>
+            <input class="mm-input" id="bt-price" type="number" step="0.5" min="0" value="${b.price || ""}">
+          </div>
+        </div>
+        <div class="mm-row">
+          <div class="mm-field">
+            <label class="mm-label">Producteur</label>
+            <input class="mm-input" id="bt-producer" value="${b.producer || ""}" placeholder="Domaine...">
+          </div>
+          <div class="mm-field">
+            <label class="mm-label">Appellation</label>
+            <input class="mm-input" id="bt-appellation" value="${b.appellation || ""}" placeholder="Pomerol, Chablis...">
+          </div>
+        </div>
+        <div class="mm-row">
+          <div class="mm-field">
+            <label class="mm-label">À boire à partir de</label>
+            <input class="mm-input" id="bt-from" value="${b.drink_from || ""}" placeholder="2025">
+          </div>
+          <div class="mm-field">
+            <label class="mm-label">À boire avant</label>
+            <input class="mm-input" id="bt-until" value="${b.drink_until || ""}" placeholder="2035">
+          </div>
+        </div>
+        <div class="mm-row">
+          <div class="mm-field">
+            <label class="mm-label">Quantité</label>
+            <input class="mm-input" id="bt-quantity" type="number" min="1" value="${b.quantity || 1}">
+          </div>
+          <div class="mm-field">
+            <label class="mm-label">Note /5</label>
+            <input class="mm-input" id="bt-vrating" type="number" step="0.1" min="0" max="5" value="${b.vivino_rating || ""}">
+          </div>
+        </div>
+
+        ${!isEdit ? `
+        <div class="mm-row">
+          <div class="mm-field">
+            <label class="mm-label">Étage *</label>
+            <select class="mm-input" id="bt-floor">
+              ${floors.map((f) =>
+                `<option value="${f.id}" ${pendingSlot?.floor_id === f.id ? "selected" : ""}>${f.name}</option>`
+              ).join("")}
+            </select>
+          </div>
+          <div class="mm-field">
+            <label class="mm-label">Emplacement n°</label>
+            <input class="mm-input" id="bt-slot" type="number" min="0" value="${pendingSlot?.slot ?? 0}">
+          </div>
+        </div>` : ""}
+
+        <div class="mm-row">
+          <div class="mm-field" style="grid-column:1/-1">
+            <label class="mm-label">Événement</label>
+            <select class="mm-input" id="bt-event">
+              ${EVENT_TYPES.map(e =>
+                `<option value="${e.v}" ${(b.event || "") === e.v ? "selected" : ""}>${e.emoji ? e.emoji + " " : ""}${e.l}</option>`
+              ).join("")}
+            </select>
+          </div>
+        </div>
+
+        <div class="mm-field">
+          <label class="mm-label">Notes personnelles</label>
+          <textarea class="mm-input mm-textarea" id="bt-notes"
+            placeholder="Impressions, occasion...">${b.notes || ""}</textarea>
+        </div>
+
+        <!-- Champs cachés remplis par Gemini -->
+        <input type="hidden" id="bt-image_url"   value="${b.image_url    || ""}">
+        <input type="hidden" id="bt-vivino_url"  value="${b.vivino_url   || ""}">
+        <input type="hidden" id="bt-region"      value="${b.region       || ""}">
+        <input type="hidden" id="bt-country"     value="${b.country      || ""}">
+        <input type="hidden" id="bt-tasting"     value="${b.tasting_notes|| ""}">
+        <input type="hidden" id="bt-pairing"     value="${b.food_pairing || ""}">
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
+        <button class="mm-btn mm-btn-primary" id="bt-submit">
+          ${isEdit ? "Enregistrer" : "Ajouter à la cave"}
+        </button>
+      </div>`;
+  }
+
+  _bindBottleForm(box, bottle, pendingSlot) {
+    let searchTimer;
+    const qInput   = box.querySelector("#viv-query");
+    const results  = box.querySelector("#viv-results");
+    const imgWrap  = box.querySelector("#viv-img-preview");
+    const banner   = box.querySelector("#search-banner");
+    const btnPhoto = box.querySelector("#btn-photo");
+    const fileInput= box.querySelector("#photo-input");
+
+    // ── Auto-remplissage depuis un résultat ──────────────────────────────────
+    const fillFrom = (wine) => {
+      const set = (id, val) => {
+        const el = box.querySelector(`#${id}`);
+        if (el && val != null && val !== "" && val !== 0) el.value = val;
+      };
+      set("bt-name",        wine.name);
+      set("bt-vintage",     wine.vintage);
+      set("bt-producer",    wine.producer);
+      set("bt-appellation", wine.appellation);
+      set("bt-from",        wine.drink_from  || "");
+      set("bt-until",       wine.drink_until || "");
+      set("bt-vrating",     wine.vivino_rating || "");
+      if (wine.price > 0) { const el = box.querySelector("#bt-price"); if (el) el.value = wine.price; }
+      set("bt-image_url",   wine.image_url   || "");
+      set("bt-vivino_url",  wine.vivino_url  || "");
+      set("bt-region",      wine.region      || "");
+      set("bt-country",     wine.country     || "");
+      set("bt-tasting",     wine.tasting_notes || "");
+      set("bt-pairing",     wine.food_pairing  || "");
+      const typeEl = box.querySelector("#bt-type");
+      if (typeEl && wine.type) typeEl.value = wine.type;
+      results.innerHTML = "";
+      results.style.display = "none";
+      if (wine.image_url) {
+        imgWrap.innerHTML = `<img src="${wine.image_url}"
+          style="width:56px;display:block;margin:0 auto 10px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.5)">`;
+      }
+    };
+
+    // ── Affichage des résultats ───────────────────────────────────────────────
+    const showResults = (response) => {
+      // Nettoyer les anciens banners
+      banner.innerHTML = "";
+      const { results: wines = [], error, source } = response;
+
+      // Afficher le banner d'erreur si besoin
+      if (error) {
+        const msg = ERROR_MESSAGES[error] || error;
+        const level = (error === "quota_exceeded" || error === "service_unavailable") ? "warning" : "error";
+        banner.innerHTML = `<div class="mm-search-banner mm-search-banner--${level}">${msg}</div>`;
+      } else if (source === "off" && box.querySelector("#viv-query").value.trim().length >= 3) {
+        // Info discrète : résultats OFF sans erreur (pas de clé Gemini)
+        // On ne l'affiche que si la recherche a produit des résultats
+        if (wines.length > 0) {
+          banner.innerHTML = `<div class="mm-search-banner mm-search-banner--info">
+            ℹ️ Résultats Open Food Facts — ajoutez une clé Gemini pour les notes de dégustation.
+          </div>`;
+        }
+      }
+
+      if (!wines.length) {
+        results.innerHTML = `<div class="mm-viv-loading">Aucun résultat — remplissez manuellement</div>`;
+        results.style.display = "block";
+        return;
+      }
+
+      results.style.display = "block";
+      results.innerHTML = wines.map((w, i) => `
+        <div class="mm-viv-item" data-idx="${i}">
+          ${w.image_url
+            ? `<img src="${w.image_url}" style="width:28px;border-radius:4px;flex-shrink:0">`
+            : `<span style="font-size:18px;flex-shrink:0">${WINE_TYPES[w.type]?.emoji || "🍷"}</span>`}
+          <div style="flex:1;min-width:0">
+            <div class="mm-viv-name">${w.name}${w.vintage ? " " + w.vintage : ""}</div>
+            <div class="mm-viv-sub">${[w.appellation, w.region, w.vivino_rating ? "⭐ " + w.vivino_rating : ""].filter(Boolean).join(" · ")}</div>
+            ${w.tasting_notes ? `<div class="mm-viv-notes">${w.tasting_notes}</div>` : ""}
+          </div>
+        </div>`).join("");
+
+      results.querySelectorAll(".mm-viv-item").forEach((el) =>
+        el.addEventListener("click", () => fillFrom(wines[parseInt(el.dataset.idx)]))
+      );
+    };
+
+    // ── Recherche texte avec debounce 600ms ───────────────────────────────────
+    qInput?.addEventListener("input", () => {
+      clearTimeout(searchTimer);
+      const q = qInput.value.trim();
+      if (q.length < 3) {
+        results.innerHTML = "";
+        results.style.display = "none";
+        banner.innerHTML = "";
+        return;
+      }
+      results.style.display = "block";
+      results.innerHTML = `<div class="mm-viv-loading">
+        <span class="mm-spinner"></span> Recherche en cours...
+      </div>`;
+      searchTimer = setTimeout(async () => {
+        const response = await this._searchWine(q);
+        showResults(response);
+      }, 600);
+    });
+
+    // ── Scan photo de l'étiquette ─────────────────────────────────────────────
+    btnPhoto?.addEventListener("click", () => fileInput?.click());
+
+    fileInput?.addEventListener("change", async () => {
+      const file = fileInput.files?.[0];
+      if (!file) return;
+
+      // Aperçu immédiat
+      const url = URL.createObjectURL(file);
+      imgWrap.innerHTML = `<div class="mm-photo-loading">
+        <img src="${url}" style="width:80px;border-radius:8px;opacity:0.6;display:block;margin:0 auto 6px">
+        <div style="text-align:center;font-size:11px;color:#888">
+          <span class="mm-spinner"></span> Analyse de l'étiquette...
+        </div>
+      </div>`;
+      results.innerHTML = "";
+      results.style.display = "none";
+      banner.innerHTML = "";
+
+      // Encoder en base64
+      const b64 = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result.split(",")[1]);
+        r.onerror = () => rej(new Error("Lecture fichier impossible"));
+        r.readAsDataURL(file);
+      });
+
+      const mimeType = file.type || "image/jpeg";
+      const response = await this._analyzePhoto(b64, mimeType);
+      URL.revokeObjectURL(url);
+
+      const { results: wines = [], error } = response;
+
+      // Nettoyer l'aperçu loading
+      imgWrap.innerHTML = "";
+
+      if (error === "invalid_key" || error === "no_key") {
+        imgWrap.innerHTML = `<div class="mm-photo-error">${ERROR_MESSAGES.invalid_key}</div>`;
+        return;
+      }
+      if (!wines.length) {
+        imgWrap.innerHTML = `<div class="mm-photo-error">${ERROR_MESSAGES.no_wine_found}</div>`;
+        return;
+      }
+      if (error) {
+        banner.innerHTML = `<div class="mm-search-banner mm-search-banner--warning">${ERROR_MESSAGES[error] || error}</div>`;
+      }
+
+      if (wines.length === 1) {
+        // Un seul vin identifié → remplissage direct
+        fillFrom(wines[0]);
+        this._showToast("success", `✅ Étiquette reconnue : ${wines[0].name}`);
+      } else {
+        // Plusieurs vins possibles → afficher les suggestions
+        showResults({ results: wines, error: null, source: "gemini" });
+        this._showToast("info", "📷 Plusieurs vins possibles — sélectionnez le bon");
+      }
+    });
+
+    // ── Soumission du formulaire ──────────────────────────────────────────────
+    box.querySelector("#bt-submit")?.addEventListener("click", async () => {
+      const txt = (id) => box.querySelector(`#${id}`)?.value?.trim() || "";
+      const num = (id) => parseFloat(box.querySelector(`#${id}`)?.value)  || 0;
+      const int = (id) => parseInt(box.querySelector(`#${id}`)?.value)    || 0;
+
+      const name = txt("bt-name");
+      if (!name) { this._showToast("error", "Le nom du vin est requis."); return; }
+
+      const payload = {
+        name,
+        vintage:       txt("bt-vintage"),
+        type:          box.querySelector("#bt-type")?.value || "red",
+        producer:      txt("bt-producer"),
+        appellation:   txt("bt-appellation"),
+        region:        txt("bt-region"),
+        country:       txt("bt-country"),
+        price:         num("bt-price"),
+        quantity:      int("bt-quantity") || 1,
+        drink_from:    txt("bt-from"),
+        drink_until:   txt("bt-until"),
+        notes:         txt("bt-notes"),
+        tasting_notes: txt("bt-tasting"),
+        food_pairing:  txt("bt-pairing"),
+        vivino_rating: num("bt-vrating"),
+        event:         box.querySelector("#bt-event")?.value || "",
+        image_url:     txt("bt-image_url"),
+        vivino_url:    txt("bt-vivino_url"),
+      };
+
+      if (bottle) {
+        await this._callService("update_bottle", { bottle_id: bottle.id, ...payload });
+      } else {
+        payload.floor_id = box.querySelector("#bt-floor")?.value || "";
+        payload.slot     = int("bt-slot");
+        await this._callService("add_bottle", payload);
+      }
+    });
+  }
+
+  // ── Fiche détail bouteille ─────────────────────────────────────────────────────
+
+  _detailHTML(b) {
+    const t  = WINE_TYPES[b.type] || WINE_TYPES.red;
+    const vr = parseFloat(b.vivino_rating) || 0;
+    const stars = vr > 0
+      ? "★".repeat(Math.round(vr)) + "☆".repeat(5 - Math.round(vr)) : "";
+    return `
+      <div class="mm-header" style="background:linear-gradient(135deg,${t.color}18,transparent)">
+        <button class="mm-close" data-close style="order:-1;font-size:20px">←</button>
+        <span class="mm-title">${b.name}</span>
+        <span style="color:${t.color};font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px">${t.label}</span>
+      </div>
+      <div class="mm-body">
+        ${b.image_url ? `<img src="${b.image_url}" style="width:64px;display:block;margin:0 auto 16px;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,0.6)">` : ""}
+        <div class="mm-detail-hero">
+          <div class="mm-detail-name">${b.name}</div>
+          <div class="mm-detail-sub">${[b.producer, b.appellation].filter(Boolean).join(" · ")}</div>
+          ${vr > 0 ? `
+            <div style="color:${t.color};font-size:20px;margin-top:10px;letter-spacing:2px">${stars}</div>
+            <div style="color:#555;font-size:11px;margin-top:2px">${vr.toFixed(1)} / 5</div>` : ""}
+          ${b.vivino_url ? `<a href="${b.vivino_url}" target="_blank" class="mm-vivino-link">Voir sur Vivino →</a>` : ""}
+        </div>
+        <div class="mm-detail-grid">
+          ${_drow("Millésime",  b.vintage)}
+          ${_drow("Région",     [b.region, b.country].filter(Boolean).join(", "))}
+          ${b.price ? `<div class="mm-drow"><span class="mm-drow-label">Prix</span><span class="mm-drow-value det-price-display">${b.price} €</span></div>` : ""}
+          ${_drow("Quantité",   (b.quantity || 1) > 1 ? b.quantity + " bouteilles" : "")}
+          ${_drow("À boire",    (b.drink_from || b.drink_until)
+                                ? (b.drink_from || "?") + " — " + (b.drink_until || "?") : "")}
+          ${_drow("Ajouté le",  b.added_date || "")}
+          ${b.event && EVENT_LABEL[b.event]?.l ? _drow("Événement", EVENT_LABEL[b.event].emoji + " " + EVENT_LABEL[b.event].l) : ""}
+        </div>
+        ${b.tasting_notes ? `<div class="mm-notes mm-tasting">🍷 ${b.tasting_notes}</div>` : ""}
+        ${b.food_pairing  ? `<div class="mm-notes mm-pairing">🍽️ ${b.food_pairing}</div>`  : ""}
+        ${b.notes         ? `<div class="mm-notes">"${b.notes}"</div>`                     : ""}
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-danger" id="det-remove">🗑</button>
+        <button class="mm-btn mm-btn-ghost"  id="det-price">💰 Prix</button>
+        <button class="mm-btn mm-btn-ghost"  id="det-dup">⎘ Dupliquer</button>
+        <button class="mm-btn mm-btn-ghost"  id="det-edit">✏️ Modifier</button>
+      </div>`;
+  }
+
+  // ── Formulaire duplication ──────────────────────────────────────────────────
+
+  _duplicateFormHTML(b) {
+    const floors = this._data?.cellar?.floors || [];
+    return `
+      <div class="mm-header">
+        <span class="mm-title">⎘ Dupliquer</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        <div class="mm-notes mm-tasting" style="margin-bottom:14px">
+          Copie de <strong>${b.name}${b.vintage ? " " + b.vintage : ""}</strong>
+        </div>
+        <div class="mm-row">
+          <div class="mm-field">
+            <label class="mm-label">Étage *</label>
+            <select class="mm-input" id="dup-floor">
+              ${floors.map(f => `<option value="${f.id}">${f.name}</option>`).join("")}
+            </select>
+          </div>
+          <div class="mm-field">
+            <label class="mm-label">Emplacement n°</label>
+            <input class="mm-input" id="dup-slot" type="number" min="0" value="0">
+          </div>
+        </div>
+        <div class="mm-field">
+          <label class="mm-label">Quantité à dupliquer</label>
+          <input class="mm-input" id="dup-qty" type="number" min="1" max="24" value="1">
+        </div>
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
+        <button class="mm-btn mm-btn-primary" id="dup-submit">Dupliquer</button>
+      </div>`;
+  }
+
+  _bindDuplicateForm(box, bottle) {
+    box.querySelector("#dup-submit")?.addEventListener("click", async () => {
+      const btn     = box.querySelector("#dup-submit");
+      const floorId = box.querySelector("#dup-floor")?.value;
+      const slot    = parseInt(box.querySelector("#dup-slot")?.value) || 0;
+      const qty     = parseInt(box.querySelector("#dup-qty")?.value) || 1;
+      if (!floorId) { this._showToast("warning", "Sélectionnez un étage."); return; }
+      btn.textContent = "⏳ Copie en cours...";
+      btn.disabled = true;
+      try {
+        for (let i = 0; i < qty; i++) {
+          await this._hass.callService(DOMAIN, "duplicate_bottle", {
+            bottle_id: bottle.id,
+            floor_id:  floorId,
+            slot:      slot + i,
+          });
+        }
+        this._closeModal();
+        setTimeout(() => this._fetchData(), 600);
+        this._showToast("success", `${qty} bouteille(s) dupliquée(s) ✓`);
+      } catch(err) {
+        btn.textContent = "Dupliquer";
+        btn.disabled = false;
+        this._showToast("error", "Erreur lors de la duplication : " + (err.message || err));
+      }
+    });
+  }
+
+  // ── Historique valeur cave ──────────────────────────────────────────────────
+
+  _historyHTML() {
+    const history = this._data?.cellar?.value_history || [];
+    const last    = history[history.length - 1];
+    return `
+      <div class="mm-header">
+        <span class="mm-title">📈 Valeur de la cave</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        ${history.length === 0 ? `
+          <div style="text-align:center;padding:30px 0;color:#555">
+            <div style="font-size:32px;margin-bottom:10px">📊</div>
+            <div>Aucun historique enregistré.</div>
+            <div style="font-size:11px;margin-top:6px">Utilisez "Enregistrer la valeur" pour commencer.</div>
+          </div>` : `
+          <div class="hist-summary">
+            <div class="hist-stat">
+              <span class="hist-val">${last?.value ?? 0} €</span>
+              <span class="hist-lbl">Valeur actuelle</span>
+            </div>
+            <div class="hist-stat">
+              <span class="hist-val">${last?.bottles ?? 0}</span>
+              <span class="hist-lbl">Bouteilles</span>
+            </div>
+            <div class="hist-stat">
+              <span class="hist-val">${history.length}</span>
+              <span class="hist-lbl">Relevés</span>
+            </div>
+          </div>
+          <div id="hist-chart-wrap" style="width:100%;height:180px;margin-top:12px;background:#0D0D0D;border-radius:8px;border:1px solid #222"></div>
+          <div class="hist-table">
+            ${[...history].reverse().slice(0, 12).map(h => `
+              <div class="hist-row">
+                <span class="hist-date">${h.date}</span>
+                <span class="hist-bottles">${h.bottles} 🍾</span>
+                <span class="hist-price">${h.value} €</span>
+              </div>`).join("")}
+          </div>`}
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Fermer</button>
+        <button class="mm-btn mm-btn-primary" id="hist-snapshot">📸 Enregistrer la valeur</button>
+      </div>`;
+  }
+
+  _bindHistory(box) {
+    // Dessiner le graphique immédiatement (DOM pur, pas de timing)
+    const wrap = box.querySelector("#hist-chart-wrap");
+    if (wrap) this._renderChart(wrap, this._data?.cellar?.value_history || []);
+
+    box.querySelector("#hist-snapshot")?.addEventListener("click", async () => {
+      const btn = box.querySelector("#hist-snapshot");
+      btn.textContent = "⏳ Enregistrement...";
+      btn.disabled = true;
+      try {
+        // Appel direct (sans fermer le modal)
+        await this._hass.callService(DOMAIN, "value_snapshot", {});
+        await new Promise(r => setTimeout(r, 600));
+        await this._fetchData();
+        // Rafraîchir le contenu du modal en place
+        box.innerHTML = this._historyHTML();
+        this._bindHistory(box);
+        box.querySelectorAll("[data-close]").forEach(b =>
+          b.addEventListener("click", () => this._closeModal()));
+        this._showToast("success", "Valeur enregistrée ✓");
+        // _bindHistory s'occupe déjà du chart via le wrap
+
+      } catch(err) {
+        btn.textContent = "📸 Enregistrer la valeur";
+        btn.disabled = false;
+        this._showToast("error", "Erreur : " + (err.message || err));
+      }
+    });
+
+  }
 
 
-async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    new_key = (entry.options.get("gemini_api_key") or "").strip()
-    hass.data[DOMAIN][entry.entry_id]["gemini_key"] = new_key
-    _SEARCH_CACHE.clear()
-    _LOGGER.info("Millésime — clé Gemini mise à jour, cache vidé")
+
+  _renderChart(wrap, history) {
+    wrap.innerHTML = "";
+
+    if (!history || history.length === 0) {
+      wrap.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#444;font-size:12px;font-family:Inter,sans-serif">Aucun relevé</div>';
+      return;
+    }
+
+    if (history.length === 1) {
+      const h = history[0];
+      wrap.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#888;font-size:12px;font-family:Inter,sans-serif;gap:6px">
+        <div style="font-size:22px;font-weight:700;color:#EDE0CC;font-family:Playfair Display,serif">${h.value} €</div>
+        <div>${h.date} · ${h.bottles} bouteilles</div>
+        <div style="color:#555;font-size:11px;margin-top:4px">Ajoutez un 2ᵉ relevé pour voir l'évolution</div>
+      </div>`;
+      return;
+    }
+
+    // ── SVG créé en DOM (pas en innerHTML) ──────────────────
+    const NS  = "http://www.w3.org/2000/svg";
+    const W   = wrap.offsetWidth || wrap.parentElement?.offsetWidth || 340;
+    const H   = 180;
+    const pad = { t: 18, r: 14, b: 30, l: 48 };
+    const cw  = W - pad.l - pad.r;
+    const ch  = H - pad.t - pad.b;
+
+    const vals = history.map(h => h.value);
+    const lo   = Math.min(...vals) - (Math.max(...vals) - Math.min(...vals)) * 0.12 || 0;
+    const hi   = Math.max(...vals) + (Math.max(...vals) - Math.min(...vals)) * 0.12 || 1;
+    const span = hi - lo || 1;
+
+    const px = i => pad.l + (i / (history.length - 1)) * cw;
+    const py = v => pad.t + ch - ((v - lo) / span) * ch;
+
+    const mk = tag => document.createElementNS(NS, tag);
+    const at = (el, attrs) => { Object.entries(attrs).forEach(([k,v]) => el.setAttribute(k,v)); return el; };
+
+    const svg = at(mk("svg"), { width: W, height: H, viewBox: `0 0 ${W} ${H}` });
+    svg.style.cssText = "display:block;width:100%;height:100%";
+
+    // Dégradé
+    const defs = mk("defs");
+    const grad = at(mk("linearGradient"), { id: "cg", x1:"0", y1:"0", x2:"0", y2:"1" });
+    const s1   = at(mk("stop"), { offset:"0%",   "stop-color":"#C0392B", "stop-opacity":"0.4" });
+    const s2   = at(mk("stop"), { offset:"100%", "stop-color":"#C0392B", "stop-opacity":"0.02" });
+    grad.appendChild(s1); grad.appendChild(s2); defs.appendChild(grad); svg.appendChild(defs);
+
+    // Fond
+    svg.appendChild(at(mk("rect"), { x:0, y:0, width:W, height:H, fill:"#0D0D0D" }));
+
+    // Grilles horizontales
+    for (let g = 0; g <= 4; g++) {
+      const v = hi - span * g / 4;
+      const y = (pad.t + ch * g / 4).toFixed(1);
+      svg.appendChild(at(mk("line"), { x1: pad.l, y1: y, x2: W - pad.r, y2: y, stroke:"#222", "stroke-width":"1" }));
+      const txt = at(mk("text"), { x: pad.l - 5, y: (parseFloat(y) + 4).toFixed(1), "text-anchor":"end", fill:"#555", "font-size":"10", "font-family":"Inter,sans-serif" });
+      txt.textContent = Math.round(v) + "€";
+      svg.appendChild(txt);
+    }
+
+    // Axe gauche
+    svg.appendChild(at(mk("line"), { x1: pad.l, y1: pad.t, x2: pad.l, y2: pad.t + ch, stroke:"#333", "stroke-width":"1" }));
+
+    // Aire
+    const pts = history.map((h, i) => `${px(i).toFixed(1)},${py(h.value).toFixed(1)}`).join(" ");
+    const areaD = `M ${px(0).toFixed(1)},${py(vals[0]).toFixed(1)} ` +
+      history.slice(1).map((h,i) => `L ${px(i+1).toFixed(1)},${py(h.value).toFixed(1)}`).join(" ") +
+      ` L ${px(history.length-1).toFixed(1)},${(pad.t+ch).toFixed(1)} L ${px(0).toFixed(1)},${(pad.t+ch).toFixed(1)} Z`;
+    svg.appendChild(at(mk("path"), { d: areaD, fill:"url(#cg)" }));
+
+    // Courbe
+    const line = at(mk("polyline"), { points: pts, fill:"none", stroke:"#C0392B", "stroke-width":"2.5", "stroke-linejoin":"round", "stroke-linecap":"round" });
+    svg.appendChild(line);
+
+    // Points + dates X
+    const step = Math.max(1, Math.floor(history.length / 5));
+    history.forEach((h, i) => {
+      // Point
+      const dot = at(mk("circle"), { cx: px(i).toFixed(1), cy: py(h.value).toFixed(1), r:"3.5", fill:"#E74C3C", stroke:"#0D0D0D", "stroke-width":"1.5" });
+      svg.appendChild(dot);
+      // Label X
+      if (i % step === 0 || i === history.length - 1) {
+        const xt = at(mk("text"), { x: px(i).toFixed(1), y: H - 8, "text-anchor":"middle", fill:"#555", "font-size":"9", "font-family":"Inter,sans-serif" });
+        xt.textContent = h.date.slice(5);
+        svg.appendChild(xt);
+      }
+    });
+
+    // Valeur sur le dernier point
+    const last = history[history.length - 1];
+    const lx = px(history.length - 1);
+    const ly = py(last.value);
+    const balloon = at(mk("rect"), { x: lx - 28, y: ly - 22, width: 56, height: 18, rx: 5, fill:"#C0392B" });
+    svg.appendChild(balloon);
+    const blt = at(mk("text"), { x: lx, y: ly - 9, "text-anchor":"middle", fill:"white", "font-size":"10", "font-weight":"700", "font-family":"Inter,sans-serif" });
+    blt.textContent = last.value + " €";
+    svg.appendChild(blt);
+
+    wrap.appendChild(svg);
+  }
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if ok:
-        hass.data[DOMAIN].pop(entry.entry_id)
-    return ok
+  _bindDetailButtons(box, bottle) {
+
+    // Retirer
+    box.querySelector("#det-remove")?.addEventListener("click", async () => {
+      if (confirm("Retirer cette bouteille de la cave ?")) {
+        this._selected = null;
+        await this._callService("remove_bottle", { bottle_id: bottle.id });
+      }
+    });
+
+    // Modifier
+    box.querySelector("#det-edit")?.addEventListener("click", () => {
+      this._closeModal();
+      this._openModal("bottle", { bottle });
+    });
+
+    // Dupliquer
+    box.querySelector("#det-dup")?.addEventListener("click", () => {
+      this._closeModal();
+      this._openModal("duplicate", { bottle });
+    });
+
+    // Estimer le prix
+    box.querySelector("#det-price")?.addEventListener("click", async () => {
+      const btn   = box.querySelector("#det-price");
+      const query = [bottle.name, bottle.vintage, bottle.appellation].filter(Boolean).join(" ");
+      if (!query) { this._showToast("warning", "Nom du vin manquant."); return; }
+
+      btn.textContent = "⏳ Recherche...";
+      btn.disabled    = true;
+
+      const resp = await this._estimatePrice(query);
+
+      if (resp.error || !resp.price) {
+        btn.textContent = "💰 Prix";
+        btn.disabled    = false;
+        this._showToast("warning",
+          resp.error === "invalid_key"
+            ? "🔑 Clé Gemini requise pour estimer le prix."
+            : resp.price === 0
+              ? "Prix introuvable pour ce vin."
+              : "Estimation impossible, réessayez."
+        );
+        return;
+      }
+
+      btn.textContent = `✅ ${resp.price} €`;
+
+      // Mettre à jour la fiche prix affiché
+      const priceEl = box.querySelector(".det-price-display");
+      if (priceEl) priceEl.textContent = resp.price + " €";
+
+      // Enregistrer après 1.5s
+      setTimeout(async () => {
+        await this._callService("update_bottle", { bottle_id: bottle.id, price: resp.price });
+        btn.textContent = "💰 Prix";
+        btn.disabled    = false;
+        this._showToast("success", `Prix mis à jour : ${resp.price} €`);
+      }, 1500);
+    });
+  }
+
+  // ── Rendu principal ───────────────────────────────────────────────────────────
+
+  _renderLoading() {
+    this.shadowRoot.innerHTML = CARD_CSS + `
+      <div class="card">
+        <div class="loading-state"><div class="loading-glass">${GLASS_SVG}</div></div>
+      </div>`;
+  }
+
+  _render() {
+    const data    = this._data || DEFAULT_DATA();
+    const floors  = data.cellar?.floors || [];
+    const bottles = data.bottles || [];
+    this.shadowRoot.innerHTML = CARD_CSS + `
+      <div class="card">
+        ${this._renderHeader(data, bottles)}
+        ${this._renderFilters()}
+        <div class="cellar">
+          ${floors.length === 0
+            ? this._renderEmpty()
+            : floors.map((f, i) => this._renderFloor(f, bottles, i)).join("")}
+        </div>
+      </div>`;
+    this._bindCardListeners(data, bottles);
+  }
+
+  _renderHeader(data, bottles) {
+    const total  = bottles.reduce((s, b) => s + (b.quantity || 1), 0);
+    const value  = bottles.reduce((s, b) => s + (b.price || 0) * (b.quantity || 1), 0);
+    const nFloor = data.cellar?.floors?.length || 0;
+    return `
+      <div class="header">
+        <div class="header-left">
+          <div class="header-glass" id="btn-history" title="Historique de valeur" style="cursor:pointer">${GLASS_SVG}</div>
+          <div class="header-meta">
+            <div class="header-name">${data.cellar?.name || "Millésime"}</div>
+            <div class="header-tagline">Cave à vin</div>
+          </div>
+        </div>
+        <div class="header-right">
+          <div class="header-stats">
+            <div class="stat"><span class="stat-value">${total}</span><span class="stat-label">Bouteilles</span></div>
+            <div class="stat"><span class="stat-value">${nFloor}</span><span class="stat-label">Étages</span></div>
+            <div class="stat"><span class="stat-value">${value > 0 ? Math.round(value) + "€" : "—"}</span><span class="stat-label">Valeur</span></div>
+          </div>
+          <div class="header-actions">
+            <button class="btn-secondary" id="btn-add-floor">+ Étage</button>
+            <button class="btn-primary"   id="btn-add-bottle">+ Vin</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  _renderFilters() {
+    return `
+      <div class="filters">
+        <div class="filter-group">
+          <span class="filter-label">Type</span>
+          <select class="filter-select" id="sel-type">
+            <option value="all" ${this._filter === "all" ? "selected" : ""}>Tous les vins</option>
+            ${Object.entries(WINE_TYPES).map(([v, t]) =>
+              `<option value="${v}" ${this._filter === v ? "selected" : ""}>${t.emoji} ${t.label}</option>`
+            ).join("")}
+          </select>
+        </div>
+        <div class="filter-group">
+          <span class="filter-label">Événement</span>
+          <select class="filter-select" id="sel-event">
+            <option value="all" ${this._filterEvent === "all" ? "selected" : ""}>Tous</option>
+            ${EVENT_TYPES.filter(e => e.v).map(e =>
+              `<option value="${e.v}" ${this._filterEvent === e.v ? "selected" : ""}>${e.emoji} ${e.l}</option>`
+            ).join("")}
+          </select>
+        </div>
+      </div>`;
+  }
+
+  _renderEmpty() {
+    return `
+      <div class="empty-state">
+        <div class="empty-glass">${GLASS_SVG}</div>
+        <div class="empty-title">Cave vide</div>
+        <div class="empty-sub">Cliquez sur "+ Étage" pour commencer</div>
+      </div>`;
+  }
+
+  _renderFloor(floor, allBottles, index) {
+    const fb    = allBottles.filter((b) => b.floor_id === floor.id);
+    const cols  = floor.columns || 8;
+    const total = floor.slots || cols * (floor.rows || 2);
+    const isAlt = floor.layout === "alternating";
+    const pct   = Math.round((fb.length / total) * 100);
+
+    const byType = {};
+    fb.forEach((b) => { byType[b.type] = (byType[b.type] || 0) + (b.quantity || 1); });
+    const counters = Object.entries(byType)
+      .map(([t, n]) => `<span class="type-count" style="color:${WINE_TYPES[t]?.color || "#C0392B"}">${n}x</span>`)
+      .join("");
+
+    let dots = "";
+    for (let i = 0; i < total; i++) {
+      const bt  = fb.find((b) => b.slot === i);
+      const filteredType  = this._filter !== "all" && bt && bt.type !== this._filter;
+      const filteredEvent = this._filterEvent !== "all" && bt && (bt.event || "") !== this._filterEvent;
+      const filtered = filteredType || filteredEvent;
+      const wt  = bt ? WINE_TYPES[bt.type] || WINE_TYPES.red : null;
+      const sel = bt && bt.id === this._selected;
+      const alt = isAlt && i % 2 === 1;
+      dots += `<div
+        class="dot ${bt ? "dot--filled" : "dot--empty"} ${sel ? "dot--selected" : ""} ${alt ? "dot--alt" : ""}"
+        data-slot="${i}" data-floor-id="${floor.id}"
+        style="${bt ? `--dot-color:${wt.color};--dot-glow:${wt.glow};opacity:${filtered ? 0.15 : 1}` : ""}"
+        title="${bt ? bt.name + (bt.vintage ? " " + bt.vintage : "") : "Vide — cliquer pour ajouter"}"
+      ></div>`;
+    }
+
+    return `
+      <div class="floor" style="animation-delay:${index * 0.06}s">
+        <div class="floor-rack">
+          <div class="floor-counters">${counters}</div>
+          <div class="floor-dots" style="grid-template-columns:repeat(${cols},1fr)">${dots}</div>
+          <div class="floor-actions">
+            <button class="icon-btn" data-edit-floor="${floor.id}" title="Modifier">⚙</button>
+            <button class="icon-btn" data-del-floor="${floor.id}"  title="Supprimer">✕</button>
+          </div>
+        </div>
+        <div class="floor-label">
+          <span>${floor.name}</span><span class="floor-pct">${pct}%</span>
+        </div>
+      </div>`;
+  }
+
+  // ── Listeners carte ────────────────────────────────────────────────────────────
+
+  _bindCardListeners(data, bottles) {
+    const s = this.shadowRoot;
+
+    // Filtres par type et événement (selects)
+    s.getElementById("sel-type")?.addEventListener("change", (e) => {
+      this._filter = e.target.value;
+      this._render();
+    });
+    s.getElementById("sel-event")?.addEventListener("change", (e) => {
+      this._filterEvent = e.target.value;
+      this._render();
+    });
+
+    s.getElementById("btn-history")?.addEventListener("click", () => this._openModal("history"));
+    s.getElementById("btn-add-floor")?.addEventListener("click",   () => this._openModal("floor"));
+
+    s.getElementById("btn-add-bottle")?.addEventListener("click", () => {
+      if (!data.cellar.floors.length) {
+        this._showToast("error", "Créez d'abord un étage !");
+        return;
+      }
+      this._openModal("bottle");
+    });
+
+    s.querySelectorAll(".dot").forEach((dot) =>
+      dot.addEventListener("click", () => {
+        const slot    = parseInt(dot.dataset.slot);
+        const floorId = dot.dataset.floorId;
+        const bt      = bottles.find((b) => b.floor_id === floorId && b.slot === slot);
+        if (bt) {
+          if (this._selected === bt.id) {
+            this._selected = null;
+            this._openModal("detail", { bottle: bt });
+          } else {
+            this._selected = bt.id;
+            this._render();
+          }
+        } else {
+          this._openModal("bottle", { slot: { floor_id: floorId, slot } });
+        }
+      })
+    );
+
+    s.querySelectorAll("[data-edit-floor]").forEach((btn) =>
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const floor = data.cellar.floors.find((f) => f.id === btn.dataset.editFloor);
+        this._openModal("floor", { floor });
+      })
+    );
+
+    s.querySelectorAll("[data-del-floor]").forEach((btn) =>
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const fid   = btn.dataset.delFloor;
+        const floor = data.cellar.floors.find((f) => f.id === fid);
+        const cnt   = bottles.filter((b) => b.floor_id === fid).length;
+        const msg   = cnt > 0
+          ? `Supprimer "${floor?.name}" et ses ${cnt} bouteille(s) ?`
+          : `Supprimer l'étage "${floor?.name}" ?`;
+        if (confirm(msg)) await this._callService("remove_floor", { floor_id: fid });
+      })
+    );
+  }
+
+  disconnectedCallback() {
+    this._unsubs.forEach((f) => f());
+    this._closeModal();
+  }
+}
+
+// ── Utilitaires ────────────────────────────────────────────────────────────────
+
+const DEFAULT_DATA = () => ({ cellar: { name: "Millésime", floors: [] }, bottles: [] });
+
+function _drow(label, value) {
+  if (!value) return "";
+  return `<div class="mm-drow">
+    <span class="mm-drow-label">${label}</span>
+    <span class="mm-drow-value">${value}</span>
+  </div>`;
+}
+
+// ── CSS de la carte ────────────────────────────────────────────────────────────
+
+const CARD_CSS = `<style>
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Inter:wght@300;400;500;600&display=swap');
+
+:host {
+  display: block; font-family: 'Inter', sans-serif;
+  --red:#C0392B; --red-h:#E74C3C; --gold:#C9A84C;
+  --bg-0:#080808; --bg-1:#111; --bg-2:#181818; --bg-3:#222; --bg-4:#2A2A2A;
+  --cream:#EDE0CC; --muted:#5A5A5A; --border:#222;
+  --wood-dk:#1C1208; --wood-md:#2A1A08; --wood-lt:#4A2A08;
+}
+* { box-sizing:border-box; margin:0; padding:0; }
+
+.card { background:var(--bg-0); border-radius:18px; overflow:hidden; border:1px solid var(--border); }
+
+.loading-state { display:flex; align-items:center; justify-content:center; height:180px; }
+.loading-glass { width:36px; opacity:0.5; animation:pulse-anim 1.4s ease-in-out infinite; }
+@keyframes pulse-anim { 0%,100%{opacity:0.3} 50%{opacity:0.8} }
+
+.header {
+  display:flex; align-items:flex-start; gap:10px;
+  padding:12px 14px 10px;
+  background:linear-gradient(160deg,#180808 0%,#111 100%);
+  border-bottom:1px solid var(--border); position:relative;
+}
+.header::after {
+  content:''; position:absolute; bottom:0; left:14px; right:14px; height:1px;
+  background:linear-gradient(90deg,transparent,var(--red)44,transparent);
+}
+/* Logo + nom empilés à gauche */
+.header-left { display:flex; flex-direction:column; align-items:center; gap:4px; flex-shrink:0; padding-top:2px; }
+.header-glass {
+  width:28px;
+  filter:drop-shadow(0 0 8px rgba(192,57,43,0.7));
+  animation:float-anim 3s ease-in-out infinite;
+}
+@keyframes float-anim { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
+.header-meta { text-align:center; }
+.header-name { font-family:'Playfair Display',serif; font-size:10px; color:var(--cream); line-height:1.2; }
+.header-tagline { font-size:7px; color:var(--red); text-transform:uppercase; letter-spacing:1.5px; margin-top:1px; }
+/* Colonne droite : stats en haut, boutons en dessous */
+.header-right { display:flex; flex-direction:column; gap:7px; flex:1; min-width:0; }
+.header-stats { display:flex; gap:5px; align-items:stretch; }
+.stat { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:5px 6px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border); flex:1; }
+.stat-value { font-size:14px; font-weight:700; color:var(--cream); font-family:'Playfair Display',serif; line-height:1; }
+.stat-label { font-size:7px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-top:2px; }
+.header-actions { display:flex; gap:6px; }
+.header-actions button { flex:1; }
+.btn-primary, .btn-secondary {
+  padding:7px 12px; border-radius:8px; border:none;
+  font-family:'Inter',sans-serif; font-size:11px; font-weight:600;
+  cursor:pointer; transition:all 0.15s; white-space:nowrap;
+}
+.btn-primary { background:var(--red); color:#fff; }
+.btn-primary:hover { background:var(--red-h); transform:translateY(-1px); }
+.btn-secondary { background:var(--bg-3); color:var(--cream); border:1px solid var(--border); }
+.btn-secondary:hover { background:var(--bg-4); }
+
+.filters {
+  display:flex; gap:10px; padding:8px 14px;
+  background:var(--bg-1); border-bottom:1px solid var(--border);
+}
+.filter-group { display:flex; flex-direction:column; gap:4px; flex:1; }
+.filter-label {
+  font-size:9px; color:var(--muted); text-transform:uppercase;
+  letter-spacing:1.5px; text-align:center;
+}
+.filter-select {
+  width:100%; padding:6px 28px 6px 10px; border-radius:8px;
+  border:1px solid var(--border); background:var(--bg-2);
+  color:var(--cream); font-family:'Inter',sans-serif; font-size:12px;
+  cursor:pointer; outline:none; -webkit-appearance:none; appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%235A5A5A'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 10px center;
+  min-height:36px;
+}
+.filter-select:focus { border-color:var(--red); }
+.filter-select option { background:var(--bg-1); color:var(--cream); }
+
+.cellar { padding:12px 14px; display:flex; flex-direction:column; gap:2px; }
+.empty-state { text-align:center; padding:44px 20px; }
+.empty-glass { width:36px; margin:0 auto 12px; opacity:0.4; }
+.empty-title { font-family:'Playfair Display',serif; color:var(--cream); font-size:15px; margin-bottom:5px; }
+.empty-sub { font-size:12px; color:var(--muted); }
+
+.floor { margin-bottom:10px; animation:slide-in 0.3s ease-out both; }
+@keyframes slide-in { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+
+.floor-rack {
+  display:flex; align-items:center; gap:6px;
+  background:var(--bg-1); border:1px solid var(--border); border-bottom:none;
+  border-radius:10px 10px 0 0; padding:8px 9px; min-height:0;
+}
+.floor-counters { display:flex; flex-direction:column; align-items:flex-end; gap:1px; min-width:24px; }
+.type-count { font-size:9px; font-weight:700; display:block; }
+.floor-actions { display:flex; flex-direction:column; gap:3px; margin-left:2px; }
+.icon-btn { background:none; border:none; cursor:pointer; font-size:11px; padding:2px; opacity:0.3; color:var(--cream); transition:opacity 0.15s; line-height:1; }
+.icon-btn:hover { opacity:1; }
+
+.floor-dots { display:grid; flex:1; gap:3px; align-items:center; justify-items:center; }
+.dot { width:min(100%, 38px); height:min(100%, 38px); aspect-ratio:1; border-radius:50%; cursor:pointer; transition:transform 0.12s,box-shadow 0.12s; }
+.dot--empty { background:var(--bg-3); border:1px solid var(--bg-4); opacity:0.35; }
+.dot--empty:hover { opacity:0.6; transform:scale(1.1); }
+.dot--filled { background:var(--dot-color,#C0392B); box-shadow:0 2px 6px var(--dot-glow,rgba(192,57,43,0.4)); }
+.dot--filled:hover { transform:scale(1.15); box-shadow:0 3px 12px var(--dot-glow,rgba(192,57,43,0.65)); }
+.dot--selected { outline:2px solid var(--gold); outline-offset:2px; transform:scale(1.12); }
+.dot--alt { transform:translateY(6px) scale(0.72); }
+.dot--alt:hover { transform:translateY(6px) scale(0.82); }
+.dot--alt.dot--selected { transform:translateY(6px) scale(0.82); }
+
+.floor-label {
+  background:linear-gradient(90deg,var(--wood-dk),var(--wood-md),var(--wood-lt),var(--wood-md),var(--wood-dk));
+  border:1px solid var(--wood-lt); border-top:none; border-radius:0 0 10px 10px;
+  display:flex; align-items:center; justify-content:center; gap:8px; padding:4px 12px;
+  font-size:9px; font-weight:600; color:var(--gold); letter-spacing:2px; text-transform:uppercase;
+}
+.floor-pct { color:var(--wood-lt); font-size:8px; }
+
+/* ─── Footer détail : 4 boutons ─── */
+.mm-footer-detail { gap:5px; flex-wrap:wrap; }
+.mm-footer-detail .mm-btn { flex:1; min-width:0; font-size:10px; padding:7px 6px; }
+
+
+/* ─── Historique valeur ─── */
+.hist-summary { display:flex; gap:8px; margin-bottom:8px; }
+.hist-stat { flex:1; display:flex; flex-direction:column; align-items:center;
+  padding:8px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border); }
+.hist-val { font-size:16px; font-weight:700; color:var(--cream); font-family:'Playfair Display',serif; }
+.hist-lbl { font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-top:2px; }
+.hist-table { margin-top:12px; display:flex; flex-direction:column; gap:4px; }
+.hist-row { display:flex; align-items:center; padding:5px 8px; background:var(--bg-2);
+  border-radius:6px; border:1px solid var(--border); font-size:11px; }
+.hist-date { color:var(--muted); flex:1; }
+.hist-bottles { color:var(--muted); margin-right:12px; }
+.hist-price { color:var(--cream); font-weight:600; font-family:'Playfair Display',serif; }
+</style>`;
+
+// ── CSS du modal ────────────────────────────────────────────────────────────────
+
+const MODAL_CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Inter:wght@300;400;500;600&display=swap');
+
+@keyframes mm-fade  { from{opacity:0} to{opacity:1} }
+@keyframes mm-slide { from{opacity:0;transform:translateY(-18px)} to{opacity:1;transform:translateY(0)} }
+@keyframes mm-spin  { to{transform:rotate(360deg)} }
+
+.mm-overlay {
+  position:fixed; inset:0; background:rgba(0,0,0,0.88); z-index:99999;
+  display:flex; align-items:flex-start; justify-content:center; padding-top:12px;
+  animation:mm-fade 0.15s ease; font-family:'Inter',sans-serif;
+}
+.mm-box {
+  background:#111; border:1px solid #222; border-top:none;
+  border-radius:0 0 20px 20px;
+  width:100%; max-width:520px; max-height:92vh;
+  display:flex; flex-direction:column;
+  animation:mm-slide 0.22s ease-out; color:#EDE0CC;
+  overflow:hidden;
+}
+.mm-header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:16px 20px 12px; border-bottom:1px solid #222;
+  flex-shrink:0; background:#111; z-index:2;
+}
+.mm-title { font-family:'Playfair Display',serif; font-size:16px; color:#EDE0CC; }
+.mm-close { background:none; border:none; color:#555; cursor:pointer; font-size:18px; padding:0 4px; transition:color 0.15s; }
+.mm-close:hover { color:#EDE0CC; }
+.mm-body  { padding:16px 20px; flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+.mm-footer {
+  padding:12px 20px; border-top:1px solid #222;
+  display:flex; gap:8px; justify-content:flex-end;
+  flex-shrink:0; background:#111;
+}
+.mm-field  { margin-bottom:12px; }
+.mm-label  { display:block; font-size:10px; text-transform:uppercase; letter-spacing:1px; color:#C0392B; margin-bottom:4px; }
+.mm-input  {
+  width:100%; padding:9px 11px;
+  background:#080808; border:1px solid #222; border-radius:8px;
+  color:#EDE0CC; font-family:'Inter',sans-serif; font-size:13px;
+  outline:none; transition:border-color 0.15s; box-sizing:border-box;
+}
+.mm-input:focus { border-color:#C0392B; box-shadow:0 0 0 2px rgba(192,57,43,0.1); }
+.mm-input option { background:#111; }
+.mm-textarea { min-height:66px; resize:vertical; }
+.mm-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+
+.mm-btn { padding:10px 18px; border-radius:8px; border:none; font-family:'Inter',sans-serif; font-size:13px; font-weight:600; cursor:pointer; transition:all 0.15s; }
+.mm-btn-primary { background:#C0392B; color:#fff; }
+.mm-btn-primary:hover { background:#E74C3C; transform:translateY(-1px); }
+.mm-btn-ghost { background:#1A1A1A; color:#EDE0CC; border:1px solid #222; }
+.mm-btn-ghost:hover { background:#222; }
+.mm-btn-danger { background:rgba(140,10,10,0.3); color:#ff6b6b; border:1px solid rgba(140,10,10,0.4); }
+.mm-btn-danger:hover { background:rgba(140,10,10,0.55); }
+
+/* Bloc recherche */
+.mm-search-block { margin-bottom:14px; }
+.mm-search-row   { display:flex; gap:8px; align-items:center; }
+.mm-search-wrap  { position:relative; display:flex; align-items:center; flex:1; }
+.mm-search-icon  { position:absolute; left:11px; font-size:13px; pointer-events:none; }
+.mm-search-input { padding-left:32px !important; }
+
+/* Bouton photo */
+.mm-btn-photo {
+  flex-shrink:0; width:40px; height:40px; border-radius:8px;
+  background:#1A1A1A; border:1px solid #333; cursor:pointer;
+  font-size:18px; display:flex; align-items:center; justify-content:center;
+  transition:all 0.15s;
+}
+.mm-btn-photo:hover { background:#2A2A2A; border-color:#C0392B44; }
+
+/* Spinner */
+.mm-spinner {
+  display:inline-block; width:12px; height:12px;
+  border:2px solid #333; border-top-color:#C0392B;
+  border-radius:50%; animation:mm-spin 0.7s linear infinite;
+  vertical-align:middle; margin-right:6px;
+}
+
+/* Résultats */
+.mm-viv-results {
+  background:#080808; border:1px solid #222; border-top:none;
+  border-radius:0 0 8px 8px;
+  display:none; max-height:220px; overflow-y:auto;
+}
+.mm-viv-item {
+  display:flex; align-items:flex-start; gap:9px;
+  padding:10px 12px; cursor:pointer;
+  border-bottom:1px solid #181818; transition:background 0.12s;
+}
+.mm-viv-item:hover { background:#141414; }
+.mm-viv-item:last-child { border-bottom:none; }
+.mm-viv-name { font-size:13px; color:#EDE0CC; font-weight:500; }
+.mm-viv-sub  { font-size:10px; color:#555; margin-top:2px; }
+.mm-viv-notes { font-size:10px; color:#888; margin-top:3px; font-style:italic; line-height:1.4; }
+.mm-viv-loading { padding:12px; font-size:12px; color:#555; text-align:center; display:flex; align-items:center; justify-content:center; gap:6px; }
+
+/* Bannière erreur/info sous la recherche */
+.mm-search-banner {
+  font-size:11px; line-height:1.5; border-radius:6px;
+  padding:8px 10px; margin-top:6px;
+}
+.mm-search-banner--error   { background:#200808; color:#ff9090; border:1px solid #401010; }
+.mm-search-banner--warning { background:#1E1400; color:#ffcc70; border:1px solid #402800; }
+.mm-search-banner--info    { background:#080E18; color:#80b4e8; border:1px solid #102030; }
+
+/* Photo */
+.mm-photo-loading { text-align:center; padding:10px 0; }
+.mm-photo-error {
+  font-size:12px; color:#ff9090; background:#200808;
+  border:1px solid #401010; border-radius:8px;
+  padding:10px 12px; margin-bottom:10px; text-align:center;
+}
+
+/* Détail */
+.mm-detail-hero  { text-align:center; margin-bottom:18px; }
+.mm-detail-name  { font-family:'Playfair Display',serif; font-size:20px; color:#EDE0CC; margin-bottom:4px; }
+.mm-detail-sub   { font-size:12px; color:#666; }
+.mm-vivino-link  { display:inline-block; margin-top:8px; color:#C0392B; font-size:11px; text-decoration:none; border:1px solid rgba(192,57,43,0.3); padding:3px 10px; border-radius:20px; }
+.mm-detail-grid  { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-bottom:10px; }
+.mm-drow         { background:#181818; border-radius:8px; padding:9px 11px; border:1px solid #222; }
+.mm-drow-label   { display:block; font-size:9px; text-transform:uppercase; letter-spacing:1px; color:#555; margin-bottom:2px; }
+.mm-drow-value   { font-size:13px; color:#EDE0CC; font-weight:500; }
+.mm-notes        { font-size:12px; color:#888; background:#181818; padding:10px 12px; border-radius:8px; border-left:2px solid #C0392B; line-height:1.55; margin-bottom:6px; }
+.mm-tasting      { border-left-color:#C0392B; font-style:italic; }
+.mm-pairing      { border-left-color:#27AE8F; font-style:normal; }
+`;
+
+// ── Enregistrement ─────────────────────────────────────────────────────────────
+
+customElements.define("millesime-card", MillesimeCard);
+
+window.customCards = window.customCards || [];
+window.customCards.push({
+  type:        "millesime-card",
+  name:        "Millésime — Cave à Vin",
+  description: "Visualisation cave à vin avec Gemini AI (texte + photo)",
+  preview:     true,
+});
