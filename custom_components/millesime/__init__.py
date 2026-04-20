@@ -1,9 +1,8 @@
-"""Millésime v3.2.0 — Cave à Vin pour Home Assistant.
+"""Millesime v5.0.1 - Cave a Vin pour Home Assistant.
 
-Recherche texte : Gemini 1.5 Flash (1 500 req/jour gratuit par utilisateur)
-Lecture photo   : Gemini Vision (même quota, même clé)
-Fallback        : Open Food Facts (sans clé, illimité)
-Erreurs         : codes structurés retournés au frontend
+Recherche texte : Gemini 2.0 Flash Lite (1000 req/jour gratuit par utilisateur)
+Lecture photo   : Gemini Vision (meme quota, meme cle)
+Fallback        : Open Food Facts (sans cle, illimite)
 """
 from __future__ import annotations
 
@@ -29,14 +28,17 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN    = "millesime"
 PLATFORMS = ["sensor"]
 DATA_FILE = "millesime_data.json"
-VERSION   = "4.0.0"
+VERSION   = "5.0.0"
 
 OFF_UA       = f"Millesime-HA/{VERSION} (github.com/yourusername/ha-millesime)"
-GEMINI_MODEL = "gemini-1.5-flash"
-GEMINI_URL   = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    f"{GEMINI_MODEL}:generateContent"
-)
+# Deux modèles séparés = deux pools de quota indépendants (free tier)
+# Texte  : gemini-2.5-flash-lite — 1 000 req/jour, léger, rapide
+# Photo  : gemini-2.5-flash      —   500 req/jour, meilleur en vision
+GEMINI_TEXT_MODEL  = "gemini-2.5-flash-lite"
+GEMINI_VISION_MODEL = "gemini-2.5-flash"
+GEMINI_BASE_URL    = "https://generativelanguage.googleapis.com/v1beta/models/"
+# Alias pour compatibilité
+GEMINI_MODEL = GEMINI_TEXT_MODEL
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
 # Clé texte : évite de refrapper Gemini sur chaque frappe clavier
@@ -102,11 +104,12 @@ Tu es un expert mondial en vins et sommelière.
 Retourne UNIQUEMENT un tableau JSON valide [], sans markdown ni backticks.
 Chaque objet doit avoir exactement ces champs (string, jamais null) :
   name, vintage, type, appellation, region, country, producer,
-  tasting_notes, food_pairing, drink_from, drink_until, vivino_rating
+  tasting_notes, food_pairing, drink_from, drink_until, vivino_rating, price
 Règles :
 - type : "red" | "white" | "rose" | "sparkling" | "dessert" uniquement
 - vintage / drink_from / drink_until : "YYYY" ou ""
 - vivino_rating : décimal 0.0–5.0 (0 si inconnu)
+- price : prix moyen constaté en euros, UNIQUEMENT le nombre décimal (ex: 18.5). 0.0 si inconnu. Jamais de texte.
 - tasting_notes : 1–2 phrases en français (arômes, texture, finale)
 - food_pairing : 2–3 accords en français séparés par des virgules
 - Couvrir différents millésimes si possible
@@ -153,6 +156,7 @@ def _parse_gemini_response(raw: str, source: str) -> tuple[list[dict], str | Non
             "drink_from":    str(w.get("drink_from", "") or ""),
             "drink_until":   str(w.get("drink_until", "") or ""),
             "vivino_rating": round(float(w.get("vivino_rating") or 0), 1),
+            "price":         round(float(w.get("price") or 0), 2),
             "image_url":     "",
             "vivino_url":    "",
         })
@@ -192,7 +196,7 @@ async def _gemini_search_text(
     }
     try:
         async with session.post(
-            GEMINI_URL,
+            f"{GEMINI_BASE_URL}{GEMINI_TEXT_MODEL}:generateContent",
             params={"key": api_key},
             json=body,
             headers={"Content-Type": "application/json"},
@@ -251,40 +255,77 @@ async def _gemini_analyze_photo(
         }],
         "generationConfig": {
             "temperature":      0.1,
-            "maxOutputTokens":  1024,
+            "maxOutputTokens":  2048,
             "responseMimeType": "application/json",
         },
     }
-    try:
-        async with session.post(
-            GEMINI_URL,
-            params={"key": api_key},
-            json=body,
-            headers={"Content-Type": "application/json"},
-            timeout=20,
-        ) as resp:
-            if resp.status != 200:
-                code = _gemini_error_code(resp.status)
-                _LOGGER.warning("Gemini photo HTTP %s → %s", resp.status, code)
-                return [], code
-            data = await resp.json(content_type=None)
+    # Modèles à essayer en cascade : vision d'abord, lite en fallback
+    _PHOTO_MODELS = [GEMINI_VISION_MODEL, GEMINI_TEXT_MODEL]
+    data = None
+    last_code = ERR_UNAVAILABLE
 
-        raw = (
-            data.get("candidates", [{}])[0]
-            .get("content", {})
-            .get("parts", [{}])[0]
-            .get("text", "")
+    for model in _PHOTO_MODELS:
+        for attempt in range(2):
+            try:
+                async with session.post(
+                    f"{GEMINI_BASE_URL}{model}:generateContent",
+                    params={"key": api_key},
+                    json=body,
+                    headers={"Content-Type": "application/json"},
+                    timeout=30,
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json(content_type=None)
+                        _LOGGER.info("Gemini photo: modele %s OK", model)
+                        break
+                    last_code = _gemini_error_code(resp.status)
+                    _LOGGER.warning(
+                        "Gemini photo %s HTTP %s -> %s (tentative %d/2)",
+                        model, resp.status, last_code, attempt + 1
+                    )
+                    if resp.status in (503, 429) and attempt == 0:
+                        await asyncio.sleep(3.0)
+                        continue
+                    # Erreur non-retryable ou 2e tentative → passer au modèle suivant
+                    break
+            except asyncio.TimeoutError:
+                _LOGGER.warning("Gemini photo timeout %s (tentative %d/2)", model, attempt + 1)
+                if attempt == 0:
+                    await asyncio.sleep(2.0)
+            except Exception as exc:
+                _LOGGER.warning("Gemini photo erreur %s: %s", model, exc)
+                break
+        if data is not None:
+            break
+
+    # Tous les modèles ont échoué
+    if data is None:
+        _LOGGER.warning("Gemini photo: tous les modeles ont echoue (%s)", last_code)
+        return [], last_code
+
+    # Parsing de la réponse
+    candidate = data.get("candidates", [{}])[0]
+    finish = candidate.get("finishReason", "STOP")
+    if finish == "MAX_TOKENS":
+        _LOGGER.warning(
+            "Gemini photo: reponse tronquee (MAX_TOKENS). "
+            "Augmentez maxOutputTokens si le probleme persiste."
         )
-        results, err = _parse_gemini_response(raw, "photo")
-        _LOGGER.info("Gemini photo: %d vin(s) identifié(s)", len(results))
-        return results, err
+    raw = (
+        candidate
+        .get("content", {})
+        .get("parts", [{}])[0]
+        .get("text", "")
+    )
+    # Tentative de réparation si JSON tronqué
+    raw = raw.strip()
+    if raw and not raw.endswith("]"):
+        raw = raw.rstrip(",").rstrip() + "}]" if not raw.endswith("}") else raw + "]"
+    results, err = _parse_gemini_response(raw, "photo")
+    _LOGGER.info("Gemini photo: %d vin(s) identifie(s)", len(results))
+    return results, err
 
-    except asyncio.TimeoutError:
-        _LOGGER.warning("Gemini photo timeout")
-        return [], ERR_UNAVAILABLE
-    except Exception as exc:
-        _LOGGER.warning("Gemini photo erreur: %s", exc)
-        return [], ERR_UNAVAILABLE
+
 
 
 # ── Open Food Facts (fallback texte) ─────────────────────────────────────────
@@ -555,6 +596,50 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     websocket_api.async_register_command(hass, ws_analyze_photo)
 
+    # ── WebSocket : estimate_price ────────────────────────────────────────────
+    @websocket_api.websocket_command({
+        vol.Required("type"):  "millesime/estimate_price",
+        vol.Required("query"): str,
+    })
+    @websocket_api.async_response
+    async def ws_estimate_price(hass: HomeAssistant, connection, msg: dict) -> None:
+        gkey = hass.data[DOMAIN][entry.entry_id]["gemini_key"]
+        if not gkey:
+            connection.send_result(msg["id"], {"price": 0, "error": ERR_INVALID_KEY})
+            return
+        # Recherche Gemini ciblée prix uniquement
+        price_prompt = (
+            f"Quel est le prix moyen constate en euros pour ce vin : {msg['query']} ? "
+            "Reponds UNIQUEMENT avec un nombre decimal (ex: 18.5). Rien d'autre."
+        )
+        session = async_get_clientsession(hass)
+        body = {
+            "contents": [{"parts": [{"text": price_prompt}]}],
+            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 32},
+        }
+        try:
+            async with session.post(
+                f"{GEMINI_BASE_URL}{GEMINI_TEXT_MODEL}:generateContent",
+                params={"key": gkey},
+                json=body,
+                headers={"Content-Type": "application/json"},
+                timeout=15,
+            ) as resp:
+                if resp.status != 200:
+                    connection.send_result(msg["id"], {"price": 0, "error": _gemini_error_code(resp.status)})
+                    return
+                data_r = await resp.json(content_type=None)
+                raw = (data_r.get("candidates", [{}])[0]
+                       .get("content", {}).get("parts", [{}])[0].get("text", "0"))
+                raw = re.sub(r"[^0-9.,]", "", raw.strip()).replace(",", ".")
+                price = round(float(raw), 2) if raw else 0
+                connection.send_result(msg["id"], {"price": price, "error": None})
+        except Exception as exc:
+            _LOGGER.warning("estimate_price erreur: %s", exc)
+            connection.send_result(msg["id"], {"price": 0, "error": ERR_UNAVAILABLE})
+
+    websocket_api.async_register_command(hass, ws_estimate_price)
+
     # ── Services ──────────────────────────────────────────────────────────────
 
     def _get() -> dict:
@@ -627,12 +712,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         d["bottles"] = [b for b in d["bottles"] if b["id"] != call.data["bottle_id"]]
         await _persist(d)
 
+    async def svc_duplicate_bottle(call: ServiceCall) -> None:
+        d = _get()
+        src = next((b for b in d["bottles"] if b["id"] == call.data["bottle_id"]), None)
+        if not src:
+            return
+        import copy
+        new_b = copy.deepcopy(src)
+        new_b["id"]       = _uid()
+        new_b["floor_id"] = call.data.get("floor_id", src["floor_id"])
+        new_b["slot"]     = int(call.data.get("slot", src["slot"]))
+        new_b["added_date"] = datetime.now().strftime("%Y-%m-%d")
+        d["bottles"].append(new_b)
+        await _persist(d)
+
     async def svc_update_bottle(call: ServiceCall) -> None:
         d = _get()
         updatable = [
             "name", "vintage", "type", "appellation", "region", "producer",
             "country", "price", "quantity", "drink_from", "drink_until",
-            "notes", "tasting_notes", "food_pairing",
+            "notes", "tasting_notes", "food_pairing", "event",
             "vivino_rating", "image_url", "vivino_url",
         ]
         for b in d["bottles"]:
@@ -648,13 +747,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         d["cellar"]["name"] = call.data.get("name", "Millésime")
         await _persist(d)
 
-    hass.services.async_register(DOMAIN, "add_floor",     svc_add_floor)
-    hass.services.async_register(DOMAIN, "update_floor",  svc_update_floor)
-    hass.services.async_register(DOMAIN, "remove_floor",  svc_remove_floor)
-    hass.services.async_register(DOMAIN, "add_bottle",    svc_add_bottle)
-    hass.services.async_register(DOMAIN, "remove_bottle", svc_remove_bottle)
-    hass.services.async_register(DOMAIN, "update_bottle", svc_update_bottle)
-    hass.services.async_register(DOMAIN, "rename_cellar", svc_rename_cellar)
+    async def svc_value_snapshot(call: ServiceCall) -> None:
+        """Enregistre la valeur actuelle de la cave dans l'historique."""
+        d = _get()
+        bottles = d.get("bottles", [])
+        total_value = sum(
+            float(b.get("price", 0)) * int(b.get("quantity", 1))
+            for b in bottles
+        )
+        total_bottles = sum(int(b.get("quantity", 1)) for b in bottles)
+        today = datetime.now().strftime("%Y-%m-%d")
+        history = d["cellar"].setdefault("value_history", [])
+        # Remplacer si même date, sinon ajouter
+        history = [h for h in history if h.get("date") != today]
+        history.append({
+            "date":     today,
+            "value":    round(total_value, 2),
+            "bottles":  total_bottles,
+        })
+        # Garder les 365 derniers points
+        d["cellar"]["value_history"] = sorted(history, key=lambda x: x["date"])[-365:]
+        await _persist(d)
+
+    hass.services.async_register(DOMAIN, "add_floor",        svc_add_floor)
+    hass.services.async_register(DOMAIN, "update_floor",     svc_update_floor)
+    hass.services.async_register(DOMAIN, "remove_floor",     svc_remove_floor)
+    hass.services.async_register(DOMAIN, "add_bottle",       svc_add_bottle)
+    hass.services.async_register(DOMAIN, "remove_bottle",    svc_remove_bottle)
+    hass.services.async_register(DOMAIN, "update_bottle",    svc_update_bottle)
+    hass.services.async_register(DOMAIN, "duplicate_bottle", svc_duplicate_bottle)
+    hass.services.async_register(DOMAIN, "rename_cellar",    svc_rename_cellar)
+    hass.services.async_register(DOMAIN, "value_snapshot",   svc_value_snapshot)
 
     mode = "Gemini 1.5 Flash + photo" if gemini_key else "Open Food Facts"
     _LOGGER.info("Millésime v%s démarré — %s", VERSION, mode)
