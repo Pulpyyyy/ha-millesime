@@ -94,7 +94,7 @@ La gestion d'une cave à vin mérite mieux qu'un tableur. Millésime transforme 
 1. Ouvrez **HACS** dans la barre latérale
 2. Cliquez sur **Intégrations**
 3. Cliquez sur les **⋮** en haut à droite → **Dépôts personnalisés**
-4. Collez l'URL : `https://github.com/yourusername/ha-millesime`
+4. Collez l'URL : `https://github.com/Redsklns/ha-millesime`
 5. Catégorie : **Intégration** → **Ajouter**
 6. Recherchez **Millésime** et cliquez **Télécharger**
 7. **Redémarrez Home Assistant**
