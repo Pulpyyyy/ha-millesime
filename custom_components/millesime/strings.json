@@ -9,12 +9,12 @@
           "gemini_api_key": "Clé API Gemini (optionnelle)"
         },
         "data_description": {
-          "gemini_api_key": "Obtenez votre clé gratuite sur https://aistudio.google.com/app/apikey\n→ Connexion Google → 'Create API Key' → Copiez → Collez ici.\nSans clé : Open Food Facts (150 000+ vins). Avec clé : notes de dégustation + accords mets-vins."
+          "gemini_api_key": "Clé gratuite sur aistudio.google.com — 1 000 req/jour. Sans clé : Open Food Facts (150 000+ vins)."
         }
       }
     },
     "error": {
-      "invalid_key": "Format de clé invalide — la clé doit commencer par 'AI'"
+      "invalid_key": "Format de clé invalide — la clé doit commencer par AI"
     },
     "abort": {
       "already_configured": "Millésime est déjà configuré."
@@ -24,17 +24,17 @@
     "step": {
       "init": {
         "title": "Modifier la clé Gemini",
-        "description": "Modifiez ou supprimez votre clé Gemini API.",
+        "description": "Mettez à jour votre clé Gemini API.",
         "data": {
-          "gemini_api_key": "Clé API Gemini (optionnelle)"
+          "gemini_api_key": "Clé API Gemini"
         },
         "data_description": {
-          "gemini_api_key": "Obtenez une clé gratuite sur https://aistudio.google.com/app/apikey\nLaissez vide pour revenir à Open Food Facts (sans notes de dégustation)."
+          "gemini_api_key": "Clé gratuite sur aistudio.google.com. Laissez vide pour revenir à Open Food Facts."
         }
       }
     },
     "error": {
-      "invalid_key": "Format de clé invalide — la clé doit commencer par 'AI'"
+      "invalid_key": "Format de clé invalide — la clé doit commencer par AI"
     }
   }
 }
