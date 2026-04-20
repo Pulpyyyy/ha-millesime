@@ -1,0 +1,165 @@
+add_floor:
+  name: Ajouter un étage
+  description: Ajoute un étage à la cave.
+  fields:
+    name:
+      description: Nom de l'étage
+      example: "Bordeaux"
+    columns:
+      description: Nombre de colonnes
+      example: 8
+    rows:
+      description: Nombre de rangées
+      example: 2
+    layout:
+      description: "Disposition : side_by_side ou alternating"
+      example: "side_by_side"
+
+update_floor:
+  name: Modifier un étage
+  description: Modifie un étage existant.
+  fields:
+    floor_id:
+      description: ID de l'étage
+      required: true
+    name:
+      description: Nouveau nom
+    columns:
+      description: Nombre de colonnes
+    rows:
+      description: Nombre de rangées
+    layout:
+      description: Disposition
+
+remove_floor:
+  name: Supprimer un étage
+  description: Supprime un étage et ses bouteilles.
+  fields:
+    floor_id:
+      description: ID de l'étage
+      required: true
+
+add_bottle:
+  name: Ajouter une bouteille
+  description: Ajoute une bouteille à la cave.
+  fields:
+    floor_id:
+      description: ID de l'étage
+      required: true
+    slot:
+      description: Numéro d'emplacement
+      required: true
+    name:
+      description: Nom du vin
+      required: true
+    vintage:
+      description: Millésime (année)
+    type:
+      description: "Type : red, white, rose, sparkling, dessert"
+    appellation:
+      description: Appellation
+    region:
+      description: Région
+    producer:
+      description: Producteur
+    country:
+      description: Pays
+    price:
+      description: Prix en euros
+    quantity:
+      description: Quantité
+    drink_from:
+      description: À boire à partir de (année)
+    drink_until:
+      description: À boire avant (année)
+    notes:
+      description: Notes personnelles
+    tasting_notes:
+      description: Notes de dégustation
+    food_pairing:
+      description: Accords mets-vins
+    event:
+      description: "Événement : no_touch, keep, special, drink, table"
+    vivino_rating:
+      description: Note /5
+    image_url:
+      description: URL de l'image
+    vivino_url:
+      description: Lien Vivino
+
+update_bottle:
+  name: Modifier une bouteille
+  description: Modifie une bouteille existante.
+  fields:
+    bottle_id:
+      description: ID de la bouteille
+      required: true
+    name:
+      description: Nom du vin
+    vintage:
+      description: Millésime
+    type:
+      description: Type de vin
+    appellation:
+      description: Appellation
+    region:
+      description: Région
+    producer:
+      description: Producteur
+    country:
+      description: Pays
+    price:
+      description: Prix
+    quantity:
+      description: Quantité
+    drink_from:
+      description: À boire à partir de
+    drink_until:
+      description: À boire avant
+    notes:
+      description: Notes personnelles
+    tasting_notes:
+      description: Notes de dégustation
+    food_pairing:
+      description: Accords mets-vins
+    event:
+      description: Événement
+    vivino_rating:
+      description: Note /5
+    image_url:
+      description: URL image
+    vivino_url:
+      description: Lien Vivino
+
+remove_bottle:
+  name: Retirer une bouteille
+  description: Retire une bouteille de la cave.
+  fields:
+    bottle_id:
+      description: ID de la bouteille
+      required: true
+
+rename_cellar:
+  name: Renommer la cave
+  description: Change le nom de la cave.
+  fields:
+    name:
+      description: Nouveau nom
+      required: true
+
+duplicate_bottle:
+  name: Dupliquer une bouteille
+  description: Duplique une bouteille vers un autre emplacement.
+  fields:
+    bottle_id:
+      description: ID de la bouteille source
+      required: true
+    floor_id:
+      description: ID de l'étage de destination
+    slot:
+      description: Emplacement de destination
+
+value_snapshot:
+  name: Enregistrer la valeur
+  description: Enregistre la valeur actuelle de la cave dans l'historique.
+  fields: {}
