@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="https://www.paypal.com/donate/?business=MWJCVFGTNC4T4&no_recurring=1&currency_code=EUR" target="_blank">
-    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="54" width="217"/>
+    <img src="https://img.shields.io/badge/Offrir%20un%20verre%20de%20vin-🍷-8B1A2A?style=flat-square&labelColor=555555" alt="Offrir un verre de vin"/>
   </a>
 </p>
 
