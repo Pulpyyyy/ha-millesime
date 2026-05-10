@@ -37,30 +37,45 @@ const ERROR_MESSAGES = {
 };
 
 const BOTTLE_MINI = (color) => `<svg viewBox="0 0 10 26" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;display:block">
-  <!-- Capsule -->
+  <!-- Ombre au sol -->
+  <ellipse cx="5" cy="25.3" rx="3.4" ry="0.65" fill="black" opacity="0.38"/>
+  <!-- Capsule en étain -->
   <rect x="3.5" y="0.2" width="3" height="2.4" rx="0.9" fill="#5C3317"/>
   <rect x="3.5" y="0.2" width="1.1" height="2.4" rx="0.9" fill="white" opacity="0.18"/>
+  <rect x="5.3" y="0.2" width="1.2" height="2.4" fill="black" opacity="0.15"/>
+  <!-- Stries étain -->
+  <line x1="3.6" y1="0.9" x2="6.4" y2="0.9" stroke="black" stroke-width="0.28" opacity="0.3"/>
+  <line x1="3.6" y1="1.5" x2="6.4" y2="1.5" stroke="black" stroke-width="0.28" opacity="0.3"/>
+  <line x1="3.6" y1="2.1" x2="6.4" y2="2.1" stroke="black" stroke-width="0.28" opacity="0.28"/>
   <!-- Col -->
   <rect x="3.8" y="2.4" width="2.4" height="4.3" fill="${color}"/>
   <rect x="3.8" y="2.4" width="0.9" height="4.3" fill="white" opacity="0.2"/>
   <rect x="5.5" y="2.4" width="0.7" height="4.3" fill="black" opacity="0.15"/>
-  <!-- Épaule (courbe plus douce) -->
+  <line x1="4.3" y1="2.8" x2="4.3" y2="6.5" stroke="white" stroke-width="0.35" stroke-linecap="round" opacity="0.38"/>
+  <!-- Épaule (courbe douce) -->
   <path d="M3.8,6.7 Q2.4,9.8 1.2,11.2 L8.8,11.2 Q7.6,9.8 6.2,6.7 Z" fill="${color}"/>
   <path d="M3.8,6.7 Q3,9.2 2.2,11.2 L3.1,11.2 Q3.9,9.2 4.5,6.7 Z" fill="white" opacity="0.18"/>
   <path d="M6.2,6.7 Q7,9.2 7.8,11.2 L8.8,11.2 Q7.6,9.8 6.9,7 Z" fill="black" opacity="0.15"/>
-  <!-- Corps -->
-  <rect x="1.2" y="11" width="7.6" height="12.5" rx="1.3" fill="${color}"/>
-  <!-- Ombre droite (cylindre) -->
-  <rect x="7.2" y="11" width="1.6" height="12.5" rx="1.3" fill="black" opacity="0.22"/>
+  <!-- Corps bombé (Bézier latéraux, effet cylindrique) -->
+  <path d="M1.2,11.2 Q0.8,17 1.2,23 L8.8,23 Q9.2,17 8.8,11.2 Z" fill="${color}"/>
+  <!-- Ombre droite -->
+  <path d="M7.2,11.2 Q8.6,17 8.8,23 L7.6,23 Q7.3,17 7,11.2 Z" fill="black" opacity="0.22"/>
   <!-- Reflet gauche diffus -->
-  <rect x="1.2" y="11" width="2" height="12.5" rx="1.3" fill="white" opacity="0.14"/>
-  <!-- Fond -->
-  <ellipse cx="5" cy="23.5" rx="3.8" ry="1.1" fill="${color}"/>
-  <ellipse cx="5" cy="23.5" rx="3.8" ry="1.1" fill="black" opacity="0.25"/>
+  <path d="M1.2,11.2 Q0.8,17 1.2,23 L2.8,23 Q2.4,17 2.4,11.2 Z" fill="white" opacity="0.14"/>
+  <!-- Halo d'épaule -->
+  <ellipse cx="3.2" cy="11.9" rx="1.2" ry="0.45" fill="white" opacity="0.22"/>
+  <!-- Fond + piqûre (punt) -->
+  <ellipse cx="5" cy="23" rx="3.8" ry="1.1" fill="${color}"/>
+  <ellipse cx="5" cy="23" rx="3.8" ry="1.1" fill="black" opacity="0.28"/>
+  <ellipse cx="5" cy="22.75" rx="1.6" ry="0.4" fill="white" opacity="0.2"/>
+  <!-- Ombre portée étiquette -->
+  <rect x="2.1" y="13.3" width="6.3" height="4.5" rx="0.5" fill="black" opacity="0.28"/>
   <!-- Étiquette -->
-  <rect x="1.8" y="13" width="6.4" height="4.6" rx="0.5" fill="white" opacity="0.72"/>
-  <!-- Reflet spéculaire (ligne lumineuse) -->
-  <line x1="2.4" y1="11.5" x2="2.4" y2="23" stroke="white" stroke-width="0.55" stroke-linecap="round" opacity="0.6"/>
+  <rect x="1.8" y="13" width="6.3" height="4.5" rx="0.5" fill="white" opacity="0.72"/>
+  <!-- Ligne décorative étiquette -->
+  <line x1="3" y1="15.25" x2="6.9" y2="15.25" stroke="#bbb" stroke-width="0.28" opacity="0.55"/>
+  <!-- Reflet spéculaire en arc (suit la courbure du verre) -->
+  <path d="M2.4,11.9 Q2.05,17 2.4,22.5" stroke="white" stroke-width="0.55" fill="none" stroke-linecap="round" opacity="0.6"/>
 </svg>`;
 
 const GLASS_SVG = `<svg viewBox="0 0 40 56" xmlns="http://www.w3.org/2000/svg">
