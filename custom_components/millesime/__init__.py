@@ -56,7 +56,7 @@ ERR_PARSE_ERROR    = "parse_error"      # JSON invalide dans la réponse
 
 DEFAULT_DATA: dict = {
     "cellar": {"name": "Millésime", "floors": []},
-    "bottles": [],
+    "wines": [],
 }
 
 
@@ -66,12 +66,57 @@ def _path(hass: HomeAssistant) -> str:
     return hass.config.path(DATA_FILE)
 
 
+def _migrate(data: dict) -> dict:
+    """Migre l'ancien format bottles[] vers wines[]+slots[]."""
+    if "bottles" not in data or "wines" in data:
+        return data
+    seen: dict = {}  # (name, vintage, type) -> index dans wines
+    wines: list = []
+    for b in data.get("bottles", []):
+        key = (b.get("name", ""), b.get("vintage", ""), b.get("type", "red"))
+        sl  = {"floor_id": b.get("floor_id", ""), "slot": b.get("slot", 0)}
+        if key in seen:
+            wines[seen[key]]["slots"].append(sl)
+        else:
+            seen[key] = len(wines)
+            wines.append({
+                "id":           b.get("id", _uid()),
+                "name":         b.get("name", ""),
+                "vintage":      b.get("vintage", ""),
+                "type":         b.get("type", "red"),
+                "producer":     b.get("producer", ""),
+                "appellation":  b.get("appellation", ""),
+                "region":       b.get("region", ""),
+                "country":      b.get("country", ""),
+                "price":        float(b.get("price", 0)),
+                "drink_from":   b.get("drink_from", ""),
+                "drink_until":  b.get("drink_until", ""),
+                "notes":        b.get("notes", ""),
+                "tasting_notes":b.get("tasting_notes", ""),
+                "food_pairing": b.get("food_pairing", ""),
+                "vivino_rating":float(b.get("vivino_rating", 0)),
+                "image_url":    b.get("image_url", ""),
+                "vivino_url":   b.get("vivino_url", ""),
+                "event":        b.get("event", ""),
+                "added_date":   b.get("added_date", datetime.now().strftime("%Y-%m-%d")),
+                "slots":        [sl],
+            })
+    data["wines"] = wines
+    del data["bottles"]
+    _LOGGER.info("Millésime — migration bottles→wines : %d références", len(wines))
+    return data
+
+
 def _load(hass: HomeAssistant) -> dict:
     try:
         p = _path(hass)
         if os.path.exists(p):
             with open(p, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+            if "bottles" in data:
+                data = _migrate(data)
+                _save(hass, data)
+            return data
     except Exception as exc:
         _LOGGER.error("Millésime — erreur lecture : %s", exc)
     return json.loads(json.dumps(DEFAULT_DATA))
@@ -89,14 +134,17 @@ def _uid() -> str:
     return str(uuid.uuid4())[:8]
 
 
-def _slot_taken(d: dict, floor_id: str, slot: int, exclude_id: str | None = None) -> bool:
+def _slot_taken(d: dict, floor_id: str, slot: int,
+                exclude_wine_id: str | None = None,
+                exclude_slot_idx: int | None = None) -> bool:
     """Retourne True si l'emplacement est déjà occupé sur cet étage."""
-    return any(
-        b.get("floor_id") == floor_id
-        and b.get("slot") == slot
-        and b.get("id") != exclude_id
-        for b in d.get("bottles", [])
-    )
+    for w in d.get("wines", []):
+        for i, s in enumerate(w.get("slots", [])):
+            if s["floor_id"] == floor_id and s["slot"] == slot:
+                if w["id"] == exclude_wine_id and exclude_slot_idx is not None and i == exclude_slot_idx:
+                    continue
+                return True
+    return False
 
 
 def _normalize(text: str) -> str:
@@ -688,19 +736,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         d = _get()
         fid = call.data["floor_id"]
         d["cellar"]["floors"] = [f for f in d["cellar"]["floors"] if f["id"] != fid]
-        d["bottles"]          = [b for b in d["bottles"] if b.get("floor_id") != fid]
+        for w in d["wines"]:
+            w["slots"] = [s for s in w["slots"] if s["floor_id"] != fid]
+        d["wines"] = [w for w in d["wines"] if w["slots"]]
         await _persist(d)
 
-    async def svc_add_bottle(call: ServiceCall) -> None:
+    async def svc_add_wine(call: ServiceCall) -> None:
+        """Crée un nouveau vin avec un premier emplacement."""
         d = _get()
         floor_id = call.data.get("floor_id", "")
-        slot = int(call.data.get("slot", 0))
+        slot     = int(call.data.get("slot", 0))
         if _slot_taken(d, floor_id, slot):
             raise HomeAssistantError(f"L'emplacement {slot} est déjà occupé sur cet étage.")
-        d["bottles"].append({
+        d["wines"].append({
             "id":           _uid(),
-            "floor_id":     call.data.get("floor_id", ""),
-            "slot":         int(call.data.get("slot", 0)),
             "name":         call.data.get("name", ""),
             "vintage":      call.data.get("vintage", ""),
             "type":         call.data.get("type", "red"),
@@ -709,7 +758,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "producer":     call.data.get("producer", ""),
             "country":      call.data.get("country", ""),
             "price":        float(call.data.get("price", 0)),
-            "quantity":     int(call.data.get("quantity", 1)),
             "drink_from":   call.data.get("drink_from", ""),
             "drink_until":  call.data.get("drink_until", ""),
             "notes":        call.data.get("notes", ""),
@@ -718,50 +766,127 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "vivino_rating":float(call.data.get("vivino_rating", 0)),
             "image_url":    call.data.get("image_url", ""),
             "vivino_url":   call.data.get("vivino_url", ""),
+            "event":        call.data.get("event", ""),
             "added_date":   datetime.now().strftime("%Y-%m-%d"),
+            "slots":        [{"floor_id": floor_id, "slot": slot}],
         })
         await _persist(d)
 
-    async def svc_remove_bottle(call: ServiceCall) -> None:
-        d = _get()
-        d["bottles"] = [b for b in d["bottles"] if b["id"] != call.data["bottle_id"]]
-        await _persist(d)
-
-    async def svc_duplicate_bottle(call: ServiceCall) -> None:
-        d = _get()
-        src = next((b for b in d["bottles"] if b["id"] == call.data["bottle_id"]), None)
-        if not src:
-            return
-        import copy
-        new_b = copy.deepcopy(src)
-        new_b["id"]       = _uid()
-        new_b["floor_id"] = call.data.get("floor_id", src["floor_id"])
-        new_b["slot"]     = int(call.data.get("slot", src["slot"]))
-        new_b["added_date"] = datetime.now().strftime("%Y-%m-%d")
-        if _slot_taken(d, new_b["floor_id"], new_b["slot"]):
-            raise HomeAssistantError(f"L'emplacement {new_b['slot']} est déjà occupé sur cet étage.")
-        d["bottles"].append(new_b)
-        await _persist(d)
-
-    async def svc_update_bottle(call: ServiceCall) -> None:
+    async def svc_update_wine(call: ServiceCall) -> None:
+        """Met à jour les métadonnées d'un vin (s'applique à tous ses emplacements)."""
         d = _get()
         updatable = [
             "name", "vintage", "type", "appellation", "region", "producer",
-            "country", "price", "quantity", "drink_from", "drink_until",
-            "notes", "tasting_notes", "food_pairing", "event",
-            "vivino_rating", "image_url", "vivino_url",
-            "floor_id", "slot",
+            "country", "price", "drink_from", "drink_until", "notes",
+            "tasting_notes", "food_pairing", "event", "vivino_rating",
+            "image_url", "vivino_url",
         ]
-        for b in d["bottles"]:
-            if b["id"] == call.data["bottle_id"]:
-                if "floor_id" in call.data or "slot" in call.data:
-                    new_floor = call.data.get("floor_id", b["floor_id"])
-                    new_slot  = int(call.data.get("slot", b["slot"]))
-                    if _slot_taken(d, new_floor, new_slot, exclude_id=b["id"]):
-                        raise HomeAssistantError(f"L'emplacement {new_slot} est déjà occupé sur cet étage.")
+        for w in d["wines"]:
+            if w["id"] == call.data["wine_id"]:
                 for k in updatable:
                     if k in call.data:
-                        b[k] = call.data[k]
+                        w[k] = call.data[k]
+                break
+        await _persist(d)
+
+    async def svc_add_slot(call: ServiceCall) -> None:
+        """Ajoute un emplacement à un vin existant."""
+        d = _get()
+        wine_id  = call.data["wine_id"]
+        floor_id = call.data.get("floor_id", "")
+        slot     = int(call.data.get("slot", 0))
+        if _slot_taken(d, floor_id, slot):
+            raise HomeAssistantError(f"L'emplacement {slot} est déjà occupé sur cet étage.")
+        for w in d["wines"]:
+            if w["id"] == wine_id:
+                w["slots"].append({"floor_id": floor_id, "slot": slot})
+                break
+        await _persist(d)
+
+    async def svc_move_slot(call: ServiceCall) -> None:
+        """Déplace un emplacement d'un vin vers une nouvelle position."""
+        d = _get()
+        wine_id   = call.data["wine_id"]
+        slot_idx  = int(call.data.get("slot_idx", 0))
+        new_floor = call.data.get("floor_id", "")
+        new_slot  = int(call.data.get("slot", 0))
+        if _slot_taken(d, new_floor, new_slot, exclude_wine_id=wine_id, exclude_slot_idx=slot_idx):
+            raise HomeAssistantError(f"L'emplacement {new_slot} est déjà occupé sur cet étage.")
+        for w in d["wines"]:
+            if w["id"] == wine_id:
+                w["slots"][slot_idx] = {"floor_id": new_floor, "slot": new_slot}
+                break
+        await _persist(d)
+
+    async def svc_remove_slot(call: ServiceCall) -> None:
+        """Supprime un emplacement. Supprime le vin si c'était le dernier."""
+        d = _get()
+        wine_id  = call.data["wine_id"]
+        slot_idx = int(call.data.get("slot_idx", 0))
+        for w in d["wines"]:
+            if w["id"] == wine_id:
+                if len(w["slots"]) <= 1:
+                    d["wines"].remove(w)
+                else:
+                    w["slots"].pop(slot_idx)
+                break
+        await _persist(d)
+
+    async def svc_remove_wine(call: ServiceCall) -> None:
+        """Supprime un vin et tous ses emplacements."""
+        d = _get()
+        d["wines"] = [w for w in d["wines"] if w["id"] != call.data["wine_id"]]
+        await _persist(d)
+
+    # ── Services de compatibilité (ancien format bottle_id) ───────────────────
+
+    async def svc_add_bottle(call: ServiceCall) -> None:
+        """Alias de add_wine pour compatibilité."""
+        await svc_add_wine(call)
+
+    async def svc_update_bottle(call: ServiceCall) -> None:
+        """Met à jour les métadonnées et/ou déplace une bouteille (bottle_id = wine_id)."""
+        d = _get()
+        bottle_id = call.data["bottle_id"]
+        updatable = [
+            "name", "vintage", "type", "appellation", "region", "producer",
+            "country", "price", "drink_from", "drink_until", "notes",
+            "tasting_notes", "food_pairing", "event", "vivino_rating",
+            "image_url", "vivino_url",
+        ]
+        new_floor = call.data.get("floor_id")
+        new_slot  = call.data.get("slot")
+        for w in d["wines"]:
+            if w["id"] == bottle_id:
+                for k in updatable:
+                    if k in call.data:
+                        w[k] = call.data[k]
+                if new_floor is not None and new_slot is not None:
+                    new_slot_int = int(new_slot)
+                    if _slot_taken(d, new_floor, new_slot_int, exclude_wine_id=bottle_id, exclude_slot_idx=0):
+                        raise HomeAssistantError(f"L'emplacement {new_slot_int} est déjà occupé sur cet étage.")
+                    if w["slots"]:
+                        w["slots"][0] = {"floor_id": new_floor, "slot": new_slot_int}
+                break
+        await _persist(d)
+
+    async def svc_remove_bottle(call: ServiceCall) -> None:
+        """Supprime une bouteille par bottle_id (= wine_id). Alias de remove_wine."""
+        d = _get()
+        d["wines"] = [w for w in d["wines"] if w["id"] != call.data["bottle_id"]]
+        await _persist(d)
+
+    async def svc_duplicate_bottle(call: ServiceCall) -> None:
+        """Duplique une bouteille vers un autre emplacement."""
+        d = _get()
+        bottle_id = call.data["bottle_id"]
+        floor_id  = call.data.get("floor_id", "")
+        slot      = int(call.data.get("slot", 0))
+        if _slot_taken(d, floor_id, slot):
+            raise HomeAssistantError(f"L'emplacement {slot} est déjà occupé sur cet étage.")
+        for w in d["wines"]:
+            if w["id"] == bottle_id:
+                w["slots"].append({"floor_id": floor_id, "slot": slot})
                 break
         await _persist(d)
 
@@ -773,12 +898,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def svc_value_snapshot(call: ServiceCall) -> None:
         """Enregistre la valeur actuelle de la cave dans l'historique."""
         d = _get()
-        bottles = d.get("bottles", [])
-        total_value = sum(
-            float(b.get("price", 0)) * int(b.get("quantity", 1))
-            for b in bottles
-        )
-        total_bottles = sum(int(b.get("quantity", 1)) for b in bottles)
+        wines = d.get("wines", [])
+        total_value   = sum(float(w.get("price", 0)) * len(w.get("slots", [])) for w in wines)
+        total_bottles = sum(len(w.get("slots", [])) for w in wines)
         today = datetime.now().strftime("%Y-%m-%d")
         history = d["cellar"].setdefault("value_history", [])
         # Remplacer si même date, sinon ajouter
@@ -792,15 +914,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         d["cellar"]["value_history"] = sorted(history, key=lambda x: x["date"])[-365:]
         await _persist(d)
 
-    hass.services.async_register(DOMAIN, "add_floor",        svc_add_floor)
-    hass.services.async_register(DOMAIN, "update_floor",     svc_update_floor)
-    hass.services.async_register(DOMAIN, "remove_floor",     svc_remove_floor)
-    hass.services.async_register(DOMAIN, "add_bottle",       svc_add_bottle)
-    hass.services.async_register(DOMAIN, "remove_bottle",    svc_remove_bottle)
-    hass.services.async_register(DOMAIN, "update_bottle",    svc_update_bottle)
-    hass.services.async_register(DOMAIN, "duplicate_bottle", svc_duplicate_bottle)
-    hass.services.async_register(DOMAIN, "rename_cellar",    svc_rename_cellar)
-    hass.services.async_register(DOMAIN, "value_snapshot",   svc_value_snapshot)
+    hass.services.async_register(DOMAIN, "add_floor",         svc_add_floor)
+    hass.services.async_register(DOMAIN, "update_floor",      svc_update_floor)
+    hass.services.async_register(DOMAIN, "remove_floor",      svc_remove_floor)
+    hass.services.async_register(DOMAIN, "add_wine",          svc_add_wine)
+    hass.services.async_register(DOMAIN, "update_wine",       svc_update_wine)
+    hass.services.async_register(DOMAIN, "add_slot",          svc_add_slot)
+    hass.services.async_register(DOMAIN, "move_slot",         svc_move_slot)
+    hass.services.async_register(DOMAIN, "remove_slot",       svc_remove_slot)
+    hass.services.async_register(DOMAIN, "remove_wine",       svc_remove_wine)
+    hass.services.async_register(DOMAIN, "rename_cellar",     svc_rename_cellar)
+    hass.services.async_register(DOMAIN, "value_snapshot",    svc_value_snapshot)
+    # Compatibilité ancien format
+    hass.services.async_register(DOMAIN, "add_bottle",        svc_add_bottle)
+    hass.services.async_register(DOMAIN, "update_bottle",     svc_update_bottle)
+    hass.services.async_register(DOMAIN, "remove_bottle",     svc_remove_bottle)
+    hass.services.async_register(DOMAIN, "duplicate_bottle",  svc_duplicate_bottle)
 
     mode = "Gemini 1.5 Flash + photo" if gemini_key else "Open Food Facts"
     _LOGGER.info("Millésime v%s démarré — %s", VERSION, mode)

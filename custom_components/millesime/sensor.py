@@ -67,17 +67,17 @@ class MillesimeBottlesSensor(MillesimeBaseSensor):
 
     @property
     def native_value(self) -> int:
-        return sum(b.get("quantity", 1) for b in self._data.get("bottles", []))
+        return sum(len(w.get("slots", [])) for w in self._data.get("wines", []))
 
     @property
     def extra_state_attributes(self) -> dict:
         by_type: dict = {}
-        for b in self._data.get("bottles", []):
-            t = b.get("type", "red")
-            by_type[t] = by_type.get(t, 0) + b.get("quantity", 1)
+        for w in self._data.get("wines", []):
+            t = w.get("type", "red")
+            by_type[t] = by_type.get(t, 0) + len(w.get("slots", []))
         return {
-            "par_type": by_type,
-            "references": len(self._data.get("bottles", [])),
+            "par_type":   by_type,
+            "references": len(self._data.get("wines", [])),
         }
 
 
@@ -96,8 +96,8 @@ class MillesimeValueSensor(MillesimeBaseSensor):
     def native_value(self) -> float:
         return round(
             sum(
-                b.get("price", 0) * b.get("quantity", 1)
-                for b in self._data.get("bottles", [])
+                w.get("price", 0) * len(w.get("slots", []))
+                for w in self._data.get("wines", [])
             ),
             2,
         )

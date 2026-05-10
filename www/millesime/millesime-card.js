@@ -36,7 +36,7 @@ const ERROR_MESSAGES = {
   no_wine_found:       "📷 Aucune étiquette de vin reconnue. Assurez-vous que l'étiquette est nette et bien éclairée.",
 };
 
-const BOTTLE_MINI = (color) => `<svg viewBox="0 0 10 26" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;display:block">
+const BOTTLE_MINI = (color, w = null) => `<svg viewBox="0 0 10 26" width="10" height="26" xmlns="http://www.w3.org/2000/svg" style="${w ? `width:${w}px;height:${Math.round(w*2.6)}px` : 'width:100%;height:auto'};display:block">
   <!-- Ombre au sol -->
   <ellipse cx="5" cy="25.3" rx="3.4" ry="0.65" fill="black" opacity="0.38"/>
   <!-- Capsule en étain -->
@@ -278,9 +278,9 @@ class MillesimeCard extends HTMLElement {
     box.className = "mm-box";
 
     if (type === "floor")     box.innerHTML = this._floorFormHTML(opts.floor);
-    if (type === "bottle")    box.innerHTML = this._bottleFormHTML(opts.bottle, opts.slot);
-    if (type === "detail")    box.innerHTML = this._detailHTML(opts.bottle);
-    if (type === "duplicate") box.innerHTML = this._duplicateFormHTML(opts.bottle);
+    if (type === "bottle")    box.innerHTML = this._bottleFormHTML(opts.wine, opts.slot);
+    if (type === "detail")    box.innerHTML = this._detailHTML(opts.wine);
+    if (type === "duplicate") box.innerHTML = this._addSlotFormHTML(opts.wine);
     if (type === "history")   box.innerHTML = this._historyHTML();
 
     overlay.appendChild(box);
@@ -291,9 +291,9 @@ class MillesimeCard extends HTMLElement {
     box.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", () => this._closeModal()));
 
     if (type === "floor")     this._bindFloorForm(box, opts.floor);
-    if (type === "bottle")    this._bindBottleForm(box, opts.bottle, opts.slot);
-    if (type === "detail")    this._bindDetailButtons(box, opts.bottle);
-    if (type === "duplicate") this._bindDuplicateForm(box, opts.bottle);
+    if (type === "bottle")    this._bindBottleForm(box, opts.wine, opts.slot);
+    if (type === "detail")    this._bindDetailButtons(box, opts.wine);
+    if (type === "duplicate") this._bindAddSlotForm(box, opts.wine);
     if (type === "history") {
       this._bindHistory(box);
     }
@@ -333,8 +333,10 @@ class MillesimeCard extends HTMLElement {
         <div class="mm-field">
           <label class="mm-label">Disposition</label>
           <select class="mm-input" id="fl-layout">
-            <option value="side_by_side" ${(floor?.layout || "side_by_side") === "side_by_side" ? "selected" : ""}>Côte à côte</option>
-            <option value="alternating" ${floor?.layout === "alternating" ? "selected" : ""}>Tête bêche</option>
+            <option value="side_by_side"   ${(floor?.layout || "side_by_side") === "side_by_side" ? "selected" : ""}>Côte à côte</option>
+            <option value="alternating"    ${floor?.layout === "alternating"    ? "selected" : ""}>Tête-bêche</option>
+            <option value="alternating_2d" ${floor?.layout === "alternating_2d" ? "selected" : ""}>Tête-bêche alterné</option>
+            <option value="quinconce"      ${floor?.layout === "quinconce"      ? "selected" : ""}>Quinconce</option>
           </select>
         </div>
       </div>
@@ -360,10 +362,10 @@ class MillesimeCard extends HTMLElement {
 
   // ── HTML formulaire bouteille ──────────────────────────────────────────────────
 
-  _bottleFormHTML(bottle, pendingSlot) {
+  _bottleFormHTML(wine, pendingSlot) {
     const floors = this._data?.cellar?.floors || [];
-    const isEdit = !!bottle;
-    const b = bottle || {};
+    const isEdit = !!wine;
+    const b = wine || {};
     return `
       <div class="mm-header">
         <span class="mm-title">${isEdit ? "Modifier le vin" : "Ajouter un vin"}</span>
@@ -436,31 +438,28 @@ class MillesimeCard extends HTMLElement {
           </div>
         </div>
         <div class="mm-row">
-          <div class="mm-field">
-            <label class="mm-label">Quantité</label>
-            <input class="mm-input" id="bt-quantity" type="number" min="1" value="${b.quantity || 1}">
-          </div>
-          <div class="mm-field">
+          <div class="mm-field" style="grid-column:1/-1">
             <label class="mm-label">Note /5</label>
             <input class="mm-input" id="bt-vrating" type="number" step="0.1" min="0" max="5" value="${b.vivino_rating || ""}">
           </div>
         </div>
 
+        ${!isEdit ? `
         <div class="mm-row">
           <div class="mm-field">
             <label class="mm-label">Étage *</label>
             <select class="mm-input" id="bt-floor">
               ${floors.map((f) =>
-                `<option value="${f.id}" ${(isEdit ? b.floor_id : pendingSlot?.floor_id) === f.id ? "selected" : ""}>${f.name}</option>`
+                `<option value="${f.id}" ${pendingSlot?.floor_id === f.id ? "selected" : ""}>${f.name}</option>`
               ).join("")}
             </select>
           </div>
           <div class="mm-field" style="grid-column:1/-1">
             <label class="mm-label">Emplacement</label>
-            <input type="hidden" id="bt-slot" value="${isEdit ? (b.slot ?? 0) : (pendingSlot?.slot ?? 0)}">
+            <input type="hidden" id="bt-slot" value="${pendingSlot?.slot ?? 0}">
             <div id="bt-slot-picker" class="sp-picker"></div>
           </div>
-        </div>
+        </div>` : ""}
 
         <div class="mm-row">
           <div class="mm-field" style="grid-column:1/-1">
@@ -495,7 +494,7 @@ class MillesimeCard extends HTMLElement {
       </div>`;
   }
 
-  _bindBottleForm(box, bottle, pendingSlot) {
+  _bindBottleForm(box, wine, pendingSlot) {
     let searchTimer;
     const qInput   = box.querySelector("#viv-query");
     const results  = box.querySelector("#viv-results");
@@ -676,7 +675,6 @@ class MillesimeCard extends HTMLElement {
         region:        txt("bt-region"),
         country:       txt("bt-country"),
         price:         num("bt-price"),
-        quantity:      int("bt-quantity") || 1,
         drink_from:    txt("bt-from"),
         drink_until:   txt("bt-until"),
         notes:         txt("bt-notes"),
@@ -688,21 +686,27 @@ class MillesimeCard extends HTMLElement {
         vivino_url:    txt("bt-vivino_url"),
       };
 
-      payload.floor_id = box.querySelector("#bt-floor")?.value || "";
-      payload.slot     = int("bt-slot");
-      if (bottle) {
-        await this._callService("update_bottle", { bottle_id: bottle.id, ...payload });
-      } else {
-        await this._callService("add_bottle", payload);
+      try {
+        if (wine) {
+          await this._hass.callService(DOMAIN, "update_wine", { wine_id: wine.id, ...payload });
+        } else {
+          payload.floor_id = box.querySelector("#bt-floor")?.value || "";
+          payload.slot     = int("bt-slot");
+          await this._hass.callService(DOMAIN, "add_wine", payload);
+        }
+        this._closeModal();
+        setTimeout(() => this._fetchData(), 500);
+      } catch (err) {
+        this._showToast("error", `Erreur : ${err.message || JSON.stringify(err)}`);
       }
     });
 
-    const renderPicker = () => this._renderSlotPicker(box, "bt-floor", "bt-slot-picker", "bt-slot", bottle?.id);
+    const renderPicker = () => this._renderSlotPicker(box, "bt-floor", "bt-slot-picker", "bt-slot");
     box.querySelector("#bt-floor")?.addEventListener("change", renderPicker);
-    renderPicker();
+    if (!wine) renderPicker();
   }
 
-  _renderSlotPicker(box, floorSelectId, pickerId, slotInputId, excludeBottleId = null) {
+  _renderSlotPicker(box, floorSelectId, pickerId, slotInputId, excludeWineId = null) {
     const floorId   = box.querySelector(`#${floorSelectId}`)?.value;
     const floor     = (this._data?.cellar?.floors || []).find(f => f.id === floorId);
     const picker    = box.querySelector(`#${pickerId}`);
@@ -712,9 +716,12 @@ class MillesimeCard extends HTMLElement {
     const cols  = floor.columns || 8;
     const total = floor.slots || cols * (floor.rows || 2);
     const occupied = {};
-    (this._data?.bottles || [])
-      .filter(b => b.floor_id === floorId && b.id !== excludeBottleId)
-      .forEach(b => { occupied[b.slot] = b; });
+    (this._data?.wines || []).forEach(w => {
+      if (w.id === excludeWineId) return;
+      w.slots?.forEach(s => {
+        if (s.floor_id === floorId) occupied[s.slot] = w;
+      });
+    });
 
     const currentSlot = parseInt(slotInput.value) || 0;
 
@@ -738,14 +745,15 @@ class MillesimeCard extends HTMLElement {
     picker.querySelectorAll(".sp-free").forEach(dot => {
       dot.addEventListener("click", () => {
         slotInput.value = dot.dataset.s;
-        this._renderSlotPicker(box, floorSelectId, pickerId, slotInputId, excludeBottleId);
+        this._renderSlotPicker(box, floorSelectId, pickerId, slotInputId, excludeWineId);
       });
     });
   }
 
   // ── Fiche détail bouteille ─────────────────────────────────────────────────────
 
-  _detailHTML(b) {
+  _detailHTML(wine) {
+    const b  = wine;
     const t  = WINE_TYPES[b.type] || WINE_TYPES.red;
     const vr = parseFloat(b.vivino_rating) || 0;
     const stars = vr > 0
@@ -770,7 +778,15 @@ class MillesimeCard extends HTMLElement {
           ${_drow("Millésime",  b.vintage)}
           ${_drow("Région",     [b.region, b.country].filter(Boolean).join(", "))}
           ${b.price ? `<div class="mm-drow"><span class="mm-drow-label">Prix</span><span class="mm-drow-value det-price-display">${b.price} €</span></div>` : ""}
-          ${_drow("Quantité",   (b.quantity || 1) > 1 ? b.quantity + " bouteilles" : "")}
+          ${(b.slots?.length > 0) ? `<div class="mm-drow" style="grid-column:1/-1">
+            <span class="mm-drow-label">Emplacements</span>
+            <span class="mm-drow-value" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:2px">
+              ${b.slots.map(s => {
+                const floor = (this._data?.cellar?.floors || []).find(f => f.id === s.floor_id);
+                return `<span style="background:var(--mm-bg2);border:1px solid var(--mm-border);border-radius:6px;padding:2px 7px;font-size:10px;white-space:nowrap">${floor ? floor.name : s.floor_id} · #${s.slot}</span>`;
+              }).join("")}
+            </span>
+          </div>` : ""}
           ${_drow("À boire",    (b.drink_from || b.drink_until)
                                 ? (b.drink_from || "?") + " — " + (b.drink_until || "?") : "")}
           ${_drow("Ajouté le",  b.added_date || "")}
@@ -783,23 +799,23 @@ class MillesimeCard extends HTMLElement {
       <div class="mm-footer">
         <button class="mm-btn mm-btn-danger" id="det-remove">🗑</button>
         <button class="mm-btn mm-btn-ghost"  id="det-price">💰 Prix</button>
-        <button class="mm-btn mm-btn-ghost"  id="det-dup">⎘ Dupliquer</button>
+        <button class="mm-btn mm-btn-ghost"  id="det-dup">+ Emplacement</button>
         <button class="mm-btn mm-btn-ghost"  id="det-edit">✏️ Modifier</button>
       </div>`;
   }
 
-  // ── Formulaire duplication ──────────────────────────────────────────────────
+  // ── Formulaire ajout d'emplacement ──────────────────────────────────────────
 
-  _duplicateFormHTML(b) {
+  _addSlotFormHTML(wine) {
     const floors = this._data?.cellar?.floors || [];
     return `
       <div class="mm-header">
-        <span class="mm-title">⎘ Dupliquer</span>
+        <span class="mm-title">+ Ajouter un emplacement</span>
         <button class="mm-close" data-close>✕</button>
       </div>
       <div class="mm-body">
         <div class="mm-notes mm-tasting" style="margin-bottom:14px">
-          Copie de <strong>${b.name}${b.vintage ? " " + b.vintage : ""}</strong>
+          Ajouter un emplacement pour <strong>${wine.name}${wine.vintage ? " " + wine.vintage : ""}</strong>
         </div>
         <div class="mm-row">
           <div class="mm-field">
@@ -814,41 +830,34 @@ class MillesimeCard extends HTMLElement {
             <div id="dup-slot-picker" class="sp-picker"></div>
           </div>
         </div>
-        <div class="mm-field">
-          <label class="mm-label">Quantité à dupliquer</label>
-          <input class="mm-input" id="dup-qty" type="number" min="1" max="24" value="1">
-        </div>
       </div>
       <div class="mm-footer">
         <button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
-        <button class="mm-btn mm-btn-primary" id="dup-submit">Dupliquer</button>
+        <button class="mm-btn mm-btn-primary" id="dup-submit">Ajouter</button>
       </div>`;
   }
 
-  _bindDuplicateForm(box, bottle) {
+  _bindAddSlotForm(box, wine) {
     box.querySelector("#dup-submit")?.addEventListener("click", async () => {
       const btn     = box.querySelector("#dup-submit");
       const floorId = box.querySelector("#dup-floor")?.value;
       const slot    = parseInt(box.querySelector("#dup-slot")?.value) || 0;
-      const qty     = parseInt(box.querySelector("#dup-qty")?.value) || 1;
       if (!floorId) { this._showToast("warning", "Sélectionnez un étage."); return; }
-      btn.textContent = "⏳ Copie en cours...";
+      btn.textContent = "⏳ Ajout en cours...";
       btn.disabled = true;
       try {
-        for (let i = 0; i < qty; i++) {
-          await this._hass.callService(DOMAIN, "duplicate_bottle", {
-            bottle_id: bottle.id,
-            floor_id:  floorId,
-            slot:      slot + i,
-          });
-        }
+        await this._hass.callService(DOMAIN, "add_slot", {
+          wine_id:  wine.id,
+          floor_id: floorId,
+          slot,
+        });
         this._closeModal();
         setTimeout(() => this._fetchData(), 600);
-        this._showToast("success", `${qty} bouteille(s) dupliquée(s) ✓`);
+        this._showToast("success", "Emplacement ajouté ✓");
       } catch(err) {
-        btn.textContent = "Dupliquer";
+        btn.textContent = "Ajouter";
         btn.disabled = false;
-        this._showToast("error", "Erreur lors de la duplication : " + (err.message || err));
+        this._showToast("error", "Erreur : " + (err.message || err));
       }
     });
 
@@ -1046,32 +1055,36 @@ class MillesimeCard extends HTMLElement {
   }
 
 
-  _bindDetailButtons(box, bottle) {
+  _bindDetailButtons(box, wine) {
 
-    // Retirer
+    // Retirer tout le vin (toutes ses bouteilles)
     box.querySelector("#det-remove")?.addEventListener("click", async () => {
-      if (confirm("Retirer cette bouteille de la cave ?")) {
+      const cnt = wine.slots?.length || 0;
+      const msg = cnt > 1
+        ? `Retirer "${wine.name}" et ses ${cnt} emplacements de la cave ?`
+        : `Retirer "${wine.name}" de la cave ?`;
+      if (confirm(msg)) {
         this._selected = null;
-        await this._callService("remove_bottle", { bottle_id: bottle.id });
+        await this._callService("remove_wine", { wine_id: wine.id });
       }
     });
 
-    // Modifier
+    // Modifier les infos du vin
     box.querySelector("#det-edit")?.addEventListener("click", () => {
       this._closeModal();
-      this._openModal("bottle", { bottle });
+      this._openModal("bottle", { wine });
     });
 
-    // Dupliquer
+    // Ajouter un emplacement
     box.querySelector("#det-dup")?.addEventListener("click", () => {
       this._closeModal();
-      this._openModal("duplicate", { bottle });
+      this._openModal("duplicate", { wine });
     });
 
     // Estimer le prix
     box.querySelector("#det-price")?.addEventListener("click", async () => {
       const btn   = box.querySelector("#det-price");
-      const query = [bottle.name, bottle.vintage, bottle.appellation].filter(Boolean).join(" ");
+      const query = [wine.name, wine.vintage, wine.appellation].filter(Boolean).join(" ");
       if (!query) { this._showToast("warning", "Nom du vin manquant."); return; }
 
       btn.textContent = "⏳ Recherche...";
@@ -1100,7 +1113,7 @@ class MillesimeCard extends HTMLElement {
 
       // Enregistrer après 1.5s
       setTimeout(async () => {
-        await this._callService("update_bottle", { bottle_id: bottle.id, price: resp.price });
+        await this._callService("update_wine", { wine_id: wine.id, price: resp.price });
         btn.textContent = "💰 Prix";
         btn.disabled    = false;
         this._showToast("success", `Prix mis à jour : ${resp.price} €`);
@@ -1118,25 +1131,25 @@ class MillesimeCard extends HTMLElement {
   }
 
   _render() {
-    const data    = this._data || DEFAULT_DATA();
-    const floors  = data.cellar?.floors || [];
-    const bottles = data.bottles || [];
+    const data   = this._data || DEFAULT_DATA();
+    const floors = data.cellar?.floors || [];
+    const wines  = data.wines || [];
     this.shadowRoot.innerHTML = CARD_CSS + `
       <div class="card">
-        ${this._renderHeader(data, bottles)}
+        ${this._renderHeader(data, wines)}
         ${this._renderFilters()}
         <div class="cellar">
           ${floors.length === 0
             ? this._renderEmpty()
-            : floors.map((f, i) => this._renderFloor(f, bottles, i)).join("")}
+            : floors.map((f, i) => this._renderFloor(f, wines, i)).join("")}
         </div>
       </div>`;
-    this._bindCardListeners(data, bottles);
+    this._bindCardListeners(data, wines);
   }
 
-  _renderHeader(data, bottles) {
-    const total  = bottles.reduce((s, b) => s + (b.quantity || 1), 0);
-    const value  = bottles.reduce((s, b) => s + (b.price || 0) * (b.quantity || 1), 0);
+  _renderHeader(data, wines) {
+    const total  = wines.reduce((s, w) => s + (w.slots?.length || 0), 0);
+    const value  = wines.reduce((s, w) => s + (w.price || 0) * (w.slots?.length || 0), 0);
     const nFloor = data.cellar?.floors?.length || 0;
     return `
       <div class="header">
@@ -1194,41 +1207,119 @@ class MillesimeCard extends HTMLElement {
       </div>`;
   }
 
-  _renderFloor(floor, allBottles, index) {
-    const fb    = allBottles.filter((b) => b.floor_id === floor.id);
+  _renderFloor(floor, allWines, index) {
+    // Build a map: slotNumber → { wine, slotIdx }
+    const slotMap = {};
+    allWines.forEach(w => {
+      w.slots?.forEach((s, si) => {
+        if (s.floor_id === floor.id) slotMap[s.slot] = { wine: w, slotIdx: si };
+      });
+    });
+
     const cols  = floor.columns || 8;
     const total = floor.slots || cols * (floor.rows || 2);
-    const isAlt = floor.layout === "alternating";
-    const pct   = Math.round((fb.length / total) * 100);
+    const isAlt  = floor.layout === "alternating";
+    const isAlt2 = floor.layout === "alternating_2d";
+    const isQc   = floor.layout === "quinconce";
+    const isCircleMode = this._config?.bottle_style === "dot";
+    const lm = this._config?.bottle_label || "none";
+    const labelExtraH = lm === "none" ? 0 : (lm === "name_vintage" || lm === "vintage_name") ? 17 : 10;
+    const rowH = (isCircleMode ? 40 : 80) + labelExtraH;
+    const pct   = Math.round((Object.keys(slotMap).length / total) * 100);
 
     const byType = {};
-    fb.forEach((b) => { byType[b.type] = (byType[b.type] || 0) + (b.quantity || 1); });
+    Object.values(slotMap).forEach(({ wine }) => {
+      byType[wine.type] = (byType[wine.type] || 0) + 1;
+    });
     const counters = Object.entries(byType)
       .map(([t, n]) => `<span class="type-count" style="color:${WINE_TYPES[t]?.color || "#C0392B"}">${n}x</span>`)
       .join("");
 
-    let dots = "";
-    for (let i = 0; i < total; i++) {
-      const bt  = fb.find((b) => b.slot === i);
-      const filteredType  = this._filter !== "all" && bt && bt.type !== this._filter;
-      const filteredEvent = this._filterEvent !== "all" && bt && (bt.event || "") !== this._filterEvent;
+    const _dot = (i, extraStyle = "") => {
+      const entry   = slotMap[i];
+      const wine    = entry?.wine || null;
+      const slotIdx = entry?.slotIdx ?? -1;
+      const filteredType  = this._filter !== "all" && wine && wine.type !== this._filter;
+      const filteredEvent = this._filterEvent !== "all" && wine && (wine.event || "") !== this._filterEvent;
       const filtered = filteredType || filteredEvent;
-      const wt  = bt ? WINE_TYPES[bt.type] || WINE_TYPES.red : null;
-      const sel = bt && bt.id === this._selected;
-      const alt = isAlt && i % 2 === 1;
-      dots += `<div
-        class="dot ${bt ? "dot--filled" : "dot--empty"} ${sel ? "dot--selected" : ""} ${alt ? "dot--alt" : ""}"
-        data-slot="${i}" data-floor-id="${floor.id}"
-        style="${bt ? `--dot-glow:${wt.glow};opacity:${filtered ? 0.15 : 1}` : ""}"
-        title="${bt ? bt.name + (bt.vintage ? " " + bt.vintage : "") : "Vide — cliquer pour ajouter"}"
-      >${bt ? BOTTLE_MINI(wt.color) : ""}</div>`;
+      const wt  = wine ? WINE_TYPES[wine.type] || WINE_TYPES.red : null;
+      const sel = wine && wine.id === this._selected;
+      const row2d = Math.floor(i / cols);
+      const col2d = i % cols;
+      const alt = (isAlt && i % 2 === 1) || (isAlt2 && (row2d + col2d) % 2 === 1);
+      const dotStyle = wine ? `--dot-glow:${wt.glow};opacity:${filtered ? 0.15 : 1}` : "";
+      const isCircle = (this._config?.bottle_style === "dot");
+
+      let labelEl = "";
+      if (wine) {
+        const lm = this._config?.bottle_label || "none";
+        if (lm !== "none") {
+          const nm = (wine.name || "").trim();
+          const yr = (wine.vintage || "").trim();
+          const short = (s, n) => s.length > n ? s.slice(0, n - 1) + "…" : s;
+          const nbsp = s => s.replace(/ /g, "\u00A0");
+          let txt = "";
+          let txt2 = "";
+          if      (lm === "vintage")      txt = yr;
+          else if (lm === "name")         txt = nbsp(short(nm, 15));
+          else if (lm === "name_vintage") { txt = nbsp(short(nm, 12)); txt2 = yr; }
+          else if (lm === "vintage_name") { txt = yr; txt2 = nbsp(short(nm, 12)); }
+          if (txt || txt2) {
+            const inner = txt2
+              ? `<span style="display:block;white-space:nowrap">${txt}</span><span style="display:block;white-space:nowrap">${txt2}</span>`
+              : txt;
+            labelEl = `<span class="dot-label" style="color:${wt.color};text-align:center${txt2 ? "" : ";white-space:nowrap"}">${inner}</span>`;
+          }
+        }
+      }
+
+      // En mode cercle + tête-bêche : positions alternées = cercle plus petit (pas de rotation)
+      const circleSize = isCircle ? (alt ? 28 : 40) : 40;
+      const bottleContent = wine
+        ? (isCircle
+            ? `<svg viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;display:block"><circle cx="5" cy="5" r="5" fill="${wt.color}"/><circle cx="5" cy="5" r="5" fill="white" opacity="0.12"/><ellipse cx="3.5" cy="3.5" rx="1.5" ry="1" fill="white" opacity="0.2"/></svg>`
+            : BOTTLE_MINI(wt.color))
+        : (isCircle
+            ? `<svg viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;display:block"><circle cx="5" cy="5" r="4.5" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="0.8" stroke-dasharray="1.8 1.2"/></svg>`
+            : "");
+
+      const circleInlineStyle = isCircle ? `height:${circleSize}px;width:${circleSize}px;aspect-ratio:1;border-radius:50%;${wine ? "" : "border:none;"}` : "";
+      const dotEl = `<div
+        class="dot ${wine ? "dot--filled" : "dot--empty"} ${sel ? "dot--selected" : ""} ${!isCircle && alt ? "dot--alt" : ""}"
+        data-slot="${i}" data-floor-id="${floor.id}" data-wine-id="${wine?.id || ""}" data-slot-idx="${slotIdx}"
+        style="${[dotStyle, circleInlineStyle].filter(Boolean).join("")}"
+        title="${wine ? wine.name + (wine.vintage ? " " + wine.vintage : "") : "Vide — cliquer pour ajouter"}"
+      >${bottleContent}</div>`;
+
+      return `<div class="dot-cell${labelEl ? " dot-cell--labeled" : ""}" style="${extraStyle}">${dotEl}${labelEl}</div>`;
+    };
+
+    let dots = "";
+    let dotsStyle = `grid-template-columns:repeat(${cols},1fr);grid-auto-rows:${rowH}px`;
+
+    if (isQc) {
+      // Grille double-colonne : chaque bouteille occupe 2 colonnes
+      // Les rangées impaires sont décalées d'une colonne → quinconce parfait
+      dotsStyle = `grid-template-columns:repeat(${cols * 2},1fr);grid-auto-columns:1fr;grid-auto-rows:${rowH}px;overflow:hidden`;
+      const numRows = Math.ceil(total / cols);
+      for (let row = 0; row < numRows; row++) {
+        const odd = row % 2 === 1;
+        for (let col = 0; col < cols; col++) {
+          const i = row * cols + col;
+          if (i >= total) break;
+          const gc = odd ? col * 2 + 2 : col * 2 + 1;
+          dots += _dot(i, `grid-column:${gc}/span 2`);
+        }
+      }
+    } else {
+      for (let i = 0; i < total; i++) dots += _dot(i);
     }
 
     return `
       <div class="floor" style="animation-delay:${index * 0.06}s">
         <div class="floor-rack">
           <div class="floor-counters">${counters}</div>
-          <div class="floor-dots" style="grid-template-columns:repeat(${cols},1fr)">${dots}</div>
+          <div class="floor-dots" style="${dotsStyle}">${dots}</div>
           <div class="floor-actions">
             <button class="icon-btn" data-edit-floor="${floor.id}" title="Modifier">⚙</button>
             <button class="icon-btn" data-del-floor="${floor.id}"  title="Supprimer">✕</button>
@@ -1242,7 +1333,7 @@ class MillesimeCard extends HTMLElement {
 
   // ── Listeners carte ────────────────────────────────────────────────────────────
 
-  _bindCardListeners(data, bottles) {
+  _bindCardListeners(data, wines) {
     const s = this.shadowRoot;
 
     // Filtres par type et événement (selects)
@@ -1270,13 +1361,14 @@ class MillesimeCard extends HTMLElement {
       dot.addEventListener("click", () => {
         const slot    = parseInt(dot.dataset.slot);
         const floorId = dot.dataset.floorId;
-        const bt      = bottles.find((b) => b.floor_id === floorId && b.slot === slot);
-        if (bt) {
-          if (this._selected === bt.id) {
+        const wineId  = dot.dataset.wineId;
+        const wine    = wineId ? wines.find(w => w.id === wineId) : null;
+        if (wine) {
+          if (this._selected === wine.id) {
             this._selected = null;
-            this._openModal("detail", { bottle: bt });
+            this._openModal("detail", { wine });
           } else {
-            this._selected = bt.id;
+            this._selected = wine.id;
             this._render();
           }
         } else {
@@ -1298,7 +1390,7 @@ class MillesimeCard extends HTMLElement {
         e.stopPropagation();
         const fid   = btn.dataset.delFloor;
         const floor = data.cellar.floors.find((f) => f.id === fid);
-        const cnt   = bottles.filter((b) => b.floor_id === fid).length;
+        const cnt   = wines.reduce((s, w) => s + (w.slots?.filter(sl => sl.floor_id === fid).length || 0), 0);
         const msg   = cnt > 0
           ? `Supprimer "${floor?.name}" et ses ${cnt} bouteille(s) ?`
           : `Supprimer l'étage "${floor?.name}" ?`;
@@ -1310,9 +1402,10 @@ class MillesimeCard extends HTMLElement {
     s.querySelectorAll(".dot--filled").forEach((dot) => {
       dot.setAttribute("draggable", "true");
       dot.addEventListener("dragstart", (e) => {
-        const bt = bottles.find(b => b.floor_id === dot.dataset.floorId && b.slot === parseInt(dot.dataset.slot));
-        if (!bt) return;
-        e.dataTransfer.setData("text/plain", bt.id);
+        const wineId  = dot.dataset.wineId;
+        const slotIdx = dot.dataset.slotIdx;
+        if (!wineId) return;
+        e.dataTransfer.setData("text/plain", `${wineId}:${slotIdx}`);
         e.dataTransfer.effectAllowed = "move";
         setTimeout(() => dot.classList.add("dot--dragging"), 0);
       });
@@ -1332,11 +1425,12 @@ class MillesimeCard extends HTMLElement {
       dot.addEventListener("drop", async (e) => {
         e.preventDefault();
         dot.classList.remove("dot--drag-over");
-        const bottleId  = e.dataTransfer.getData("text/plain");
-        const targetSlot  = parseInt(dot.dataset.slot);
+        const [wineId, slotIdxStr] = (e.dataTransfer.getData("text/plain") || "").split(":");
+        const slotIdx    = parseInt(slotIdxStr);
+        const targetSlot = parseInt(dot.dataset.slot);
         const targetFloor = dot.dataset.floorId;
-        if (!bottleId || isNaN(targetSlot)) return;
-        await this._callService("update_bottle", { bottle_id: bottleId, floor_id: targetFloor, slot: targetSlot });
+        if (!wineId || isNaN(slotIdx) || isNaN(targetSlot)) return;
+        await this._callService("move_slot", { wine_id: wineId, slot_idx: slotIdx, floor_id: targetFloor, slot: targetSlot });
       });
     });
   }
@@ -1349,7 +1443,7 @@ class MillesimeCard extends HTMLElement {
 
 // ── Utilitaires ────────────────────────────────────────────────────────────────
 
-const DEFAULT_DATA = () => ({ cellar: { name: "Millésime", floors: [] }, bottles: [] });
+const DEFAULT_DATA = () => ({ cellar: { name: "Millésime", floors: [] }, wines: [] });
 
 function _drow(label, value) {
   if (!value) return "";
@@ -1469,8 +1563,8 @@ const CARD_CSS = `<style>
 .icon-btn { background:none; border:none; cursor:pointer; font-size:11px; padding:2px; opacity:0.3; color:var(--cream); transition:opacity 0.15s; line-height:1; }
 .icon-btn:hover { opacity:1; }
 
-.floor-dots { display:grid; flex:1; gap:3px; align-items:center; justify-items:center; }
-.dot { width:min(100%, 22px); aspect-ratio:10/26; cursor:pointer; transition:transform 0.12s, filter 0.12s; display:flex; align-items:center; justify-content:center; }
+.floor-dots { display:grid; flex:1; gap:3px; align-items:center; justify-items:center; overflow:hidden; }
+.dot { height:80px; aspect-ratio:10/26; cursor:pointer; transition:transform 0.12s, filter 0.12s; display:flex; align-items:center; justify-content:center; }
 .dot--empty { border:1px dashed var(--bg-4); border-radius:10px 10px 3px 3px; opacity:0.3; }
 .dot--empty:hover { opacity:0.55; transform:scale(1.08); }
 .dot--filled { filter:drop-shadow(0 2px 4px var(--dot-glow,rgba(192,57,43,0.35))); }
@@ -1552,8 +1646,12 @@ const MODAL_CSS = `
 .mm-body  { padding:16px 20px; flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; }
 .mm-footer {
   padding:12px 20px; border-top:1px solid var(--mm-border);
-  display:flex; gap:8px; justify-content:flex-end;
+  display:flex; gap:8px; justify-content:flex-end; align-items:center;
   flex-shrink:0; background:var(--mm-bg1);
+}
+.mm-sync-label {
+  font-size:11px; color:var(--mm-muted); margin-right:auto;
+  display:flex; align-items:center; gap:5px; cursor:pointer;
 }
 .mm-field  { margin-bottom:12px; }
 .mm-label  { display:block; font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--mm-red); margin-bottom:4px; }
@@ -1673,6 +1771,18 @@ const MODAL_CSS = `
 .mm-notes        { font-size:12px; color:var(--mm-muted); background:var(--mm-bg2); padding:10px 12px; border-radius:8px; border-left:2px solid var(--mm-red); line-height:1.55; margin-bottom:6px; }
 .mm-tasting      { border-left-color:var(--mm-red); font-style:italic; }
 .mm-pairing      { border-left-color:#27AE8F; font-style:normal; }
+
+/* ─── Cellule bouteille (dot-cell) ─── */
+.dot-cell { display:flex; flex-direction:column; align-items:center; justify-content:flex-start; }
+/* ─── Étiquette bouteille (bottle_label) ─── */
+.dot-label {
+  display:block; font-size:6px; font-weight:700; text-align:center; line-height:1.2;
+  white-space:nowrap; padding-top:2px; margin:0 auto;
+  text-transform:uppercase; letter-spacing:0.4px; opacity:0.9;
+}
+/* ─── Mode cercle (bottle_style: dot) ─── */
+.dot--circle { aspect-ratio:1; height:40px; border-radius:50%; overflow:hidden; }
+.dot--circle.dot--empty { border-radius:50%; overflow:visible; }
 `;
 
 // ── Enregistrement ─────────────────────────────────────────────────────────────
