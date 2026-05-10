@@ -94,6 +94,10 @@ update_bottle:
     bottle_id:
       description: ID de la bouteille
       required: true
+    floor_id:
+      description: ID de l'étage de destination (déplacement)
+    slot:
+      description: Numéro d'emplacement de destination (déplacement)
     name:
       description: Nom du vin
     vintage:

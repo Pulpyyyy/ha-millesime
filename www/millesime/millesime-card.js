@@ -36,6 +36,15 @@ const ERROR_MESSAGES = {
   no_wine_found:       "📷 Aucune étiquette de vin reconnue. Assurez-vous que l'étiquette est nette et bien éclairée.",
 };
 
+const BOTTLE_MINI = (color) => `<svg viewBox="0 0 10 26" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;display:block">
+  <rect x="3" y="0" width="4" height="3.5" rx="1"   fill="#8B5E3C"/>
+  <rect x="3.5" y="3" width="3" height="5"          fill="${color}"/>
+  <path d="M3.5,8 L1,13 L9,13 L6.5,8 Z"            fill="${color}"/>
+  <rect x="1" y="13" width="8" height="10" rx="1.2" fill="${color}"/>
+  <rect x="1.5" y="14.5" width="7" height="5" rx="0.4" fill="white" opacity="0.65"/>
+  <ellipse cx="5" cy="24" rx="4" ry="1.2"           fill="${color}" opacity="0.9"/>
+</svg>`;
+
 const GLASS_SVG = `<svg viewBox="0 0 40 56" xmlns="http://www.w3.org/2000/svg">
   <path d="M8 2 Q8 20 20 30 Q32 20 32 2 Z" fill="#C0392B" opacity="0.92"/>
   <path d="M11 6 Q11 19 20 28" fill="none" stroke="#E74C3C" stroke-width="1" opacity="0.35"/>
@@ -64,11 +73,26 @@ class MillesimeCard extends HTMLElement {
 
   set hass(hass) {
     const first = !this._hass;
+    const themeChanged = this._hass?.themes !== hass.themes;
     this._hass = hass;
     if (first) { this._subscribeUpdates(); this._fetchData(); }
+    if (first || themeChanged) this._applyTheme();
   }
 
   getCardSize() { return 8; }
+
+  _applyTheme() {
+    const themeVars = this._hass?.themes?.themes?.[this._hass?.themes?.theme] || {};
+    const props = [
+      'primary-background-color', 'secondary-background-color', 'card-background-color',
+      'primary-text-color', 'secondary-text-color', 'divider-color',
+      'primary-color', 'secondary-color', 'accent-color',
+    ];
+    props.forEach(p => {
+      if (themeVars[p]) this.style.setProperty(`--${p}`, themeVars[p]);
+      else this.style.removeProperty(`--${p}`);
+    });
+  }
 
   // ── WebSocket ────────────────────────────────────────────────────────────────
 
@@ -213,6 +237,10 @@ class MillesimeCard extends HTMLElement {
 
     const overlay = document.createElement("div");
     overlay.className = "mm-overlay";
+    const themeVars = this._hass?.themes?.themes?.[this._hass?.themes?.theme] || {};
+    ['primary-background-color','secondary-background-color','card-background-color',
+     'primary-text-color','secondary-text-color','divider-color','primary-color','secondary-color','accent-color']
+      .forEach(p => { if (themeVars[p]) overlay.style.setProperty(`--${p}`, themeVars[p]); });
     const box = document.createElement("div");
     box.className = "mm-box";
 
@@ -385,21 +413,21 @@ class MillesimeCard extends HTMLElement {
           </div>
         </div>
 
-        ${!isEdit ? `
         <div class="mm-row">
           <div class="mm-field">
             <label class="mm-label">Étage *</label>
             <select class="mm-input" id="bt-floor">
               ${floors.map((f) =>
-                `<option value="${f.id}" ${pendingSlot?.floor_id === f.id ? "selected" : ""}>${f.name}</option>`
+                `<option value="${f.id}" ${(isEdit ? b.floor_id : pendingSlot?.floor_id) === f.id ? "selected" : ""}>${f.name}</option>`
               ).join("")}
             </select>
           </div>
-          <div class="mm-field">
-            <label class="mm-label">Emplacement n°</label>
-            <input class="mm-input" id="bt-slot" type="number" min="0" value="${pendingSlot?.slot ?? 0}">
+          <div class="mm-field" style="grid-column:1/-1">
+            <label class="mm-label">Emplacement</label>
+            <input type="hidden" id="bt-slot" value="${isEdit ? (b.slot ?? 0) : (pendingSlot?.slot ?? 0)}">
+            <div id="bt-slot-picker" class="sp-picker"></div>
           </div>
-        </div>` : ""}
+        </div>
 
         <div class="mm-row">
           <div class="mm-field" style="grid-column:1/-1">
@@ -549,7 +577,7 @@ class MillesimeCard extends HTMLElement {
       const url = URL.createObjectURL(file);
       imgWrap.innerHTML = `<div class="mm-photo-loading">
         <img src="${url}" style="width:80px;border-radius:8px;opacity:0.6;display:block;margin:0 auto 6px">
-        <div style="text-align:center;font-size:11px;color:#888">
+        <div style="text-align:center;font-size:11px;color:var(--mm-muted,#888)">
           <span class="mm-spinner"></span> Analyse de l'étiquette...
         </div>
       </div>`;
@@ -627,13 +655,58 @@ class MillesimeCard extends HTMLElement {
         vivino_url:    txt("bt-vivino_url"),
       };
 
+      payload.floor_id = box.querySelector("#bt-floor")?.value || "";
+      payload.slot     = int("bt-slot");
       if (bottle) {
         await this._callService("update_bottle", { bottle_id: bottle.id, ...payload });
       } else {
-        payload.floor_id = box.querySelector("#bt-floor")?.value || "";
-        payload.slot     = int("bt-slot");
         await this._callService("add_bottle", payload);
       }
+    });
+
+    const renderPicker = () => this._renderSlotPicker(box, "bt-floor", "bt-slot-picker", "bt-slot", bottle?.id);
+    box.querySelector("#bt-floor")?.addEventListener("change", renderPicker);
+    renderPicker();
+  }
+
+  _renderSlotPicker(box, floorSelectId, pickerId, slotInputId, excludeBottleId = null) {
+    const floorId   = box.querySelector(`#${floorSelectId}`)?.value;
+    const floor     = (this._data?.cellar?.floors || []).find(f => f.id === floorId);
+    const picker    = box.querySelector(`#${pickerId}`);
+    const slotInput = box.querySelector(`#${slotInputId}`);
+    if (!picker || !floor) return;
+
+    const cols  = floor.columns || 8;
+    const total = floor.slots || cols * (floor.rows || 2);
+    const occupied = {};
+    (this._data?.bottles || [])
+      .filter(b => b.floor_id === floorId && b.id !== excludeBottleId)
+      .forEach(b => { occupied[b.slot] = b; });
+
+    const currentSlot = parseInt(slotInput.value) || 0;
+
+    let dots = "";
+    for (let i = 0; i < total; i++) {
+      const bt   = occupied[i];
+      const wt   = bt ? (WINE_TYPES[bt.type] || WINE_TYPES.red) : null;
+      const isSel = !bt && i === currentSlot;
+      dots += `<div class="sp-dot ${bt ? "sp-taken" : "sp-free"}${isSel ? " sp-sel" : ""}"
+        data-s="${i}"
+        style="${bt ? `--sp-c:${wt.color}` : isSel ? "--sp-c:#a78bfa" : ""}"
+        title="${bt ? bt.name + (bt.vintage ? " " + bt.vintage : "") : "Emplacement " + i}"></div>`;
+    }
+
+    const warn = occupied[currentSlot]
+      ? `<span style="color:#e74c3c;margin-left:6px">⚠ occupé</span>` : "";
+    picker.innerHTML = `
+      <div class="sp-grid" style="grid-template-columns:repeat(${cols},1fr)">${dots}</div>
+      <div class="sp-label">Emplacement sélectionné : <strong>${currentSlot}</strong>${warn}</div>`;
+
+    picker.querySelectorAll(".sp-free").forEach(dot => {
+      dot.addEventListener("click", () => {
+        slotInput.value = dot.dataset.s;
+        this._renderSlotPicker(box, floorSelectId, pickerId, slotInputId, excludeBottleId);
+      });
     });
   }
 
@@ -657,7 +730,7 @@ class MillesimeCard extends HTMLElement {
           <div class="mm-detail-sub">${[b.producer, b.appellation].filter(Boolean).join(" · ")}</div>
           ${vr > 0 ? `
             <div style="color:${t.color};font-size:20px;margin-top:10px;letter-spacing:2px">${stars}</div>
-            <div style="color:#555;font-size:11px;margin-top:2px">${vr.toFixed(1)} / 5</div>` : ""}
+            <div style="color:var(--mm-muted,#555);font-size:11px;margin-top:2px">${vr.toFixed(1)} / 5</div>` : ""}
           ${b.vivino_url ? `<a href="${b.vivino_url}" target="_blank" class="mm-vivino-link">Voir sur Vivino →</a>` : ""}
         </div>
         <div class="mm-detail-grid">
@@ -702,9 +775,10 @@ class MillesimeCard extends HTMLElement {
               ${floors.map(f => `<option value="${f.id}">${f.name}</option>`).join("")}
             </select>
           </div>
-          <div class="mm-field">
-            <label class="mm-label">Emplacement n°</label>
-            <input class="mm-input" id="dup-slot" type="number" min="0" value="0">
+          <div class="mm-field" style="grid-column:1/-1">
+            <label class="mm-label">Emplacement</label>
+            <input type="hidden" id="dup-slot" value="0">
+            <div id="dup-slot-picker" class="sp-picker"></div>
           </div>
         </div>
         <div class="mm-field">
@@ -744,6 +818,10 @@ class MillesimeCard extends HTMLElement {
         this._showToast("error", "Erreur lors de la duplication : " + (err.message || err));
       }
     });
+
+    const renderDupPicker = () => this._renderSlotPicker(box, "dup-floor", "dup-slot-picker", "dup-slot");
+    box.querySelector("#dup-floor")?.addEventListener("change", renderDupPicker);
+    renderDupPicker();
   }
 
   // ── Historique valeur cave ──────────────────────────────────────────────────
@@ -758,7 +836,7 @@ class MillesimeCard extends HTMLElement {
       </div>
       <div class="mm-body">
         ${history.length === 0 ? `
-          <div style="text-align:center;padding:30px 0;color:#555">
+          <div style="text-align:center;padding:30px 0;color:var(--mm-muted,#555)">
             <div style="font-size:32px;margin-bottom:10px">📊</div>
             <div>Aucun historique enregistré.</div>
             <div style="font-size:11px;margin-top:6px">Utilisez "Enregistrer la valeur" pour commencer.</div>
@@ -777,7 +855,7 @@ class MillesimeCard extends HTMLElement {
               <span class="hist-lbl">Relevés</span>
             </div>
           </div>
-          <div id="hist-chart-wrap" style="width:100%;height:180px;margin-top:12px;background:#0D0D0D;border-radius:8px;border:1px solid #222"></div>
+          <div id="hist-chart-wrap" style="width:100%;height:180px;margin-top:12px;background:var(--mm-bg0,#0D0D0D);border-radius:8px;border:1px solid var(--mm-border,#222)"></div>
           <div class="hist-table">
             ${[...history].reverse().slice(0, 12).map(h => `
               <div class="hist-row">
@@ -829,17 +907,24 @@ class MillesimeCard extends HTMLElement {
   _renderChart(wrap, history) {
     wrap.innerHTML = "";
 
+    const tv      = this._hass?.themes?.themes?.[this._hass?.themes?.theme] || {};
+    const cBg     = tv['primary-background-color']  || '#0D0D0D';
+    const cGrid   = tv['divider-color']              || '#222';
+    const cMuted  = tv['secondary-text-color']       || '#555';
+    const cText   = tv['primary-text-color']         || '#EDE0CC';
+    const cAccent = tv['primary-color']              || '#C0392B';
+
     if (!history || history.length === 0) {
-      wrap.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#444;font-size:12px;font-family:Inter,sans-serif">Aucun relevé</div>';
+      wrap.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:${cMuted};font-size:12px;font-family:Inter,sans-serif">Aucun relevé</div>`;
       return;
     }
 
     if (history.length === 1) {
       const h = history[0];
-      wrap.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#888;font-size:12px;font-family:Inter,sans-serif;gap:6px">
-        <div style="font-size:22px;font-weight:700;color:#EDE0CC;font-family:Playfair Display,serif">${h.value} €</div>
+      wrap.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:${cMuted};font-size:12px;font-family:Inter,sans-serif;gap:6px">
+        <div style="font-size:22px;font-weight:700;color:${cText};font-family:Playfair Display,serif">${h.value} €</div>
         <div>${h.date} · ${h.bottles} bouteilles</div>
-        <div style="color:#555;font-size:11px;margin-top:4px">Ajoutez un 2ᵉ relevé pour voir l'évolution</div>
+        <div style="color:${cMuted};font-size:11px;margin-top:4px">Ajoutez un 2ᵉ relevé pour voir l'évolution</div>
       </div>`;
       return;
     }
@@ -869,25 +954,25 @@ class MillesimeCard extends HTMLElement {
     // Dégradé
     const defs = mk("defs");
     const grad = at(mk("linearGradient"), { id: "cg", x1:"0", y1:"0", x2:"0", y2:"1" });
-    const s1   = at(mk("stop"), { offset:"0%",   "stop-color":"#C0392B", "stop-opacity":"0.4" });
-    const s2   = at(mk("stop"), { offset:"100%", "stop-color":"#C0392B", "stop-opacity":"0.02" });
+    const s1   = at(mk("stop"), { offset:"0%",   "stop-color":cAccent, "stop-opacity":"0.4" });
+    const s2   = at(mk("stop"), { offset:"100%", "stop-color":cAccent, "stop-opacity":"0.02" });
     grad.appendChild(s1); grad.appendChild(s2); defs.appendChild(grad); svg.appendChild(defs);
 
     // Fond
-    svg.appendChild(at(mk("rect"), { x:0, y:0, width:W, height:H, fill:"#0D0D0D" }));
+    svg.appendChild(at(mk("rect"), { x:0, y:0, width:W, height:H, fill:cBg }));
 
     // Grilles horizontales
     for (let g = 0; g <= 4; g++) {
       const v = hi - span * g / 4;
       const y = (pad.t + ch * g / 4).toFixed(1);
-      svg.appendChild(at(mk("line"), { x1: pad.l, y1: y, x2: W - pad.r, y2: y, stroke:"#222", "stroke-width":"1" }));
-      const txt = at(mk("text"), { x: pad.l - 5, y: (parseFloat(y) + 4).toFixed(1), "text-anchor":"end", fill:"#555", "font-size":"10", "font-family":"Inter,sans-serif" });
+      svg.appendChild(at(mk("line"), { x1: pad.l, y1: y, x2: W - pad.r, y2: y, stroke:cGrid, "stroke-width":"1" }));
+      const txt = at(mk("text"), { x: pad.l - 5, y: (parseFloat(y) + 4).toFixed(1), "text-anchor":"end", fill:cMuted, "font-size":"10", "font-family":"Inter,sans-serif" });
       txt.textContent = Math.round(v) + "€";
       svg.appendChild(txt);
     }
 
     // Axe gauche
-    svg.appendChild(at(mk("line"), { x1: pad.l, y1: pad.t, x2: pad.l, y2: pad.t + ch, stroke:"#333", "stroke-width":"1" }));
+    svg.appendChild(at(mk("line"), { x1: pad.l, y1: pad.t, x2: pad.l, y2: pad.t + ch, stroke:cGrid, "stroke-width":"1" }));
 
     // Aire
     const pts = history.map((h, i) => `${px(i).toFixed(1)},${py(h.value).toFixed(1)}`).join(" ");
@@ -897,18 +982,18 @@ class MillesimeCard extends HTMLElement {
     svg.appendChild(at(mk("path"), { d: areaD, fill:"url(#cg)" }));
 
     // Courbe
-    const line = at(mk("polyline"), { points: pts, fill:"none", stroke:"#C0392B", "stroke-width":"2.5", "stroke-linejoin":"round", "stroke-linecap":"round" });
+    const line = at(mk("polyline"), { points: pts, fill:"none", stroke:cAccent, "stroke-width":"2.5", "stroke-linejoin":"round", "stroke-linecap":"round" });
     svg.appendChild(line);
 
     // Points + dates X
     const step = Math.max(1, Math.floor(history.length / 5));
     history.forEach((h, i) => {
       // Point
-      const dot = at(mk("circle"), { cx: px(i).toFixed(1), cy: py(h.value).toFixed(1), r:"3.5", fill:"#E74C3C", stroke:"#0D0D0D", "stroke-width":"1.5" });
+      const dot = at(mk("circle"), { cx: px(i).toFixed(1), cy: py(h.value).toFixed(1), r:"3.5", fill:cAccent, stroke:cBg, "stroke-width":"1.5" });
       svg.appendChild(dot);
       // Label X
       if (i % step === 0 || i === history.length - 1) {
-        const xt = at(mk("text"), { x: px(i).toFixed(1), y: H - 8, "text-anchor":"middle", fill:"#555", "font-size":"9", "font-family":"Inter,sans-serif" });
+        const xt = at(mk("text"), { x: px(i).toFixed(1), y: H - 8, "text-anchor":"middle", fill:cMuted, "font-size":"9", "font-family":"Inter,sans-serif" });
         xt.textContent = h.date.slice(5);
         svg.appendChild(xt);
       }
@@ -918,7 +1003,7 @@ class MillesimeCard extends HTMLElement {
     const last = history[history.length - 1];
     const lx = px(history.length - 1);
     const ly = py(last.value);
-    const balloon = at(mk("rect"), { x: lx - 28, y: ly - 22, width: 56, height: 18, rx: 5, fill:"#C0392B" });
+    const balloon = at(mk("rect"), { x: lx - 28, y: ly - 22, width: 56, height: 18, rx: 5, fill:cAccent });
     svg.appendChild(balloon);
     const blt = at(mk("text"), { x: lx, y: ly - 9, "text-anchor":"middle", fill:"white", "font-size":"10", "font-weight":"700", "font-family":"Inter,sans-serif" });
     blt.textContent = last.value + " €";
@@ -1101,9 +1186,9 @@ class MillesimeCard extends HTMLElement {
       dots += `<div
         class="dot ${bt ? "dot--filled" : "dot--empty"} ${sel ? "dot--selected" : ""} ${alt ? "dot--alt" : ""}"
         data-slot="${i}" data-floor-id="${floor.id}"
-        style="${bt ? `--dot-color:${wt.color};--dot-glow:${wt.glow};opacity:${filtered ? 0.15 : 1}` : ""}"
+        style="${bt ? `--dot-glow:${wt.glow};opacity:${filtered ? 0.15 : 1}` : ""}"
         title="${bt ? bt.name + (bt.vintage ? " " + bt.vintage : "") : "Vide — cliquer pour ajouter"}"
-      ></div>`;
+      >${bt ? BOTTLE_MINI(wt.color) : ""}</div>`;
     }
 
     return `
@@ -1187,6 +1272,40 @@ class MillesimeCard extends HTMLElement {
         if (confirm(msg)) await this._callService("remove_floor", { floor_id: fid });
       })
     );
+
+    // ── Glisser-déposer ────────────────────────────────────────────────────────
+    s.querySelectorAll(".dot--filled").forEach((dot) => {
+      dot.setAttribute("draggable", "true");
+      dot.addEventListener("dragstart", (e) => {
+        const bt = bottles.find(b => b.floor_id === dot.dataset.floorId && b.slot === parseInt(dot.dataset.slot));
+        if (!bt) return;
+        e.dataTransfer.setData("text/plain", bt.id);
+        e.dataTransfer.effectAllowed = "move";
+        setTimeout(() => dot.classList.add("dot--dragging"), 0);
+      });
+      dot.addEventListener("dragend", () => {
+        dot.classList.remove("dot--dragging");
+        s.querySelectorAll(".dot--drag-over").forEach(d => d.classList.remove("dot--drag-over"));
+      });
+    });
+
+    s.querySelectorAll(".dot--empty").forEach((dot) => {
+      dot.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        dot.classList.add("dot--drag-over");
+      });
+      dot.addEventListener("dragleave", () => dot.classList.remove("dot--drag-over"));
+      dot.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        dot.classList.remove("dot--drag-over");
+        const bottleId  = e.dataTransfer.getData("text/plain");
+        const targetSlot  = parseInt(dot.dataset.slot);
+        const targetFloor = dot.dataset.floorId;
+        if (!bottleId || isNaN(targetSlot)) return;
+        await this._callService("update_bottle", { bottle_id: bottleId, floor_id: targetFloor, slot: targetSlot });
+      });
+    });
   }
 
   disconnectedCallback() {
@@ -1215,9 +1334,19 @@ const CARD_CSS = `<style>
 :host {
   display: block; font-family: 'Inter', sans-serif;
   --red:#C0392B; --red-h:#E74C3C; --gold:#C9A84C;
-  --bg-0:#080808; --bg-1:#111; --bg-2:#181818; --bg-3:#222; --bg-4:#2A2A2A;
-  --cream:#EDE0CC; --muted:#5A5A5A; --border:#222;
-  --wood-dk:#1C1208; --wood-md:#2A1A08; --wood-lt:#4A2A08;
+  --accent: var(--primary-color, #C0392B);
+  --accent-h: var(--secondary-color, #E74C3C);
+  --bg-0: var(--primary-background-color, #080808);
+  --bg-1: var(--card-background-color, #111);
+  --bg-2: var(--secondary-background-color, #181818);
+  --bg-3: color-mix(in srgb, var(--card-background-color, #222) 70%, var(--primary-text-color, white) 30%);
+  --bg-4: color-mix(in srgb, var(--card-background-color, #2A2A2A) 55%, var(--primary-text-color, white) 45%);
+  --cream: var(--primary-text-color, #EDE0CC);
+  --muted: var(--secondary-text-color, #5A5A5A);
+  --border: var(--divider-color, #222);
+  --wood-dk: color-mix(in srgb, #1C1208 65%, var(--card-background-color, #000) 35%);
+  --wood-md: color-mix(in srgb, #3D2510 65%, var(--card-background-color, #000) 35%);
+  --wood-lt: color-mix(in srgb, #6B3A15 65%, var(--card-background-color, #000) 35%);
 }
 * { box-sizing:border-box; margin:0; padding:0; }
 
@@ -1230,7 +1359,7 @@ const CARD_CSS = `<style>
 .header {
   display:flex; align-items:flex-start; gap:10px;
   padding:12px 14px 10px;
-  background:linear-gradient(160deg,#180808 0%,#111 100%);
+  background:linear-gradient(160deg,color-mix(in srgb,var(--card-background-color,#111) 75%,#C0392B 25%) 0%,var(--card-background-color,#111) 100%);
   border-bottom:1px solid var(--border); position:relative;
 }
 .header::after {
@@ -1261,8 +1390,8 @@ const CARD_CSS = `<style>
   font-family:'Inter',sans-serif; font-size:11px; font-weight:600;
   cursor:pointer; transition:all 0.15s; white-space:nowrap;
 }
-.btn-primary { background:var(--red); color:#fff; }
-.btn-primary:hover { background:var(--red-h); transform:translateY(-1px); }
+.btn-primary { background:var(--accent); color:#fff; }
+.btn-primary:hover { background:var(--accent-h); transform:translateY(-1px); }
 .btn-secondary { background:var(--bg-3); color:var(--cream); border:1px solid var(--border); }
 .btn-secondary:hover { background:var(--bg-4); }
 
@@ -1284,7 +1413,7 @@ const CARD_CSS = `<style>
   background-repeat:no-repeat; background-position:right 10px center;
   min-height:36px;
 }
-.filter-select:focus { border-color:var(--red); }
+.filter-select:focus { border-color:var(--accent); }
 .filter-select option { background:var(--bg-1); color:var(--cream); }
 
 .cellar { padding:12px 14px; display:flex; flex-direction:column; gap:2px; }
@@ -1308,15 +1437,18 @@ const CARD_CSS = `<style>
 .icon-btn:hover { opacity:1; }
 
 .floor-dots { display:grid; flex:1; gap:3px; align-items:center; justify-items:center; }
-.dot { width:min(100%, 38px); height:min(100%, 38px); aspect-ratio:1; border-radius:50%; cursor:pointer; transition:transform 0.12s,box-shadow 0.12s; }
-.dot--empty { background:var(--bg-3); border:1px solid var(--bg-4); opacity:0.35; }
-.dot--empty:hover { opacity:0.6; transform:scale(1.1); }
-.dot--filled { background:var(--dot-color,#C0392B); box-shadow:0 2px 6px var(--dot-glow,rgba(192,57,43,0.4)); }
-.dot--filled:hover { transform:scale(1.15); box-shadow:0 3px 12px var(--dot-glow,rgba(192,57,43,0.65)); }
-.dot--selected { outline:2px solid var(--gold); outline-offset:2px; transform:scale(1.12); }
-.dot--alt { transform:translateY(6px) scale(0.72); }
-.dot--alt:hover { transform:translateY(6px) scale(0.82); }
-.dot--alt.dot--selected { transform:translateY(6px) scale(0.82); }
+.dot { width:min(100%, 22px); aspect-ratio:10/26; cursor:pointer; transition:transform 0.12s, filter 0.12s; display:flex; align-items:center; justify-content:center; }
+.dot--empty { border:1px dashed var(--bg-4); border-radius:10px 10px 3px 3px; opacity:0.3; }
+.dot--empty:hover { opacity:0.55; transform:scale(1.08); }
+.dot--filled { filter:drop-shadow(0 2px 4px var(--dot-glow,rgba(192,57,43,0.35))); }
+.dot--filled:hover { transform:scale(1.12) translateY(-2px); filter:drop-shadow(0 4px 8px var(--dot-glow,rgba(192,57,43,0.6))); }
+.dot--selected { filter:drop-shadow(0 0 5px var(--gold)) drop-shadow(0 2px 5px var(--dot-glow,rgba(192,57,43,0.4))); transform:scale(1.1); }
+.dot--alt { transform:rotate(180deg); }
+.dot--alt:hover { transform:rotate(180deg) scale(1.12) translateY(2px); }
+.dot--alt.dot--selected { transform:rotate(180deg) scale(1.1); }
+.dot--dragging { opacity:0.25 !important; cursor:grabbing !important; }
+.dot--filled[draggable="true"] { cursor:grab; }
+.dot--drag-over { filter:drop-shadow(0 0 6px var(--accent)) !important; transform:scale(1.18) translateY(-2px); opacity:1 !important; }
 
 .floor-label {
   background:linear-gradient(90deg,var(--wood-dk),var(--wood-md),var(--wood-lt),var(--wood-md),var(--wood-dk));
@@ -1355,50 +1487,59 @@ const MODAL_CSS = `
 @keyframes mm-spin  { to{transform:rotate(360deg)} }
 
 .mm-overlay {
-  position:fixed; inset:0; background:rgba(0,0,0,0.88); z-index:99999;
+  position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:99999;
   display:flex; align-items:flex-start; justify-content:center; padding-top:12px;
   animation:mm-fade 0.15s ease; font-family:'Inter',sans-serif;
+  --mm-bg0: var(--primary-background-color, #080808);
+  --mm-bg1: var(--card-background-color, #111);
+  --mm-bg2: var(--secondary-background-color, #181818);
+  --mm-bg3: color-mix(in srgb, var(--card-background-color, #1A1A1A) 80%, var(--primary-text-color, white) 20%);
+  --mm-text: var(--primary-text-color, #EDE0CC);
+  --mm-muted: var(--secondary-text-color, #555);
+  --mm-border: var(--divider-color, #222);
+  --mm-red: var(--primary-color, #C0392B);
+  --mm-red-h: var(--secondary-color, #E74C3C);
 }
 .mm-box {
-  background:#111; border:1px solid #222; border-top:none;
+  background:var(--mm-bg1); border:1px solid var(--mm-border); border-top:none;
   border-radius:0 0 20px 20px;
   width:100%; max-width:520px; max-height:92vh;
   display:flex; flex-direction:column;
-  animation:mm-slide 0.22s ease-out; color:#EDE0CC;
+  animation:mm-slide 0.22s ease-out; color:var(--mm-text);
   overflow:hidden;
 }
 .mm-header {
   display:flex; align-items:center; justify-content:space-between;
-  padding:16px 20px 12px; border-bottom:1px solid #222;
-  flex-shrink:0; background:#111; z-index:2;
+  padding:16px 20px 12px; border-bottom:1px solid var(--mm-border);
+  flex-shrink:0; background:var(--mm-bg1); z-index:2;
 }
-.mm-title { font-family:'Playfair Display',serif; font-size:16px; color:#EDE0CC; }
-.mm-close { background:none; border:none; color:#555; cursor:pointer; font-size:18px; padding:0 4px; transition:color 0.15s; }
-.mm-close:hover { color:#EDE0CC; }
+.mm-title { font-family:'Playfair Display',serif; font-size:16px; color:var(--mm-text); }
+.mm-close { background:none; border:none; color:var(--mm-muted); cursor:pointer; font-size:18px; padding:0 4px; transition:color 0.15s; }
+.mm-close:hover { color:var(--mm-text); }
 .mm-body  { padding:16px 20px; flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; }
 .mm-footer {
-  padding:12px 20px; border-top:1px solid #222;
+  padding:12px 20px; border-top:1px solid var(--mm-border);
   display:flex; gap:8px; justify-content:flex-end;
-  flex-shrink:0; background:#111;
+  flex-shrink:0; background:var(--mm-bg1);
 }
 .mm-field  { margin-bottom:12px; }
-.mm-label  { display:block; font-size:10px; text-transform:uppercase; letter-spacing:1px; color:#C0392B; margin-bottom:4px; }
+.mm-label  { display:block; font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--mm-red); margin-bottom:4px; }
 .mm-input  {
   width:100%; padding:9px 11px;
-  background:#080808; border:1px solid #222; border-radius:8px;
-  color:#EDE0CC; font-family:'Inter',sans-serif; font-size:13px;
+  background:var(--mm-bg0); border:1px solid var(--mm-border); border-radius:8px;
+  color:var(--mm-text); font-family:'Inter',sans-serif; font-size:13px;
   outline:none; transition:border-color 0.15s; box-sizing:border-box;
 }
-.mm-input:focus { border-color:#C0392B; box-shadow:0 0 0 2px rgba(192,57,43,0.1); }
-.mm-input option { background:#111; }
+.mm-input:focus { border-color:var(--mm-red); box-shadow:0 0 0 2px rgba(192,57,43,0.1); }
+.mm-input option { background:var(--mm-bg1); }
 .mm-textarea { min-height:66px; resize:vertical; }
 .mm-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
 
 .mm-btn { padding:10px 18px; border-radius:8px; border:none; font-family:'Inter',sans-serif; font-size:13px; font-weight:600; cursor:pointer; transition:all 0.15s; }
-.mm-btn-primary { background:#C0392B; color:#fff; }
-.mm-btn-primary:hover { background:#E74C3C; transform:translateY(-1px); }
-.mm-btn-ghost { background:#1A1A1A; color:#EDE0CC; border:1px solid #222; }
-.mm-btn-ghost:hover { background:#222; }
+.mm-btn-primary { background:var(--mm-red); color:#fff; }
+.mm-btn-primary:hover { background:var(--mm-red-h); transform:translateY(-1px); }
+.mm-btn-ghost { background:var(--mm-bg3); color:var(--mm-text); border:1px solid var(--mm-border); }
+.mm-btn-ghost:hover { background:var(--mm-bg2); }
 .mm-btn-danger { background:rgba(140,10,10,0.3); color:#ff6b6b; border:1px solid rgba(140,10,10,0.4); }
 .mm-btn-danger:hover { background:rgba(140,10,10,0.55); }
 
@@ -1412,37 +1553,37 @@ const MODAL_CSS = `
 /* Bouton photo */
 .mm-btn-photo {
   flex-shrink:0; width:40px; height:40px; border-radius:8px;
-  background:#1A1A1A; border:1px solid #333; cursor:pointer;
+  background:var(--mm-bg3); border:1px solid var(--mm-border); cursor:pointer;
   font-size:18px; display:flex; align-items:center; justify-content:center;
   transition:all 0.15s;
 }
-.mm-btn-photo:hover { background:#2A2A2A; border-color:#C0392B44; }
+.mm-btn-photo:hover { background:var(--mm-bg2); border-color:rgba(192,57,43,0.27); }
 
 /* Spinner */
 .mm-spinner {
   display:inline-block; width:12px; height:12px;
-  border:2px solid #333; border-top-color:#C0392B;
+  border:2px solid var(--mm-border); border-top-color:var(--mm-red);
   border-radius:50%; animation:mm-spin 0.7s linear infinite;
   vertical-align:middle; margin-right:6px;
 }
 
 /* Résultats */
 .mm-viv-results {
-  background:#080808; border:1px solid #222; border-top:none;
+  background:var(--mm-bg0); border:1px solid var(--mm-border); border-top:none;
   border-radius:0 0 8px 8px;
   display:none; max-height:220px; overflow-y:auto;
 }
 .mm-viv-item {
   display:flex; align-items:flex-start; gap:9px;
   padding:10px 12px; cursor:pointer;
-  border-bottom:1px solid #181818; transition:background 0.12s;
+  border-bottom:1px solid var(--mm-bg2); transition:background 0.12s;
 }
-.mm-viv-item:hover { background:#141414; }
+.mm-viv-item:hover { background:var(--mm-bg2); }
 .mm-viv-item:last-child { border-bottom:none; }
-.mm-viv-name { font-size:13px; color:#EDE0CC; font-weight:500; }
-.mm-viv-sub  { font-size:10px; color:#555; margin-top:2px; }
-.mm-viv-notes { font-size:10px; color:#888; margin-top:3px; font-style:italic; line-height:1.4; }
-.mm-viv-loading { padding:12px; font-size:12px; color:#555; text-align:center; display:flex; align-items:center; justify-content:center; gap:6px; }
+.mm-viv-name { font-size:13px; color:var(--mm-text); font-weight:500; }
+.mm-viv-sub  { font-size:10px; color:var(--mm-muted); margin-top:2px; }
+.mm-viv-notes { font-size:10px; color:var(--mm-muted); margin-top:3px; font-style:italic; line-height:1.4; }
+.mm-viv-loading { padding:12px; font-size:12px; color:var(--mm-muted); text-align:center; display:flex; align-items:center; justify-content:center; gap:6px; }
 
 /* Bannière erreur/info sous la recherche */
 .mm-search-banner {
@@ -1461,17 +1602,43 @@ const MODAL_CSS = `
   padding:10px 12px; margin-bottom:10px; text-align:center;
 }
 
+/* Sélecteur de slot */
+.sp-picker { margin-top:6px; }
+.sp-grid {
+  display:grid; gap:5px;
+  margin-bottom:6px;
+}
+.sp-dot {
+  aspect-ratio:1; border-radius:50%;
+  background:var(--sp-c, var(--mm-bg3, #2a2a2a));
+  border:1px solid var(--mm-border, #444);
+  transition:transform .12s, box-shadow .12s;
+}
+.sp-free { cursor:pointer; }
+.sp-free:hover { transform:scale(1.15); border-color:var(--mm-muted, #888); }
+.sp-sel {
+  background:var(--sp-c, #a78bfa) !important;
+  border-color:#a78bfa;
+  box-shadow:0 0 0 2px #a78bfa55;
+}
+.sp-taken {
+  background:var(--sp-c, var(--mm-bg3, #555)) !important;
+  opacity:0.75;
+  cursor:not-allowed;
+}
+.sp-label { font-size:10px; color:var(--mm-muted); }
+
 /* Détail */
 .mm-detail-hero  { text-align:center; margin-bottom:18px; }
-.mm-detail-name  { font-family:'Playfair Display',serif; font-size:20px; color:#EDE0CC; margin-bottom:4px; }
-.mm-detail-sub   { font-size:12px; color:#666; }
-.mm-vivino-link  { display:inline-block; margin-top:8px; color:#C0392B; font-size:11px; text-decoration:none; border:1px solid rgba(192,57,43,0.3); padding:3px 10px; border-radius:20px; }
+.mm-detail-name  { font-family:'Playfair Display',serif; font-size:20px; color:var(--mm-text); margin-bottom:4px; }
+.mm-detail-sub   { font-size:12px; color:var(--mm-muted); }
+.mm-vivino-link  { display:inline-block; margin-top:8px; color:var(--mm-red); font-size:11px; text-decoration:none; border:1px solid rgba(192,57,43,0.3); padding:3px 10px; border-radius:20px; }
 .mm-detail-grid  { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-bottom:10px; }
-.mm-drow         { background:#181818; border-radius:8px; padding:9px 11px; border:1px solid #222; }
-.mm-drow-label   { display:block; font-size:9px; text-transform:uppercase; letter-spacing:1px; color:#555; margin-bottom:2px; }
-.mm-drow-value   { font-size:13px; color:#EDE0CC; font-weight:500; }
-.mm-notes        { font-size:12px; color:#888; background:#181818; padding:10px 12px; border-radius:8px; border-left:2px solid #C0392B; line-height:1.55; margin-bottom:6px; }
-.mm-tasting      { border-left-color:#C0392B; font-style:italic; }
+.mm-drow         { background:var(--mm-bg2); border-radius:8px; padding:9px 11px; border:1px solid var(--mm-border); }
+.mm-drow-label   { display:block; font-size:9px; text-transform:uppercase; letter-spacing:1px; color:var(--mm-muted); margin-bottom:2px; }
+.mm-drow-value   { font-size:13px; color:var(--mm-text); font-weight:500; }
+.mm-notes        { font-size:12px; color:var(--mm-muted); background:var(--mm-bg2); padding:10px 12px; border-radius:8px; border-left:2px solid var(--mm-red); line-height:1.55; margin-bottom:6px; }
+.mm-tasting      { border-left-color:var(--mm-red); font-style:italic; }
 .mm-pairing      { border-left-color:#27AE8F; font-style:normal; }
 `;
 

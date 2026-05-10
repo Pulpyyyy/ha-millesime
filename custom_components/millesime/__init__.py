@@ -21,6 +21,7 @@ import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 _LOGGER = logging.getLogger(__name__)
@@ -86,6 +87,16 @@ def _save(hass: HomeAssistant, data: dict) -> None:
 
 def _uid() -> str:
     return str(uuid.uuid4())[:8]
+
+
+def _slot_taken(d: dict, floor_id: str, slot: int, exclude_id: str | None = None) -> bool:
+    """Retourne True si l'emplacement est déjà occupé sur cet étage."""
+    return any(
+        b.get("floor_id") == floor_id
+        and b.get("slot") == slot
+        and b.get("id") != exclude_id
+        for b in d.get("bottles", [])
+    )
 
 
 def _normalize(text: str) -> str:
@@ -682,6 +693,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def svc_add_bottle(call: ServiceCall) -> None:
         d = _get()
+        floor_id = call.data.get("floor_id", "")
+        slot = int(call.data.get("slot", 0))
+        if _slot_taken(d, floor_id, slot):
+            raise HomeAssistantError(f"L'emplacement {slot} est déjà occupé sur cet étage.")
         d["bottles"].append({
             "id":           _uid(),
             "floor_id":     call.data.get("floor_id", ""),
@@ -723,6 +738,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         new_b["floor_id"] = call.data.get("floor_id", src["floor_id"])
         new_b["slot"]     = int(call.data.get("slot", src["slot"]))
         new_b["added_date"] = datetime.now().strftime("%Y-%m-%d")
+        if _slot_taken(d, new_b["floor_id"], new_b["slot"]):
+            raise HomeAssistantError(f"L'emplacement {new_b['slot']} est déjà occupé sur cet étage.")
         d["bottles"].append(new_b)
         await _persist(d)
 
@@ -733,9 +750,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "country", "price", "quantity", "drink_from", "drink_until",
             "notes", "tasting_notes", "food_pairing", "event",
             "vivino_rating", "image_url", "vivino_url",
+            "floor_id", "slot",
         ]
         for b in d["bottles"]:
             if b["id"] == call.data["bottle_id"]:
+                if "floor_id" in call.data or "slot" in call.data:
+                    new_floor = call.data.get("floor_id", b["floor_id"])
+                    new_slot  = int(call.data.get("slot", b["slot"]))
+                    if _slot_taken(d, new_floor, new_slot, exclude_id=b["id"]):
+                        raise HomeAssistantError(f"L'emplacement {new_slot} est déjà occupé sur cet étage.")
                 for k in updatable:
                     if k in call.data:
                         b[k] = call.data[k]
