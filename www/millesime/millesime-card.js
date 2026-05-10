@@ -37,12 +37,30 @@ const ERROR_MESSAGES = {
 };
 
 const BOTTLE_MINI = (color) => `<svg viewBox="0 0 10 26" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;display:block">
-  <rect x="3" y="0" width="4" height="3.5" rx="1"   fill="#8B5E3C"/>
-  <rect x="3.5" y="3" width="3" height="5"          fill="${color}"/>
-  <path d="M3.5,8 L1,13 L9,13 L6.5,8 Z"            fill="${color}"/>
-  <rect x="1" y="13" width="8" height="10" rx="1.2" fill="${color}"/>
-  <rect x="1.5" y="14.5" width="7" height="5" rx="0.4" fill="white" opacity="0.65"/>
-  <ellipse cx="5" cy="24" rx="4" ry="1.2"           fill="${color}" opacity="0.9"/>
+  <!-- Capsule -->
+  <rect x="3.5" y="0.2" width="3" height="2.4" rx="0.9" fill="#5C3317"/>
+  <rect x="3.5" y="0.2" width="1.1" height="2.4" rx="0.9" fill="white" opacity="0.18"/>
+  <!-- Col -->
+  <rect x="3.8" y="2.4" width="2.4" height="4.3" fill="${color}"/>
+  <rect x="3.8" y="2.4" width="0.9" height="4.3" fill="white" opacity="0.2"/>
+  <rect x="5.5" y="2.4" width="0.7" height="4.3" fill="black" opacity="0.15"/>
+  <!-- Épaule (courbe plus douce) -->
+  <path d="M3.8,6.7 Q2.4,9.8 1.2,11.2 L8.8,11.2 Q7.6,9.8 6.2,6.7 Z" fill="${color}"/>
+  <path d="M3.8,6.7 Q3,9.2 2.2,11.2 L3.1,11.2 Q3.9,9.2 4.5,6.7 Z" fill="white" opacity="0.18"/>
+  <path d="M6.2,6.7 Q7,9.2 7.8,11.2 L8.8,11.2 Q7.6,9.8 6.9,7 Z" fill="black" opacity="0.15"/>
+  <!-- Corps -->
+  <rect x="1.2" y="11" width="7.6" height="12.5" rx="1.3" fill="${color}"/>
+  <!-- Ombre droite (cylindre) -->
+  <rect x="7.2" y="11" width="1.6" height="12.5" rx="1.3" fill="black" opacity="0.22"/>
+  <!-- Reflet gauche diffus -->
+  <rect x="1.2" y="11" width="2" height="12.5" rx="1.3" fill="white" opacity="0.14"/>
+  <!-- Fond -->
+  <ellipse cx="5" cy="23.5" rx="3.8" ry="1.1" fill="${color}"/>
+  <ellipse cx="5" cy="23.5" rx="3.8" ry="1.1" fill="black" opacity="0.25"/>
+  <!-- Étiquette -->
+  <rect x="1.8" y="13" width="6.4" height="4.6" rx="0.5" fill="white" opacity="0.72"/>
+  <!-- Reflet spéculaire (ligne lumineuse) -->
+  <line x1="2.4" y1="11.5" x2="2.4" y2="23" stroke="white" stroke-width="0.55" stroke-linecap="round" opacity="0.6"/>
 </svg>`;
 
 const GLASS_SVG = `<svg viewBox="0 0 40 56" xmlns="http://www.w3.org/2000/svg">
