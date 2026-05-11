@@ -78,6 +78,14 @@ const BOTTLE_MINI = (color, w = null) => `<svg viewBox="0 0 10 26" width="10" he
   <path d="M2.4,11.9 Q2.05,17 2.4,22.5" stroke="white" stroke-width="0.55" fill="none" stroke-linecap="round" opacity="0.6"/>
 </svg>`;
 
+// Bouteille fantôme pour les emplacements vides (mode bottle)
+const BOTTLE_GHOST = (w = null) => `<svg viewBox="0 0 10 26" xmlns="http://www.w3.org/2000/svg" style="${w ? `width:${w}px;height:${Math.round(w*2.6)}px` : 'width:100%;height:auto'};display:block">
+  <rect x="3.5" y="0.2" width="3" height="2.4" rx="0.9" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.2)" stroke-width="0.4" stroke-dasharray="1.2 0.7"/>
+  <rect x="3.8" y="2.5" width="2.4" height="4.2" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.2)" stroke-width="0.4" stroke-dasharray="1.2 0.7"/>
+  <path d="M3.8,6.7 Q2.4,9.8 1.2,11.2 Q0.8,17 1.2,23 L8.8,23 Q9.2,17 8.8,11.2 Q7.6,9.8 6.2,6.7 Z" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.2)" stroke-width="0.4" stroke-dasharray="1.2 0.7"/>
+  <ellipse cx="5" cy="23" rx="3.8" ry="1" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="0.4"/>
+</svg>`;
+
 const GLASS_SVG = `<svg viewBox="0 0 40 56" xmlns="http://www.w3.org/2000/svg">
   <path d="M8 2 Q8 20 20 30 Q32 20 32 2 Z" fill="#C0392B" opacity="0.92"/>
   <path d="M11 6 Q11 19 20 28" fill="none" stroke="#E74C3C" stroke-width="1" opacity="0.35"/>
@@ -102,7 +110,21 @@ class MillesimeCard extends HTMLElement {
     this._unsubs     = [];
   }
 
-  setConfig(config) { this._config = config || {}; this._renderLoading(); }
+  setConfig(config) { this._config = config || {}; this._applyConfigColors(); this._renderLoading(); }
+
+  _applyConfigColors() {
+    const cfg = this._config;
+    const set = (prop, val) => val
+      ? this.style.setProperty(prop, val)
+      : this.style.removeProperty(prop);
+    set('--accent',         cfg.accent_color);
+    set('--accent-h',       cfg.accent_hover_color);
+    set('--header-accent',  cfg.header_accent_color || cfg.accent_color);
+    set('--wood-dk',        cfg.wood_dark);
+    set('--wood-md',        cfg.wood_mid);
+    set('--wood-lt',        cfg.wood_light);
+    set('--gold',           cfg.gold_color);
+  }
 
   set hass(hass) {
     const first = !this._hass;
@@ -1223,7 +1245,9 @@ class MillesimeCard extends HTMLElement {
     const isQc   = floor.layout === "quinconce";
     const isCircleMode = this._config?.bottle_style === "dot";
     const lm = this._config?.bottle_label || "none";
-    const labelExtraH = lm === "none" ? 0 : (lm === "name_vintage" || lm === "vintage_name") ? 17 : 10;
+    // font-size:11px × line-height:1.3 = 14.3px + padding-top:1px → 16px par label
+    const lblCount = (lm === "name_vintage" || lm === "vintage_name") ? 2 : lm === "none" ? 0 : 1;
+    const labelExtraH = lblCount * 16;
     const rowH = (isCircleMode ? 40 : 80) + labelExtraH;
     const pct   = Math.round((Object.keys(slotMap).length / total) * 100);
 
@@ -1250,48 +1274,44 @@ class MillesimeCard extends HTMLElement {
       const dotStyle = wine ? `--dot-glow:${wt.glow};opacity:${filtered ? 0.15 : 1}` : "";
       const isCircle = (this._config?.bottle_style === "dot");
 
-      let labelEl = "";
-      if (wine) {
-        const lm = this._config?.bottle_label || "none";
-        if (lm !== "none") {
-          const nm = (wine.name || "").trim();
-          const yr = (wine.vintage || "").trim();
-          const short = (s, n) => s.length > n ? s.slice(0, n - 1) + "…" : s;
-          const nbsp = s => s.replace(/ /g, "\u00A0");
-          let txt = "";
-          let txt2 = "";
-          if      (lm === "vintage")      txt = yr;
-          else if (lm === "name")         txt = nbsp(short(nm, 15));
-          else if (lm === "name_vintage") { txt = nbsp(short(nm, 12)); txt2 = yr; }
-          else if (lm === "vintage_name") { txt = yr; txt2 = nbsp(short(nm, 12)); }
-          if (txt || txt2) {
-            const inner = txt2
-              ? `<span style="display:block;white-space:nowrap">${txt}</span><span style="display:block;white-space:nowrap">${txt2}</span>`
-              : txt;
-            labelEl = `<span class="dot-label" style="color:${wt.color};text-align:center${txt2 ? "" : ";white-space:nowrap"}">${inner}</span>`;
-          }
-        }
+      let labelEls = "";
+      if (lm !== "none") {
+        const nm = wine ? (wine.name || "").trim() : "";
+        const yr = wine ? (wine.vintage || "").trim() : "";
+        const short = (s, n) => s.length > n ? s.slice(0, n - 1) + "…" : s;
+        const nbsp = s => s.replace(/ /g, "\u00A0");
+        // transparent pour les cases vides, coloré pour les vins
+        const col = wine ? `color:${wt.color}` : `color:transparent`;
+        const lbl = t => `<span class="dot-lbl" style="${col};display:flex;justify-content:center;align-items:center;width:100%">${t}</span>`;
+        const ph = "\u00A0"; // placeholder invisible qui conserve la hauteur de ligne
+        if      (lm === "vintage")      labelEls = lbl(yr || ph);
+        else if (lm === "name")         labelEls = lbl(nm ? nbsp(short(nm, 15)) : ph);
+        else if (lm === "name_vintage") labelEls = lbl(nm ? nbsp(short(nm, 12)) : ph) + lbl(yr || ph);
+        else if (lm === "vintage_name") labelEls = lbl(yr || ph) + lbl(nm ? nbsp(short(nm, 12)) : ph);
       }
 
       // En mode cercle + tête-bêche : positions alternées = cercle plus petit (pas de rotation)
       const circleSize = isCircle ? (alt ? 28 : 40) : 40;
       const bottleContent = wine
         ? (isCircle
-            ? `<svg viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;display:block"><circle cx="5" cy="5" r="5" fill="${wt.color}"/><circle cx="5" cy="5" r="5" fill="white" opacity="0.12"/><ellipse cx="3.5" cy="3.5" rx="1.5" ry="1" fill="white" opacity="0.2"/></svg>`
-            : BOTTLE_MINI(wt.color))
+            ? `<svg viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg" style="width:${circleSize}px;height:${circleSize}px;display:block"><circle cx="5" cy="5" r="5" fill="${wt.color}"/><circle cx="5" cy="5" r="5" fill="white" opacity="0.12"/><ellipse cx="3.5" cy="3.5" rx="1.5" ry="1" fill="white" opacity="0.2"/></svg>`
+            : BOTTLE_MINI(wt.color, Math.round(80 * 10 / 26)))
         : (isCircle
-            ? `<svg viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%;display:block"><circle cx="5" cy="5" r="4.5" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="0.8" stroke-dasharray="1.8 1.2"/></svg>`
-            : "");
+            ? `<svg viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg" style="width:${circleSize}px;height:${circleSize}px;display:block"><circle cx="5" cy="5" r="4.5" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="0.8" stroke-dasharray="1.8 1.2"/></svg>`
+            : BOTTLE_GHOST(Math.round(80 * 10 / 26)));
 
-      const circleInlineStyle = isCircle ? `height:${circleSize}px;width:${circleSize}px;aspect-ratio:1;border-radius:50%;${wine ? "" : "border:none;"}` : "";
+      // mode dot : seule la hauteur est imposée inline (width:100% vient du CSS, le SVG est centré par justify-content:center)
+      const sizeStyle = isCircle ? `height:${circleSize}px;` : ``;
       const dotEl = `<div
         class="dot ${wine ? "dot--filled" : "dot--empty"} ${sel ? "dot--selected" : ""} ${!isCircle && alt ? "dot--alt" : ""}"
         data-slot="${i}" data-floor-id="${floor.id}" data-wine-id="${wine?.id || ""}" data-slot-idx="${slotIdx}"
-        style="${[dotStyle, circleInlineStyle].filter(Boolean).join("")}"
+        style="${[dotStyle, sizeStyle].filter(Boolean).join(";")}"
         title="${wine ? wine.name + (wine.vintage ? " " + wine.vintage : "") : "Vide — cliquer pour ajouter"}"
       >${bottleContent}</div>`;
 
-      return `<div class="dot-cell${labelEl ? " dot-cell--labeled" : ""}" style="${extraStyle}">${dotEl}${labelEl}</div>`;
+      const labelsHtml = labelEls ? `<div class="dot-labels" style="height:${labelExtraH}px">${labelEls}</div>` : "";
+      const cellStyle = `height:${rowH}px;${extraStyle}`;
+      return `<div class="dot-cell${lm !== "none" ? " dot-cell--labeled" : ""}" style="${cellStyle}">${dotEl}${labelsHtml}</div>`;
     };
 
     let dots = "";
@@ -1300,7 +1320,7 @@ class MillesimeCard extends HTMLElement {
     if (isQc) {
       // Grille double-colonne : chaque bouteille occupe 2 colonnes
       // Les rangées impaires sont décalées d'une colonne → quinconce parfait
-      dotsStyle = `grid-template-columns:repeat(${cols * 2},1fr);grid-auto-columns:1fr;grid-auto-rows:${rowH}px;overflow:hidden`;
+      dotsStyle = `grid-template-columns:repeat(${cols * 2},1fr);grid-auto-columns:1fr;grid-auto-rows:${rowH}px;overflow-x:clip;overflow-y:visible;padding-top:2px`;
       const numRows = Math.ceil(total / cols);
       for (let row = 0; row < numRows; row++) {
         const odd = row % 2 === 1;
@@ -1474,6 +1494,8 @@ const CARD_CSS = `<style>
   --wood-dk: color-mix(in srgb, #1C1208 65%, var(--card-background-color, #000) 35%);
   --wood-md: color-mix(in srgb, #3D2510 65%, var(--card-background-color, #000) 35%);
   --wood-lt: color-mix(in srgb, #6B3A15 65%, var(--card-background-color, #000) 35%);
+  /* ── Surcharges configurables via YAML ── */
+  --header-accent: var(--accent);
 }
 * { box-sizing:border-box; margin:0; padding:0; }
 
@@ -1486,12 +1508,12 @@ const CARD_CSS = `<style>
 .header {
   display:flex; align-items:flex-start; gap:10px;
   padding:12px 14px 10px;
-  background:linear-gradient(160deg,color-mix(in srgb,var(--card-background-color,#111) 75%,#C0392B 25%) 0%,var(--card-background-color,#111) 100%);
+  background:linear-gradient(160deg,color-mix(in srgb,var(--card-background-color,#111) 75%,var(--header-accent,#C0392B) 25%) 0%,var(--card-background-color,#111) 100%);
   border-bottom:1px solid var(--border); position:relative;
 }
 .header::after {
   content:''; position:absolute; bottom:0; left:14px; right:14px; height:1px;
-  background:linear-gradient(90deg,transparent,var(--red)44,transparent);
+  background:linear-gradient(90deg,transparent,var(--header-accent,var(--red))44,transparent);
 }
 /* Logo + nom empilés à gauche */
 .header-left { display:flex; flex-direction:column; align-items:center; gap:4px; flex-shrink:0; padding-top:2px; }
@@ -1563,9 +1585,9 @@ const CARD_CSS = `<style>
 .icon-btn { background:none; border:none; cursor:pointer; font-size:11px; padding:2px; opacity:0.3; color:var(--cream); transition:opacity 0.15s; line-height:1; }
 .icon-btn:hover { opacity:1; }
 
-.floor-dots { display:grid; flex:1; gap:3px; align-items:center; justify-items:center; overflow:hidden; }
-.dot { height:80px; aspect-ratio:10/26; cursor:pointer; transition:transform 0.12s, filter 0.12s; display:flex; align-items:center; justify-content:center; }
-.dot--empty { border:1px dashed var(--bg-4); border-radius:10px 10px 3px 3px; opacity:0.3; }
+.floor-dots { display:grid; flex:1; gap:4px 3px; align-items:stretch; overflow:visible; }
+.dot { height:80px; width:100%; cursor:pointer; transition:transform 0.12s, filter 0.12s; display:flex; align-items:center; justify-content:center; }
+.dot--empty { opacity:0.3; }
 .dot--empty:hover { opacity:0.55; transform:scale(1.08); }
 .dot--filled { filter:drop-shadow(0 2px 4px var(--dot-glow,rgba(192,57,43,0.35))); }
 .dot--filled:hover { transform:scale(1.12) translateY(-2px); filter:drop-shadow(0 4px 8px var(--dot-glow,rgba(192,57,43,0.6))); }
@@ -1602,6 +1624,26 @@ const CARD_CSS = `<style>
 .hist-date { color:var(--muted); flex:1; }
 .hist-bottles { color:var(--muted); margin-right:12px; }
 .hist-price { color:var(--cream); font-weight:600; font-family:'Playfair Display',serif; }
+
+/* ─── Cellule bouteille (dot-cell) ─── */
+.dot-cell {
+  display:flex; flex-direction:column; align-items:center;
+  justify-content:flex-start; width:100%; overflow:hidden;
+}
+.dot-cell > .dot {
+  flex-shrink:0;
+}
+.dot-labels {
+  width:100%; overflow:hidden; flex-shrink:0;
+  display:flex; flex-direction:column; align-items:stretch;
+}
+.dot-lbl {
+  display:block; width:100%; box-sizing:border-box;
+  font-size:11px; font-weight:700; text-align:center; line-height:1.3;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  text-transform:uppercase; letter-spacing:0.4px; opacity:0.9; padding-top:1px;
+  flex-shrink:0;
+}
 </style>`;
 
 // ── CSS du modal ────────────────────────────────────────────────────────────────
@@ -1772,17 +1814,6 @@ const MODAL_CSS = `
 .mm-tasting      { border-left-color:var(--mm-red); font-style:italic; }
 .mm-pairing      { border-left-color:#27AE8F; font-style:normal; }
 
-/* ─── Cellule bouteille (dot-cell) ─── */
-.dot-cell { display:flex; flex-direction:column; align-items:center; justify-content:flex-start; }
-/* ─── Étiquette bouteille (bottle_label) ─── */
-.dot-label {
-  display:block; font-size:6px; font-weight:700; text-align:center; line-height:1.2;
-  white-space:nowrap; padding-top:2px; margin:0 auto;
-  text-transform:uppercase; letter-spacing:0.4px; opacity:0.9;
-}
-/* ─── Mode cercle (bottle_style: dot) ─── */
-.dot--circle { aspect-ratio:1; height:40px; border-radius:50%; overflow:hidden; }
-.dot--circle.dot--empty { border-radius:50%; overflow:visible; }
 `;
 
 // ── Enregistrement ─────────────────────────────────────────────────────────────
