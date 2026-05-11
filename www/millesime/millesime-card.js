@@ -477,8 +477,8 @@ class MillesimeCard extends HTMLElement {
             </select>
           </div>
           <div class="mm-field" style="grid-column:1/-1">
-            <label class="mm-label">Emplacement</label>
-            <input type="hidden" id="bt-slot" value="${pendingSlot?.slot ?? 0}">
+            <label class="mm-label">Emplacements (cliquer pour sélectionner)</label>
+            <input type="hidden" id="bt-slots" value="${pendingSlot?.slot ?? 0}">
             <div id="bt-slot-picker" class="sp-picker"></div>
           </div>
         </div>` : ""}
@@ -683,7 +683,6 @@ class MillesimeCard extends HTMLElement {
     box.querySelector("#bt-submit")?.addEventListener("click", async () => {
       const txt = (id) => box.querySelector(`#${id}`)?.value?.trim() || "";
       const num = (id) => parseFloat(box.querySelector(`#${id}`)?.value)  || 0;
-      const int = (id) => parseInt(box.querySelector(`#${id}`)?.value)    || 0;
 
       const name = txt("bt-name");
       if (!name) { this._showToast("error", "Le nom du vin est requis."); return; }
@@ -712,9 +711,25 @@ class MillesimeCard extends HTMLElement {
         if (wine) {
           await this._hass.callService(DOMAIN, "update_wine", { wine_id: wine.id, ...payload });
         } else {
-          payload.floor_id = box.querySelector("#bt-floor")?.value || "";
-          payload.slot     = int("bt-slot");
+          const floorId = box.querySelector("#bt-floor")?.value || "";
+          const slotsStr = box.querySelector("#bt-slots")?.value || "0";
+          const slots = slotsStr.split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+          if (!slots.length) slots.push(0);
+          // Créer le vin au premier emplacement
+          payload.floor_id = floorId;
+          payload.slot     = slots[0];
           await this._hass.callService(DOMAIN, "add_wine", payload);
+          // Ajouter les emplacements supplémentaires
+          if (slots.length > 1) {
+            await new Promise(r => setTimeout(r, 600));
+            const freshData = await this._hass.connection.sendMessagePromise({ type: "millesime/get_data" });
+            const added = (freshData.wines || []).find(w => w.name === name && w.slots?.some(s => s.floor_id === floorId && s.slot === slots[0]));
+            if (added) {
+              for (let k = 1; k < slots.length; k++) {
+                await this._hass.callService(DOMAIN, "add_slot", { wine_id: added.id, floor_id: floorId, slot: slots[k] });
+              }
+            }
+          }
         }
         this._closeModal();
         setTimeout(() => this._fetchData(), 500);
@@ -723,12 +738,12 @@ class MillesimeCard extends HTMLElement {
       }
     });
 
-    const renderPicker = () => this._renderSlotPicker(box, "bt-floor", "bt-slot-picker", "bt-slot");
+    const renderPicker = () => this._renderSlotPicker(box, "bt-floor", "bt-slot-picker", "bt-slots", null, true);
     box.querySelector("#bt-floor")?.addEventListener("change", renderPicker);
     if (!wine) renderPicker();
   }
 
-  _renderSlotPicker(box, floorSelectId, pickerId, slotInputId, excludeWineId = null) {
+  _renderSlotPicker(box, floorSelectId, pickerId, slotInputId, excludeWineId = null, multiSelect = false) {
     const floorId   = box.querySelector(`#${floorSelectId}`)?.value;
     const floor     = (this._data?.cellar?.floors || []).find(f => f.id === floorId);
     const picker    = box.querySelector(`#${pickerId}`);
@@ -745,29 +760,40 @@ class MillesimeCard extends HTMLElement {
       });
     });
 
-    const currentSlot = parseInt(slotInput.value) || 0;
+    const selected = multiSelect
+      ? new Set((slotInput.value || "").split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n)))
+      : new Set([parseInt(slotInput.value) || 0]);
 
     let dots = "";
     for (let i = 0; i < total; i++) {
       const bt   = occupied[i];
       const wt   = bt ? (WINE_TYPES[bt.type] || WINE_TYPES.red) : null;
-      const isSel = !bt && i === currentSlot;
+      const isSel = !bt && selected.has(i);
       dots += `<div class="sp-dot ${bt ? "sp-taken" : "sp-free"}${isSel ? " sp-sel" : ""}"
         data-s="${i}"
         style="${bt ? `--sp-c:${wt.color}` : isSel ? "--sp-c:#a78bfa" : ""}"
         title="${bt ? bt.name + (bt.vintage ? " " + bt.vintage : "") : "Emplacement " + i}"></div>`;
     }
 
-    const warn = occupied[currentSlot]
-      ? `<span style="color:#e74c3c;margin-left:6px">⚠ occupé</span>` : "";
+    const selArr = [...selected].sort((a, b) => a - b);
+    const label = multiSelect
+      ? `${selArr.length} emplacement${selArr.length > 1 ? "s" : ""} sélectionné${selArr.length > 1 ? "s" : ""} : <strong>${selArr.join(", ")}</strong>`
+      : `Emplacement sélectionné : <strong>${selArr[0]}</strong>`;
     picker.innerHTML = `
       <div class="sp-grid" style="grid-template-columns:repeat(${cols},1fr)">${dots}</div>
-      <div class="sp-label">Emplacement sélectionné : <strong>${currentSlot}</strong>${warn}</div>`;
+      <div class="sp-label">${label}</div>`;
 
     picker.querySelectorAll(".sp-free").forEach(dot => {
       dot.addEventListener("click", () => {
-        slotInput.value = dot.dataset.s;
-        this._renderSlotPicker(box, floorSelectId, pickerId, slotInputId, excludeWineId);
+        const s = parseInt(dot.dataset.s);
+        if (multiSelect) {
+          if (selected.has(s)) selected.delete(s);
+          else selected.add(s);
+          slotInput.value = [...selected].sort((a, b) => a - b).join(",");
+        } else {
+          slotInput.value = s;
+        }
+        this._renderSlotPicker(box, floorSelectId, pickerId, slotInputId, excludeWineId, multiSelect);
       });
     });
   }
@@ -848,7 +874,7 @@ class MillesimeCard extends HTMLElement {
           </div>
           <div class="mm-field" style="grid-column:1/-1">
             <label class="mm-label">Emplacement</label>
-            <input type="hidden" id="dup-slot" value="0">
+            <input type="hidden" id="dup-slot" value="">
             <div id="dup-slot-picker" class="sp-picker"></div>
           </div>
         </div>
@@ -863,19 +889,23 @@ class MillesimeCard extends HTMLElement {
     box.querySelector("#dup-submit")?.addEventListener("click", async () => {
       const btn     = box.querySelector("#dup-submit");
       const floorId = box.querySelector("#dup-floor")?.value;
-      const slot    = parseInt(box.querySelector("#dup-slot")?.value) || 0;
+      const slotRaw = box.querySelector("#dup-slot")?.value || "";
+      const slots   = slotRaw.split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n));
       if (!floorId) { this._showToast("warning", "Sélectionnez un étage."); return; }
+      if (slots.length === 0) { this._showToast("warning", "Sélectionnez au moins un emplacement."); return; }
       btn.textContent = "⏳ Ajout en cours...";
       btn.disabled = true;
       try {
-        await this._hass.callService(DOMAIN, "add_slot", {
-          wine_id:  wine.id,
-          floor_id: floorId,
-          slot,
-        });
+        for (const slot of slots) {
+          await this._hass.callService(DOMAIN, "add_slot", {
+            wine_id:  wine.id,
+            floor_id: floorId,
+            slot,
+          });
+        }
         this._closeModal();
         setTimeout(() => this._fetchData(), 600);
-        this._showToast("success", "Emplacement ajouté ✓");
+        this._showToast("success", `${slots.length} emplacement${slots.length > 1 ? "s" : ""} ajouté${slots.length > 1 ? "s" : ""} ✓`);
       } catch(err) {
         btn.textContent = "Ajouter";
         btn.disabled = false;
@@ -883,7 +913,7 @@ class MillesimeCard extends HTMLElement {
       }
     });
 
-    const renderDupPicker = () => this._renderSlotPicker(box, "dup-floor", "dup-slot-picker", "dup-slot");
+    const renderDupPicker = () => this._renderSlotPicker(box, "dup-floor", "dup-slot-picker", "dup-slot", null, true);
     box.querySelector("#dup-floor")?.addEventListener("change", renderDupPicker);
     renderDupPicker();
   }
