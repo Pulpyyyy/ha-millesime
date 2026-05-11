@@ -176,6 +176,13 @@ Règles :
 """
 
 
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(str(value).replace(",", ".")) if value else default
+    except (ValueError, TypeError):
+        return default
+
+
 def _parse_gemini_response(raw: str, source: str) -> tuple[list[dict], str | None]:
     """Parse la réponse JSON de Gemini.
 
@@ -214,8 +221,8 @@ def _parse_gemini_response(raw: str, source: str) -> tuple[list[dict], str | Non
             "food_pairing":  str(w.get("food_pairing", "") or ""),
             "drink_from":    str(w.get("drink_from", "") or ""),
             "drink_until":   str(w.get("drink_until", "") or ""),
-            "vivino_rating": round(float(w.get("vivino_rating") or 0), 1),
-            "price":         round(float(w.get("price") or 0), 2),
+            "vivino_rating": round(_safe_float(w.get("vivino_rating")), 1),
+            "price":         round(_safe_float(w.get("price")), 2),
             "image_url":     "",
             "vivino_url":    "",
         })
@@ -380,7 +387,11 @@ async def _gemini_analyze_photo(
     raw = raw.strip()
     if raw and not raw.endswith("]"):
         raw = raw.rstrip(",").rstrip() + "}]" if not raw.endswith("}") else raw + "]"
-    results, err = _parse_gemini_response(raw, "photo")
+    try:
+        results, err = _parse_gemini_response(raw, "photo")
+    except Exception as exc:
+        _LOGGER.warning("Gemini photo: erreur parsing reponse: %s", exc)
+        return [], ERR_PARSE_ERROR
     _LOGGER.info("Gemini photo: %d vin(s) identifie(s)", len(results))
     return results, err
 
@@ -814,6 +825,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             raise HomeAssistantError(f"L'emplacement {new_slot} est déjà occupé sur cet étage.")
         for w in d["wines"]:
             if w["id"] == wine_id:
+                if slot_idx >= len(w["slots"]):
+                    raise HomeAssistantError(f"Index d'emplacement {slot_idx} invalide pour ce vin.")
                 w["slots"][slot_idx] = {"floor_id": new_floor, "slot": new_slot}
                 break
         await _persist(d)
@@ -825,6 +838,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         slot_idx = int(call.data.get("slot_idx", 0))
         for w in d["wines"]:
             if w["id"] == wine_id:
+                if slot_idx >= len(w["slots"]):
+                    raise HomeAssistantError(f"Index d'emplacement {slot_idx} invalide pour ce vin.")
                 if len(w["slots"]) <= 1:
                     d["wines"].remove(w)
                 else:
