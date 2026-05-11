@@ -36,6 +36,9 @@ const ERROR_MESSAGES = {
   no_wine_found:       "📷 Aucune étiquette de vin reconnue. Assurez-vous que l'étiquette est nette et bien éclairée.",
 };
 
+const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const safeUrl = url => /^https?:\/\//i.test(url ?? "") ? url : "#";
+
 const BOTTLE_MINI = (color, w = null) => `<svg viewBox="0 0 10 26" width="10" height="26" xmlns="http://www.w3.org/2000/svg" style="${w ? `width:${w}px;height:${Math.round(w*2.6)}px` : 'width:100%;height:auto'};display:block">
   <!-- Ombre au sol -->
   <ellipse cx="5" cy="25.3" rx="3.4" ry="0.65" fill="black" opacity="0.38"/>
@@ -107,7 +110,8 @@ class MillesimeCard extends HTMLElement {
     this._selected   = null;  // id bouteille sélectionnée
     this._modal      = null;
     this._modalStyle = null;
-    this._unsubs     = [];
+    this._unsubs        = [];
+    this._pendingRender = false;
   }
 
   setConfig(config) { this._config = config || {}; this._applyConfigColors(); this._renderLoading(); }
@@ -160,12 +164,13 @@ class MillesimeCard extends HTMLElement {
       this._data = this._data || DEFAULT_DATA();
     }
     if (!this._modal) this._render();
+    else this._pendingRender = true;
   }
 
   _subscribeUpdates() {
     this._hass.connection
       .subscribeEvents(() => { if (!this._modal) this._fetchData(); }, `${DOMAIN}_updated`)
-      .then((u) => this._unsubs.push(u));
+      .then((u) => { if (this.isConnected) this._unsubs.push(u); else u(); });
   }
 
   async _callService(service, data) {
@@ -256,6 +261,36 @@ class MillesimeCard extends HTMLElement {
     setTimeout(() => toast.remove(), type === "error" ? 8000 : 5000);
   }
 
+  // ── Confirmation modale (remplace window.confirm) ────────────────────────────
+
+  _confirm(message) {
+    return new Promise(resolve => {
+      const overlay = document.createElement("div");
+      overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:100000;display:flex;align-items:center;justify-content:center;font-family:Inter,sans-serif";
+      const box = document.createElement("div");
+      box.style.cssText = "background:#111;border:1px solid #333;border-radius:14px;padding:22px 24px;max-width:360px;width:90%;color:#EDE0CC;font-size:13px;line-height:1.6;box-shadow:0 8px 32px rgba(0,0,0,0.6)";
+      const p = document.createElement("p");
+      p.textContent = message;
+      p.style.cssText = "margin:0 0 18px";
+      const btns = document.createElement("div");
+      btns.style.cssText = "display:flex;gap:8px;justify-content:flex-end";
+      const cancel = document.createElement("button");
+      cancel.textContent = "Annuler";
+      cancel.style.cssText = "padding:8px 16px;border-radius:8px;border:1px solid #333;background:#222;color:#EDE0CC;cursor:pointer;font-size:13px;font-family:Inter,sans-serif";
+      const ok = document.createElement("button");
+      ok.textContent = "Confirmer";
+      ok.style.cssText = "padding:8px 16px;border-radius:8px;border:none;background:rgba(140,10,10,0.9);color:#ff8f8f;cursor:pointer;font-size:13px;font-weight:600;font-family:Inter,sans-serif";
+      const done = val => { overlay.remove(); resolve(val); };
+      cancel.onclick = () => done(false);
+      ok.onclick = () => done(true);
+      overlay.onclick = e => { if (e.target === overlay) done(false); };
+      btns.append(cancel, ok);
+      box.append(p, btns);
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+    });
+  }
+
   // ── Gestion des erreurs de recherche ─────────────────────────────────────────
 
   _handleSearchError(error, source, resultsEl) {
@@ -322,8 +357,9 @@ class MillesimeCard extends HTMLElement {
   }
 
   _closeModal() {
-    this._modal?.remove();     this._modal      = null;
+    this._modal?.remove();      this._modal      = null;
     this._modalStyle?.remove(); this._modalStyle = null;
+    if (this._pendingRender) { this._pendingRender = false; this._render(); }
   }
 
   // ── HTML formulaire étage ──────────────────────────────────────────────────────
@@ -340,7 +376,7 @@ class MillesimeCard extends HTMLElement {
         <div class="mm-field">
           <label class="mm-label">Nom</label>
           <input class="mm-input" id="fl-name" type="text"
-            value="${floor?.name || "Étage " + next}" placeholder="Bordeaux, Bourgogne...">
+            value="${esc(floor?.name || "Étage " + next)}" placeholder="Bordeaux, Bourgogne...">
         </div>
         <div class="mm-row">
           <div class="mm-field">
@@ -402,7 +438,7 @@ class MillesimeCard extends HTMLElement {
               <span class="mm-search-icon">🔍</span>
               <input class="mm-input mm-search-input" id="viv-query"
                 placeholder="Rechercher : château, domaine, appellation..."
-                value="${b.name || ""}">
+                value="${esc(b.name || "")}">
             </div>
             <button class="mm-btn-photo" id="btn-photo" title="Scanner l'étiquette">📷</button>
             <input type="file" id="photo-input" accept="image/*" style="display:none">
@@ -418,11 +454,11 @@ class MillesimeCard extends HTMLElement {
         <div class="mm-row">
           <div class="mm-field">
             <label class="mm-label">Nom du vin *</label>
-            <input class="mm-input" id="bt-name" value="${b.name || ""}" placeholder="Château Pétrus">
+            <input class="mm-input" id="bt-name" value="${esc(b.name || "")}" placeholder="Château Pétrus">
           </div>
           <div class="mm-field">
             <label class="mm-label">Millésime</label>
-            <input class="mm-input" id="bt-vintage" value="${b.vintage || ""}" placeholder="2019" maxlength="4">
+            <input class="mm-input" id="bt-vintage" value="${esc(b.vintage || "")}" placeholder="2019" maxlength="4">
           </div>
         </div>
         <div class="mm-row">
@@ -442,21 +478,21 @@ class MillesimeCard extends HTMLElement {
         <div class="mm-row">
           <div class="mm-field">
             <label class="mm-label">Producteur</label>
-            <input class="mm-input" id="bt-producer" value="${b.producer || ""}" placeholder="Domaine...">
+            <input class="mm-input" id="bt-producer" value="${esc(b.producer || "")}" placeholder="Domaine...">
           </div>
           <div class="mm-field">
             <label class="mm-label">Appellation</label>
-            <input class="mm-input" id="bt-appellation" value="${b.appellation || ""}" placeholder="Pomerol, Chablis...">
+            <input class="mm-input" id="bt-appellation" value="${esc(b.appellation || "")}" placeholder="Pomerol, Chablis...">
           </div>
         </div>
         <div class="mm-row">
           <div class="mm-field">
             <label class="mm-label">À boire à partir de</label>
-            <input class="mm-input" id="bt-from" value="${b.drink_from || ""}" placeholder="2025">
+            <input class="mm-input" id="bt-from" value="${esc(b.drink_from || "")}" placeholder="2025">
           </div>
           <div class="mm-field">
             <label class="mm-label">À boire avant</label>
-            <input class="mm-input" id="bt-until" value="${b.drink_until || ""}" placeholder="2035">
+            <input class="mm-input" id="bt-until" value="${esc(b.drink_until || "")}" placeholder="2035">
           </div>
         </div>
         <div class="mm-row">
@@ -472,7 +508,7 @@ class MillesimeCard extends HTMLElement {
             <label class="mm-label">Étage *</label>
             <select class="mm-input" id="bt-floor">
               ${floors.map((f) =>
-                `<option value="${f.id}" ${pendingSlot?.floor_id === f.id ? "selected" : ""}>${f.name}</option>`
+                `<option value="${esc(f.id)}" ${pendingSlot?.floor_id === f.id ? "selected" : ""}>${esc(f.name)}</option>`
               ).join("")}
             </select>
           </div>
@@ -497,16 +533,16 @@ class MillesimeCard extends HTMLElement {
         <div class="mm-field">
           <label class="mm-label">Notes personnelles</label>
           <textarea class="mm-input mm-textarea" id="bt-notes"
-            placeholder="Impressions, occasion...">${b.notes || ""}</textarea>
+            placeholder="Impressions, occasion...">${esc(b.notes || "")}</textarea>
         </div>
 
         <!-- Champs cachés remplis par Gemini -->
-        <input type="hidden" id="bt-image_url"   value="${b.image_url    || ""}">
-        <input type="hidden" id="bt-vivino_url"  value="${b.vivino_url   || ""}">
-        <input type="hidden" id="bt-region"      value="${b.region       || ""}">
-        <input type="hidden" id="bt-country"     value="${b.country      || ""}">
-        <input type="hidden" id="bt-tasting"     value="${b.tasting_notes|| ""}">
-        <input type="hidden" id="bt-pairing"     value="${b.food_pairing || ""}">
+        <input type="hidden" id="bt-image_url"   value="${esc(b.image_url    || "")}">
+        <input type="hidden" id="bt-vivino_url"  value="${esc(b.vivino_url   || "")}">
+        <input type="hidden" id="bt-region"      value="${esc(b.region       || "")}">
+        <input type="hidden" id="bt-country"     value="${esc(b.country      || "")}">
+        <input type="hidden" id="bt-tasting"     value="${esc(b.tasting_notes|| "")}">
+        <input type="hidden" id="bt-pairing"     value="${esc(b.food_pairing || "")}">
       </div>
       <div class="mm-footer">
         <button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
@@ -526,31 +562,31 @@ class MillesimeCard extends HTMLElement {
     const fileInput= box.querySelector("#photo-input");
 
     // ── Auto-remplissage depuis un résultat ──────────────────────────────────
-    const fillFrom = (wine) => {
+    const fillFrom = (w) => {
       const set = (id, val) => {
         const el = box.querySelector(`#${id}`);
         if (el && val != null && val !== "" && val !== 0) el.value = val;
       };
-      set("bt-name",        wine.name);
-      set("bt-vintage",     wine.vintage);
-      set("bt-producer",    wine.producer);
-      set("bt-appellation", wine.appellation);
-      set("bt-from",        wine.drink_from  || "");
-      set("bt-until",       wine.drink_until || "");
-      set("bt-vrating",     wine.vivino_rating || "");
-      if (wine.price > 0) { const el = box.querySelector("#bt-price"); if (el) el.value = wine.price; }
-      set("bt-image_url",   wine.image_url   || "");
-      set("bt-vivino_url",  wine.vivino_url  || "");
-      set("bt-region",      wine.region      || "");
-      set("bt-country",     wine.country     || "");
-      set("bt-tasting",     wine.tasting_notes || "");
-      set("bt-pairing",     wine.food_pairing  || "");
+      set("bt-name",        w.name);
+      set("bt-vintage",     w.vintage);
+      set("bt-producer",    w.producer);
+      set("bt-appellation", w.appellation);
+      set("bt-from",        w.drink_from  || "");
+      set("bt-until",       w.drink_until || "");
+      set("bt-vrating",     w.vivino_rating || "");
+      if (w.price > 0) { const el = box.querySelector("#bt-price"); if (el) el.value = w.price; }
+      set("bt-image_url",   w.image_url   || "");
+      set("bt-vivino_url",  w.vivino_url  || "");
+      set("bt-region",      w.region      || "");
+      set("bt-country",     w.country     || "");
+      set("bt-tasting",     w.tasting_notes || "");
+      set("bt-pairing",     w.food_pairing  || "");
       const typeEl = box.querySelector("#bt-type");
-      if (typeEl && wine.type) typeEl.value = wine.type;
+      if (typeEl && w.type) typeEl.value = w.type;
       results.innerHTML = "";
       results.style.display = "none";
-      if (wine.image_url) {
-        imgWrap.innerHTML = `<img src="${wine.image_url}"
+      if (w.image_url) {
+        imgWrap.innerHTML = `<img src="${esc(w.image_url)}"
           style="width:56px;display:block;margin:0 auto 10px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.5)">`;
       }
     };
@@ -586,12 +622,16 @@ class MillesimeCard extends HTMLElement {
       results.innerHTML = wines.map((w, i) => `
         <div class="mm-viv-item" data-idx="${i}">
           ${w.image_url
-            ? `<img src="${w.image_url}" style="width:28px;border-radius:4px;flex-shrink:0">`
+            ? `<img src="${esc(w.image_url)}" style="width:28px;border-radius:4px;flex-shrink:0">`
             : `<span style="font-size:18px;flex-shrink:0">${WINE_TYPES[w.type]?.emoji || "🍷"}</span>`}
           <div style="flex:1;min-width:0">
-            <div class="mm-viv-name">${w.name}${w.vintage ? " " + w.vintage : ""}</div>
-            <div class="mm-viv-sub">${[w.appellation, w.region, w.vivino_rating ? "⭐ " + w.vivino_rating : ""].filter(Boolean).join(" · ")}</div>
-            ${w.tasting_notes ? `<div class="mm-viv-notes">${w.tasting_notes}</div>` : ""}
+            <div class="mm-viv-name">${esc(w.name)}${w.vintage ? " " + esc(w.vintage) : ""}</div>
+            <div class="mm-viv-sub">${[
+              w.appellation ? esc(w.appellation) : null,
+              w.region      ? esc(w.region)      : null,
+              w.vivino_rating ? "⭐ " + w.vivino_rating : null
+            ].filter(Boolean).join(" · ")}</div>
+            ${w.tasting_notes ? `<div class="mm-viv-notes">${esc(w.tasting_notes)}</div>` : ""}
           </div>
         </div>`).join("");
 
@@ -665,7 +705,7 @@ class MillesimeCard extends HTMLElement {
         return;
       }
       if (error) {
-        banner.innerHTML = `<div class="mm-search-banner mm-search-banner--warning">${ERROR_MESSAGES[error] || error}</div>`;
+        banner.innerHTML = `<div class="mm-search-banner mm-search-banner--warning">${ERROR_MESSAGES[error] || esc(error)}</div>`;
       }
 
       if (wines.length === 1) {
@@ -809,18 +849,18 @@ class MillesimeCard extends HTMLElement {
     return `
       <div class="mm-header" style="background:linear-gradient(135deg,${t.color}18,transparent)">
         <button class="mm-close" data-close style="order:-1;font-size:20px">←</button>
-        <span class="mm-title">${b.name}</span>
+        <span class="mm-title">${esc(b.name)}</span>
         <span style="color:${t.color};font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px">${t.label}</span>
       </div>
       <div class="mm-body">
-        ${b.image_url ? `<img src="${b.image_url}" style="width:64px;display:block;margin:0 auto 16px;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,0.6)">` : ""}
+        ${b.image_url ? `<img src="${esc(b.image_url)}" style="width:64px;display:block;margin:0 auto 16px;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,0.6)">` : ""}
         <div class="mm-detail-hero">
-          <div class="mm-detail-name">${b.name}</div>
-          <div class="mm-detail-sub">${[b.producer, b.appellation].filter(Boolean).join(" · ")}</div>
+          <div class="mm-detail-name">${esc(b.name)}</div>
+          <div class="mm-detail-sub">${[b.producer, b.appellation].filter(Boolean).map(esc).join(" · ")}</div>
           ${vr > 0 ? `
             <div style="color:${t.color};font-size:20px;margin-top:10px;letter-spacing:2px">${stars}</div>
             <div style="color:var(--mm-muted,#555);font-size:11px;margin-top:2px">${vr.toFixed(1)} / 5</div>` : ""}
-          ${b.vivino_url ? `<a href="${b.vivino_url}" target="_blank" class="mm-vivino-link">Voir sur Vivino →</a>` : ""}
+          ${b.vivino_url ? `<a href="${safeUrl(b.vivino_url)}" target="_blank" class="mm-vivino-link">Voir sur Vivino →</a>` : ""}
         </div>
         <div class="mm-detail-grid">
           ${_drow("Millésime",  b.vintage)}
@@ -831,7 +871,7 @@ class MillesimeCard extends HTMLElement {
             <span class="mm-drow-value" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:2px">
               ${b.slots.map(s => {
                 const floor = (this._data?.cellar?.floors || []).find(f => f.id === s.floor_id);
-                return `<span style="background:var(--mm-bg2);border:1px solid var(--mm-border);border-radius:6px;padding:2px 7px;font-size:10px;white-space:nowrap">${floor ? floor.name : s.floor_id} · #${s.slot}</span>`;
+                return `<span style="background:var(--mm-bg2);border:1px solid var(--mm-border);border-radius:6px;padding:2px 7px;font-size:10px;white-space:nowrap">${esc(floor ? floor.name : s.floor_id)} · #${s.slot}</span>`;
               }).join("")}
             </span>
           </div>` : ""}
@@ -840,9 +880,9 @@ class MillesimeCard extends HTMLElement {
           ${_drow("Ajouté le",  b.added_date || "")}
           ${b.event && EVENT_LABEL[b.event]?.l ? _drow("Événement", EVENT_LABEL[b.event].emoji + " " + EVENT_LABEL[b.event].l) : ""}
         </div>
-        ${b.tasting_notes ? `<div class="mm-notes mm-tasting">🍷 ${b.tasting_notes}</div>` : ""}
-        ${b.food_pairing  ? `<div class="mm-notes mm-pairing">🍽️ ${b.food_pairing}</div>`  : ""}
-        ${b.notes         ? `<div class="mm-notes">"${b.notes}"</div>`                     : ""}
+        ${b.tasting_notes ? `<div class="mm-notes mm-tasting">🍷 ${esc(b.tasting_notes)}</div>` : ""}
+        ${b.food_pairing  ? `<div class="mm-notes mm-pairing">🍽️ ${esc(b.food_pairing)}</div>`  : ""}
+        ${b.notes         ? `<div class="mm-notes">"${esc(b.notes)}"</div>`                     : ""}
       </div>
       <div class="mm-footer">
         <button class="mm-btn mm-btn-danger" id="det-remove">🗑</button>
@@ -863,13 +903,13 @@ class MillesimeCard extends HTMLElement {
       </div>
       <div class="mm-body">
         <div class="mm-notes mm-tasting" style="margin-bottom:14px">
-          Ajouter un emplacement pour <strong>${wine.name}${wine.vintage ? " " + wine.vintage : ""}</strong>
+          Ajouter un emplacement pour <strong>${esc(wine.name)}${wine.vintage ? " " + esc(wine.vintage) : ""}</strong>
         </div>
         <div class="mm-row">
           <div class="mm-field">
             <label class="mm-label">Étage *</label>
             <select class="mm-input" id="dup-floor">
-              ${floors.map(f => `<option value="${f.id}">${f.name}</option>`).join("")}
+              ${floors.map(f => `<option value="${esc(f.id)}">${esc(f.name)}</option>`).join("")}
             </select>
           </div>
           <div class="mm-field" style="grid-column:1/-1">
@@ -895,21 +935,21 @@ class MillesimeCard extends HTMLElement {
       if (slots.length === 0) { this._showToast("warning", "Sélectionnez au moins un emplacement."); return; }
       btn.textContent = "⏳ Ajout en cours...";
       btn.disabled = true;
-      try {
-        for (const slot of slots) {
-          await this._hass.callService(DOMAIN, "add_slot", {
-            wine_id:  wine.id,
-            floor_id: floorId,
-            slot,
-          });
+      const failed = [];
+      for (const slot of slots) {
+        try {
+          await this._hass.callService(DOMAIN, "add_slot", { wine_id: wine.id, floor_id: floorId, slot });
+        } catch(e) {
+          failed.push(slot);
         }
-        this._closeModal();
-        setTimeout(() => this._fetchData(), 600);
+      }
+      const added = slots.length - failed.length;
+      this._closeModal();
+      setTimeout(() => this._fetchData(), 600);
+      if (failed.length) {
+        this._showToast("warning", `${added} emplacement(s) ajouté(s), ${failed.length} en échec (slots : ${failed.join(", ")}).`);
+      } else {
         this._showToast("success", `${slots.length} emplacement${slots.length > 1 ? "s" : ""} ajouté${slots.length > 1 ? "s" : ""} ✓`);
-      } catch(err) {
-        btn.textContent = "Ajouter";
-        btn.disabled = false;
-        this._showToast("error", "Erreur : " + (err.message || err));
       }
     });
 
@@ -1115,7 +1155,7 @@ class MillesimeCard extends HTMLElement {
       const msg = cnt > 1
         ? `Retirer "${wine.name}" et ses ${cnt} emplacements de la cave ?`
         : `Retirer "${wine.name}" de la cave ?`;
-      if (confirm(msg)) {
+      if (await this._confirm(msg)) {
         this._selected = null;
         await this._callService("remove_wine", { wine_id: wine.id });
       }
@@ -1208,7 +1248,7 @@ class MillesimeCard extends HTMLElement {
         <div class="header-left">
           <div class="header-glass" id="btn-history" title="Historique de valeur" style="cursor:pointer">${GLASS_SVG}</div>
           <div class="header-meta">
-            <div class="header-name">${data.cellar?.name || "Millésime"}</div>
+            <div class="header-name">${esc(data.cellar?.name || "Millésime")}</div>
             <div class="header-tagline">Cave à vin</div>
           </div>
         </div>
@@ -1336,7 +1376,7 @@ class MillesimeCard extends HTMLElement {
         class="dot ${wine ? "dot--filled" : "dot--empty"} ${sel ? "dot--selected" : ""} ${!isCircle && alt ? "dot--alt" : ""}"
         data-slot="${i}" data-floor-id="${floor.id}" data-wine-id="${wine?.id || ""}" data-slot-idx="${slotIdx}"
         style="${[dotStyle, sizeStyle].filter(Boolean).join(";")}"
-        title="${wine ? wine.name + (wine.vintage ? " " + wine.vintage : "") : "Vide — cliquer pour ajouter"}"
+        title="${wine ? esc(wine.name) + (wine.vintage ? " " + esc(wine.vintage) : "") : "Vide — cliquer pour ajouter"}"
       >${bottleContent}</div>`;
 
       const labelsHtml = labelEls ? `<div class="dot-labels" style="height:${labelExtraH}px">${labelEls}</div>` : "";
@@ -1371,12 +1411,12 @@ class MillesimeCard extends HTMLElement {
           <div class="floor-counters">${counters}</div>
           <div class="floor-dots" style="${dotsStyle}">${dots}</div>
           <div class="floor-actions">
-            <button class="icon-btn" data-edit-floor="${floor.id}" title="Modifier">⚙</button>
-            <button class="icon-btn" data-del-floor="${floor.id}"  title="Supprimer">✕</button>
+            <button class="icon-btn" data-edit-floor="${esc(floor.id)}" title="Modifier">⚙</button>
+            <button class="icon-btn" data-del-floor="${esc(floor.id)}"  title="Supprimer">✕</button>
           </div>
         </div>
         <div class="floor-label">
-          <span>${floor.name}</span><span class="floor-pct">${pct}%</span>
+          <span>${esc(floor.name)}</span><span class="floor-pct">${pct}%</span>
         </div>
       </div>`;
   }
@@ -1444,7 +1484,7 @@ class MillesimeCard extends HTMLElement {
         const msg   = cnt > 0
           ? `Supprimer "${floor?.name}" et ses ${cnt} bouteille(s) ?`
           : `Supprimer l'étage "${floor?.name}" ?`;
-        if (confirm(msg)) await this._callService("remove_floor", { floor_id: fid });
+        if (await this._confirm(msg)) await this._callService("remove_floor", { floor_id: fid });
       })
     );
 
@@ -1488,6 +1528,7 @@ class MillesimeCard extends HTMLElement {
   disconnectedCallback() {
     this._unsubs.forEach((f) => f());
     this._closeModal();
+    document.querySelector("#mm-toast-css")?.remove();
   }
 }
 
@@ -1499,7 +1540,7 @@ function _drow(label, value) {
   if (!value) return "";
   return `<div class="mm-drow">
     <span class="mm-drow-label">${label}</span>
-    <span class="mm-drow-value">${value}</span>
+    <span class="mm-drow-value">${esc(String(value))}</span>
   </div>`;
 }
 
