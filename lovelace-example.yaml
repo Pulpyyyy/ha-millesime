@@ -4,10 +4,86 @@ views:
     path: millesime
     icon: mdi:bottle-wine
     cards:
-      # Carte principale Millésime — visualisation animée
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Carte principale Millésime — configuration complète
+      # ─────────────────────────────────────────────────────────────────────────
       - type: custom:millesime-card
 
+        # ── Affichage des bouteilles ───────────────────────────────────────────
+        # Style de représentation des bouteilles
+        # Valeurs : "bottle" (SVG animé, défaut) | "dot" (cercle compact)
+        bottle_style: bottle
+
+        # Étiquette affichée sous chaque bouteille
+        # Valeurs : "none" (rien, défaut) | "vintage" | "name" | "name_vintage" | "vintage_name"
+        bottle_label: name_vintage
+
+        # ── Typographie ───────────────────────────────────────────────────────
+        # Taille de base en pixels (défaut : 13)
+        font_size: 13
+
+        # Police avec sérif utilisée pour les titres
+        # Défaut : "Playfair Display" (chargée depuis Google Fonts)
+        font_serif: Playfair Display
+
+        # Police sans-sérif utilisée pour le corps du texte
+        # Défaut : "Inter" (chargée depuis Google Fonts)
+        font_sans: Inter
+
+        # URL personnalisée pour charger des polices alternatives (optionnel)
+        # Exemple : "https://fonts.googleapis.com/css2?family=Lora&family=Nunito"
+        # font_url: ""
+
+        # ── Couleurs d'accentuation ────────────────────────────────────────────
+        # Couleur principale d'accentuation (boutons actifs, sélections, liens)
+        # Accepte n'importe quelle valeur CSS valide : hex, rgb, hsl, var(--xxx)
+        accent_color: "#C0392B"
+
+        # Couleur au survol des éléments accentués (optionnel, fallback sur accent_color)
+        accent_hover_color: "#E74C3C"
+
+        # Couleur d'accentuation spécifique à l'en-tête (optionnel, fallback sur accent_color)
+        header_accent_color: "#C0392B"
+
+        # Couleur dorée utilisée pour les étoiles, notes et ornements
+        gold_color: "#D4AC0D"
+
+        # ── Couleurs du bois (casier) ──────────────────────────────────────────
+        # Teinte foncée des planches du casier (ombre, bords)
+        wood_dark: "#2C1A0E"
+
+        # Teinte médiane des planches du casier
+        wood_mid: "#5C3D1E"
+
+        # Teinte claire des planches du casier (lumière, reflets)
+        wood_light: "#8B5E3C"
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Exemples de variantes rapides
+      # ─────────────────────────────────────────────────────────────────────────
+
+      # Mode compact : cercles + millésime uniquement, petite police
+      - type: custom:millesime-card
+        bottle_style: dot
+        bottle_label: vintage
+        font_size: 11
+
+      # Mode lisible : bouteilles SVG + nom et millésime, couleurs claires
+      - type: custom:millesime-card
+        bottle_style: bottle
+        bottle_label: name_vintage
+        font_size: 14
+        accent_color: "#27AE8F"
+        accent_hover_color: "#2ECC71"
+        gold_color: "#F1C40F"
+        wood_dark: "#1A1A2E"
+        wood_mid: "#16213E"
+        wood_light: "#0F3460"
+
+      # ─────────────────────────────────────────────────────────────────────────
       # Statistiques rapides
+      # ─────────────────────────────────────────────────────────────────────────
       - type: entities
         title: Statistiques Millésime
         icon: mdi:chart-bar

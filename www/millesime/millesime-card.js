@@ -128,6 +128,34 @@ class MillesimeCard extends HTMLElement {
     set('--wood-md',        cfg.wood_mid);
     set('--wood-lt',        cfg.wood_light);
     set('--gold',           cfg.gold_color);
+    const serifName = cfg.font_serif || 'Playfair Display';
+    const sansName  = cfg.font_sans  || 'Inter';
+    this._fontSerif = `'${serifName}', serif`;
+    this._fontSans  = `'${sansName}', sans-serif`;
+    set('--font-serif', this._fontSerif);
+    set('--font-sans',  this._fontSans);
+    this.style.fontFamily = this._fontSans;
+    this.style.fontSize   = (parseFloat(cfg.font_size) || 13) + 'px';
+    this._injectFonts(serifName, sansName, cfg.font_url);
+    this._fsBase = parseFloat(cfg.font_size) || 13;
+    set('--fs-base', this._fsBase + 'px');
+  }
+
+  _injectFonts(serifName, sansName, customUrl) {
+    const id   = 'mm-gfonts';
+    const href = customUrl ||
+      `https://fonts.googleapis.com/css2?family=${encodeURIComponent(serifName)}:wght@400;700&family=${encodeURIComponent(sansName)}:wght@300;400;500;600&display=swap`;
+    let link = document.getElementById(id);
+    if (link) {
+      if (link.href === href) return;
+      link.href = href;
+    } else {
+      link = document.createElement('link');
+      link.id  = id;
+      link.rel = 'stylesheet';
+      link.href = href;
+      document.head.appendChild(link);
+    }
   }
 
   set hass(hass) {
@@ -266,9 +294,13 @@ class MillesimeCard extends HTMLElement {
   _confirm(message) {
     return new Promise(resolve => {
       const overlay = document.createElement("div");
-      overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:100000;display:flex;align-items:center;justify-content:center;font-family:Inter,sans-serif";
+      overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:100000;display:flex;align-items:center;justify-content:center";
+      overlay.style.setProperty('--font-sans', this._fontSans || "'Inter', sans-serif");
+      overlay.style.setProperty('--fs-base',  (this._fsBase  || 13) + 'px');
+      overlay.style.fontFamily = this._fontSans || "'Inter', sans-serif";
+      overlay.style.fontSize   = (this._fsBase  || 13) + 'px';
       const box = document.createElement("div");
-      box.style.cssText = "background:#111;border:1px solid #333;border-radius:14px;padding:22px 24px;max-width:360px;width:90%;color:#EDE0CC;font-size:13px;line-height:1.6;box-shadow:0 8px 32px rgba(0,0,0,0.6)";
+      box.style.cssText = "background:#111;border:1px solid #333;border-radius:14px;padding:22px 24px;max-width:360px;width:90%;color:#EDE0CC;font-size:1em;line-height:1.6;box-shadow:0 8px 32px rgba(0,0,0,0.6)";
       const p = document.createElement("p");
       p.textContent = message;
       p.style.cssText = "margin:0 0 18px";
@@ -276,10 +308,10 @@ class MillesimeCard extends HTMLElement {
       btns.style.cssText = "display:flex;gap:8px;justify-content:flex-end";
       const cancel = document.createElement("button");
       cancel.textContent = "Annuler";
-      cancel.style.cssText = "padding:8px 16px;border-radius:8px;border:1px solid #333;background:#222;color:#EDE0CC;cursor:pointer;font-size:13px;font-family:Inter,sans-serif";
+      cancel.style.cssText = "padding:8px 16px;border-radius:8px;border:1px solid #333;background:#222;color:#EDE0CC;cursor:pointer;font-size:1em;font-family:var(--font-sans)";
       const ok = document.createElement("button");
       ok.textContent = "Confirmer";
-      ok.style.cssText = "padding:8px 16px;border-radius:8px;border:none;background:rgba(140,10,10,0.9);color:#ff8f8f;cursor:pointer;font-size:13px;font-weight:600;font-family:Inter,sans-serif";
+      ok.style.cssText = "padding:8px 16px;border-radius:8px;border:none;background:rgba(140,10,10,0.9);color:#ff8f8f;cursor:pointer;font-size:1em;font-weight:600;font-family:var(--font-sans)";
       const done = val => { overlay.remove(); resolve(val); };
       cancel.onclick = () => done(false);
       ok.onclick = () => done(true);
@@ -331,6 +363,11 @@ class MillesimeCard extends HTMLElement {
     ['primary-background-color','secondary-background-color','card-background-color',
      'primary-text-color','secondary-text-color','divider-color','primary-color','secondary-color','accent-color']
       .forEach(p => { if (themeVars[p]) overlay.style.setProperty(`--${p}`, themeVars[p]); });
+    overlay.style.setProperty('--font-serif', this._fontSerif || "'Playfair Display', serif");
+    overlay.style.setProperty('--font-sans',  this._fontSans  || "'Inter', sans-serif");
+    overlay.style.setProperty('--fs-base',    (this._fsBase   || 13) + 'px');
+    overlay.style.fontFamily = this._fontSans || "'Inter', sans-serif";
+    overlay.style.fontSize   = (this._fsBase  || 13) + 'px';
     const box = document.createElement("div");
     box.className = "mm-box";
 
@@ -623,7 +660,7 @@ class MillesimeCard extends HTMLElement {
         <div class="mm-viv-item" data-idx="${i}">
           ${w.image_url
             ? `<img src="${esc(w.image_url)}" style="width:28px;border-radius:4px;flex-shrink:0">`
-            : `<span style="font-size:18px;flex-shrink:0">${WINE_TYPES[w.type]?.emoji || "🍷"}</span>`}
+            : `<span style="font-size:1.38em;flex-shrink:0">${WINE_TYPES[w.type]?.emoji || "🍷"}</span>`}
           <div style="flex:1;min-width:0">
             <div class="mm-viv-name">${esc(w.name)}${w.vintage ? " " + esc(w.vintage) : ""}</div>
             <div class="mm-viv-sub">${[
@@ -671,7 +708,7 @@ class MillesimeCard extends HTMLElement {
       const url = URL.createObjectURL(file);
       imgWrap.innerHTML = `<div class="mm-photo-loading">
         <img src="${url}" style="width:80px;border-radius:8px;opacity:0.6;display:block;margin:0 auto 6px">
-        <div style="text-align:center;font-size:11px;color:var(--mm-muted,#888)">
+        <div style="text-align:center;font-size:0.85em;color:var(--mm-muted,#888)">
           <span class="mm-spinner"></span> Analyse de l'étiquette...
         </div>
       </div>`;
@@ -848,9 +885,9 @@ class MillesimeCard extends HTMLElement {
       ? "★".repeat(Math.round(vr)) + "☆".repeat(5 - Math.round(vr)) : "";
     return `
       <div class="mm-header" style="background:linear-gradient(135deg,${t.color}18,transparent)">
-        <button class="mm-close" data-close style="order:-1;font-size:20px">←</button>
+        <button class="mm-close" data-close style="order:-1;font-size:1.54em">←</button>
         <span class="mm-title">${esc(b.name)}</span>
-        <span style="color:${t.color};font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px">${t.label}</span>
+        <span style="color:${t.color};font-size:0.77em;font-weight:700;text-transform:uppercase;letter-spacing:1.5px">${t.label}</span>
       </div>
       <div class="mm-body">
         ${b.image_url ? `<img src="${esc(b.image_url)}" style="width:64px;display:block;margin:0 auto 16px;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,0.6)">` : ""}
@@ -858,8 +895,8 @@ class MillesimeCard extends HTMLElement {
           <div class="mm-detail-name">${esc(b.name)}</div>
           <div class="mm-detail-sub">${[b.producer, b.appellation].filter(Boolean).map(esc).join(" · ")}</div>
           ${vr > 0 ? `
-            <div style="color:${t.color};font-size:20px;margin-top:10px;letter-spacing:2px">${stars}</div>
-            <div style="color:var(--mm-muted,#555);font-size:11px;margin-top:2px">${vr.toFixed(1)} / 5</div>` : ""}
+            <div style="color:${t.color};font-size:1.54em;margin-top:10px;letter-spacing:2px">${stars}</div>
+            <div style="color:var(--mm-muted,#555);font-size:0.85em;margin-top:2px">${vr.toFixed(1)} / 5</div>` : ""}
           ${b.vivino_url ? `<a href="${safeUrl(b.vivino_url)}" target="_blank" class="mm-vivino-link">Voir sur Vivino →</a>` : ""}
         </div>
         <div class="mm-detail-grid">
@@ -871,7 +908,7 @@ class MillesimeCard extends HTMLElement {
             <span class="mm-drow-value" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:2px">
               ${b.slots.map(s => {
                 const floor = (this._data?.cellar?.floors || []).find(f => f.id === s.floor_id);
-                return `<span style="background:var(--mm-bg2);border:1px solid var(--mm-border);border-radius:6px;padding:2px 7px;font-size:10px;white-space:nowrap">${esc(floor ? floor.name : s.floor_id)} · #${s.slot}</span>`;
+                return `<span style="background:var(--mm-bg2);border:1px solid var(--mm-border);border-radius:6px;padding:2px 7px;font-size:0.77em;white-space:nowrap">${esc(floor ? floor.name : s.floor_id)} · #${s.slot}</span>`;
               }).join("")}
             </span>
           </div>` : ""}
@@ -971,9 +1008,9 @@ class MillesimeCard extends HTMLElement {
       <div class="mm-body">
         ${history.length === 0 ? `
           <div style="text-align:center;padding:30px 0;color:var(--mm-muted,#555)">
-            <div style="font-size:32px;margin-bottom:10px">📊</div>
+            <div style="font-size:2.46em;margin-bottom:10px">📊</div>
             <div>Aucun historique enregistré.</div>
-            <div style="font-size:11px;margin-top:6px">Utilisez "Enregistrer la valeur" pour commencer.</div>
+            <div style="font-size:0.85em;margin-top:6px">Utilisez "Enregistrer la valeur" pour commencer.</div>
           </div>` : `
           <div class="hist-summary">
             <div class="hist-stat">
@@ -1049,16 +1086,16 @@ class MillesimeCard extends HTMLElement {
     const cAccent = tv['primary-color']              || '#C0392B';
 
     if (!history || history.length === 0) {
-      wrap.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:${cMuted};font-size:12px;font-family:Inter,sans-serif">Aucun relevé</div>`;
+      wrap.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:${cMuted};font-size:0.92em;font-family:${this._fontSans||'Inter,sans-serif'}">Aucun relevé</div>`;
       return;
     }
 
     if (history.length === 1) {
       const h = history[0];
-      wrap.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:${cMuted};font-size:12px;font-family:Inter,sans-serif;gap:6px">
-        <div style="font-size:22px;font-weight:700;color:${cText};font-family:Playfair Display,serif">${h.value} €</div>
+      wrap.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:${cMuted};font-size:0.92em;font-family:${this._fontSans||'Inter,sans-serif'};gap:6px">
+        <div style="font-size:1.69em;font-weight:700;color:${cText};font-family:${this._fontSerif||'Playfair Display,serif'}">${h.value} €</div>
         <div>${h.date} · ${h.bottles} bouteilles</div>
-        <div style="color:${cMuted};font-size:11px;margin-top:4px">Ajoutez un 2ᵉ relevé pour voir l'évolution</div>
+        <div style="color:${cMuted};font-size:0.85em;margin-top:4px">Ajoutez un 2ᵉ relevé pour voir l'évolution</div>
       </div>`;
       return;
     }
@@ -1215,8 +1252,14 @@ class MillesimeCard extends HTMLElement {
 
   // ── Rendu principal ───────────────────────────────────────────────────────────
 
+  _fontCSS() {
+    const ff = this._fontSans || "'Inter', sans-serif";
+    const fs = (this._fsBase || 13) + 'px';
+    return `<style>:host{font-family:${ff};font-size:${fs}}</style>`;
+  }
+
   _renderLoading() {
-    this.shadowRoot.innerHTML = CARD_CSS + `
+    this.shadowRoot.innerHTML = CARD_CSS + this._fontCSS() + `
       <div class="card">
         <div class="loading-state"><div class="loading-glass">${GLASS_SVG}</div></div>
       </div>`;
@@ -1226,7 +1269,7 @@ class MillesimeCard extends HTMLElement {
     const data   = this._data || DEFAULT_DATA();
     const floors = data.cellar?.floors || [];
     const wines  = data.wines || [];
-    this.shadowRoot.innerHTML = CARD_CSS + `
+    this.shadowRoot.innerHTML = CARD_CSS + this._fontCSS() + `
       <div class="card">
         ${this._renderHeader(data, wines)}
         ${this._renderFilters()}
@@ -1315,9 +1358,9 @@ class MillesimeCard extends HTMLElement {
     const isQc   = floor.layout === "quinconce";
     const isCircleMode = this._config?.bottle_style === "dot";
     const lm = this._config?.bottle_label || "none";
-    // font-size:11px × line-height:1.3 = 14.3px + padding-top:1px → 16px par label
+    // font-size:0.85em × line-height:1.3 = 14.3px + padding-top:1px → 16px par label
     const lblCount = (lm === "name_vintage" || lm === "vintage_name") ? 2 : lm === "none" ? 0 : 1;
-    const labelExtraH = lblCount * 16;
+    const labelExtraH = lblCount * Math.ceil((this._fsBase || 13) * 0.85 * 1.3 + 1);
     const rowH = (isCircleMode ? 40 : 80) + labelExtraH;
     const pct   = Math.round((Object.keys(slotMap).length / total) * 100);
 
@@ -1390,7 +1433,7 @@ class MillesimeCard extends HTMLElement {
     if (isQc) {
       // Grille double-colonne : chaque bouteille occupe 2 colonnes
       // Les rangées impaires sont décalées d'une colonne → quinconce parfait
-      dotsStyle = `grid-template-columns:repeat(${cols * 2},1fr);grid-auto-columns:1fr;grid-auto-rows:${rowH}px;overflow-x:clip;overflow-y:visible;padding-top:2px`;
+      dotsStyle = `grid-template-columns:repeat(${cols * 2 + 1},1fr);grid-auto-rows:${rowH}px;padding-top:4px`;
       const numRows = Math.ceil(total / cols);
       for (let row = 0; row < numRows; row++) {
         const odd = row % 2 === 1;
@@ -1547,10 +1590,8 @@ function _drow(label, value) {
 // ── CSS de la carte ────────────────────────────────────────────────────────────
 
 const CARD_CSS = `<style>
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Inter:wght@300;400;500;600&display=swap');
-
 :host {
-  display: block; font-family: 'Inter', sans-serif;
+  display: block; font-size: var(--fs-base, 13px);
   --red:#C0392B; --red-h:#E74C3C; --gold:#C9A84C;
   --accent: var(--primary-color, #C0392B);
   --accent-h: var(--secondary-color, #E74C3C);
@@ -1595,19 +1636,19 @@ const CARD_CSS = `<style>
 }
 @keyframes float-anim { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
 .header-meta { text-align:center; }
-.header-name { font-family:'Playfair Display',serif; font-size:10px; color:var(--cream); line-height:1.2; }
-.header-tagline { font-size:7px; color:var(--red); text-transform:uppercase; letter-spacing:1.5px; margin-top:1px; }
+.header-name { font-family:var(--font-serif); font-size:0.77em; color:var(--cream); line-height:1.2; }
+.header-tagline { font-size:0.54em; color:var(--red); text-transform:uppercase; letter-spacing:1.5px; margin-top:1px; }
 /* Colonne droite : stats en haut, boutons en dessous */
 .header-right { display:flex; flex-direction:column; gap:7px; flex:1; min-width:0; }
 .header-stats { display:flex; gap:5px; align-items:stretch; }
 .stat { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:5px 6px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border); flex:1; }
-.stat-value { font-size:14px; font-weight:700; color:var(--cream); font-family:'Playfair Display',serif; line-height:1; }
-.stat-label { font-size:7px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-top:2px; }
+.stat-value { font-size:1.08em; font-weight:700; color:var(--cream); font-family:var(--font-serif); line-height:1; }
+.stat-label { font-size:0.54em; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-top:2px; }
 .header-actions { display:flex; gap:6px; }
 .header-actions button { flex:1; }
 .btn-primary, .btn-secondary {
   padding:7px 12px; border-radius:8px; border:none;
-  font-family:'Inter',sans-serif; font-size:11px; font-weight:600;
+  font-family:var(--font-sans); font-size:0.85em; font-weight:600;
   cursor:pointer; transition:all 0.15s; white-space:nowrap;
 }
 .btn-primary { background:var(--accent); color:#fff; }
@@ -1621,13 +1662,13 @@ const CARD_CSS = `<style>
 }
 .filter-group { display:flex; flex-direction:column; gap:4px; flex:1; }
 .filter-label {
-  font-size:9px; color:var(--muted); text-transform:uppercase;
+  font-size:0.69em; color:var(--muted); text-transform:uppercase;
   letter-spacing:1.5px; text-align:center;
 }
 .filter-select {
   width:100%; padding:6px 28px 6px 10px; border-radius:8px;
   border:1px solid var(--border); background:var(--bg-2);
-  color:var(--cream); font-family:'Inter',sans-serif; font-size:12px;
+  color:var(--cream); font-family:var(--font-sans); font-size:0.92em;
   cursor:pointer; outline:none; -webkit-appearance:none; appearance:none;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%235A5A5A'/%3E%3C/svg%3E");
   background-repeat:no-repeat; background-position:right 10px center;
@@ -1639,8 +1680,8 @@ const CARD_CSS = `<style>
 .cellar { padding:12px 14px; display:flex; flex-direction:column; gap:2px; }
 .empty-state { text-align:center; padding:44px 20px; }
 .empty-glass { width:36px; margin:0 auto 12px; opacity:0.4; }
-.empty-title { font-family:'Playfair Display',serif; color:var(--cream); font-size:15px; margin-bottom:5px; }
-.empty-sub { font-size:12px; color:var(--muted); }
+.empty-title { font-family:var(--font-serif); color:var(--cream); font-size:1.15em; margin-bottom:5px; }
+.empty-sub { font-size:0.92em; color:var(--muted); }
 
 .floor { margin-bottom:10px; animation:slide-in 0.3s ease-out both; }
 @keyframes slide-in { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
@@ -1651,9 +1692,9 @@ const CARD_CSS = `<style>
   border-radius:10px 10px 0 0; padding:8px 9px; min-height:0;
 }
 .floor-counters { display:flex; flex-direction:column; align-items:flex-end; gap:1px; min-width:24px; }
-.type-count { font-size:9px; font-weight:700; display:block; }
+.type-count { font-size:0.69em; font-weight:700; display:block; }
 .floor-actions { display:flex; flex-direction:column; gap:3px; margin-left:2px; }
-.icon-btn { background:none; border:none; cursor:pointer; font-size:11px; padding:2px; opacity:0.3; color:var(--cream); transition:opacity 0.15s; line-height:1; }
+.icon-btn { background:none; border:none; cursor:pointer; font-size:0.85em; padding:2px; opacity:0.3; color:var(--cream); transition:opacity 0.15s; line-height:1; }
 .icon-btn:hover { opacity:1; }
 
 .floor-dots { display:grid; flex:1; gap:4px 3px; align-items:stretch; overflow:visible; }
@@ -1674,27 +1715,27 @@ const CARD_CSS = `<style>
   background:linear-gradient(90deg,var(--wood-dk),var(--wood-md),var(--wood-lt),var(--wood-md),var(--wood-dk));
   border:1px solid var(--wood-lt); border-top:none; border-radius:0 0 10px 10px;
   display:flex; align-items:center; justify-content:center; gap:8px; padding:4px 12px;
-  font-size:9px; font-weight:600; color:var(--gold); letter-spacing:2px; text-transform:uppercase;
+  font-size:0.69em; font-weight:600; color:var(--gold); letter-spacing:2px; text-transform:uppercase;
 }
-.floor-pct { color:var(--wood-lt); font-size:8px; }
+.floor-pct { color:var(--wood-lt); font-size:0.62em; }
 
 /* ─── Footer détail : 4 boutons ─── */
 .mm-footer-detail { gap:5px; flex-wrap:wrap; }
-.mm-footer-detail .mm-btn { flex:1; min-width:0; font-size:10px; padding:7px 6px; }
+.mm-footer-detail .mm-btn { flex:1; min-width:0; font-size:0.77em; padding:7px 6px; }
 
 
 /* ─── Historique valeur ─── */
 .hist-summary { display:flex; gap:8px; margin-bottom:8px; }
 .hist-stat { flex:1; display:flex; flex-direction:column; align-items:center;
   padding:8px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border); }
-.hist-val { font-size:16px; font-weight:700; color:var(--cream); font-family:'Playfair Display',serif; }
-.hist-lbl { font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-top:2px; }
+.hist-val { font-size:1.23em; font-weight:700; color:var(--cream); font-family:var(--font-serif); }
+.hist-lbl { font-size:0.69em; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-top:2px; }
 .hist-table { margin-top:12px; display:flex; flex-direction:column; gap:4px; }
 .hist-row { display:flex; align-items:center; padding:5px 8px; background:var(--bg-2);
-  border-radius:6px; border:1px solid var(--border); font-size:11px; }
+  border-radius:6px; border:1px solid var(--border); font-size:0.85em; }
 .hist-date { color:var(--muted); flex:1; }
 .hist-bottles { color:var(--muted); margin-right:12px; }
-.hist-price { color:var(--cream); font-weight:600; font-family:'Playfair Display',serif; }
+.hist-price { color:var(--cream); font-weight:600; font-family:var(--font-serif); }
 
 /* ─── Cellule bouteille (dot-cell) ─── */
 .dot-cell {
@@ -1710,7 +1751,7 @@ const CARD_CSS = `<style>
 }
 .dot-lbl {
   display:block; width:100%; box-sizing:border-box;
-  font-size:11px; font-weight:700; text-align:center; line-height:1.3;
+  font-size:0.85em; font-weight:700; text-align:center; line-height:1.3;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   text-transform:uppercase; letter-spacing:0.4px; opacity:0.9; padding-top:1px;
   flex-shrink:0;
@@ -1725,23 +1766,21 @@ const CARD_CSS = `<style>
   .dot { height:50px !important; min-height:0 !important; }
   .dot svg { height:50px !important; width:auto !important; max-width:100%; }
   .dot-labels { height:auto !important; }
-  .dot-lbl { font-size:9px; letter-spacing:0; }
+  .dot-lbl { font-size:0.69em; letter-spacing:0; }
   .header { padding:7px 8px 6px; gap:7px; }
   .header-glass { width:22px; }
-  .header-name { font-size:9px; }
-  .stat-value { font-size:12px; }
+  .header-name { font-size:0.69em; }
+  .stat-value { font-size:0.92em; }
   .stat { padding:3px 4px; }
-  .btn-primary, .btn-secondary { font-size:10px; padding:5px 7px; }
-  .filter-select { font-size:11px; min-height:30px; padding:4px 24px 4px 8px; }
-  .floor-label { font-size:7px; letter-spacing:1px; padding:3px 8px; }
+  .btn-primary, .btn-secondary { font-size:0.77em; padding:5px 7px; }
+  .filter-select { font-size:0.85em; min-height:30px; padding:4px 24px 4px 8px; }
+  .floor-label { font-size:0.54em; letter-spacing:1px; padding:3px 8px; }
 }
 </style>`;
 
 // ── CSS du modal ────────────────────────────────────────────────────────────────
 
 const MODAL_CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Inter:wght@300;400;500;600&display=swap');
-
 @keyframes mm-fade  { from{opacity:0} to{opacity:1} }
 @keyframes mm-slide { from{opacity:0;transform:translateY(-18px)} to{opacity:1;transform:translateY(0)} }
 @keyframes mm-spin  { to{transform:rotate(360deg)} }
@@ -1749,7 +1788,7 @@ const MODAL_CSS = `
 .mm-overlay {
   position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:99999;
   display:flex; align-items:flex-start; justify-content:center; padding-top:12px;
-  animation:mm-fade 0.15s ease; font-family:'Inter',sans-serif;
+  animation:mm-fade 0.15s ease; font-family:var(--font-sans); font-size:var(--fs-base, 13px);
   --mm-bg0: var(--primary-background-color, #080808);
   --mm-bg1: var(--card-background-color, #111);
   --mm-bg2: var(--secondary-background-color, #181818);
@@ -1773,8 +1812,8 @@ const MODAL_CSS = `
   padding:16px 20px 12px; border-bottom:1px solid var(--mm-border);
   flex-shrink:0; background:var(--mm-bg1); z-index:2;
 }
-.mm-title { font-family:'Playfair Display',serif; font-size:16px; color:var(--mm-text); }
-.mm-close { background:none; border:none; color:var(--mm-muted); cursor:pointer; font-size:18px; padding:0 4px; transition:color 0.15s; }
+.mm-title { font-family:var(--font-serif); font-size:1.23em; color:var(--mm-text); }
+.mm-close { background:none; border:none; color:var(--mm-muted); cursor:pointer; font-size:1.38em; padding:0 4px; transition:color 0.15s; }
 .mm-close:hover { color:var(--mm-text); }
 .mm-body  { padding:16px 20px; flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; }
 .mm-footer {
@@ -1783,15 +1822,15 @@ const MODAL_CSS = `
   flex-shrink:0; background:var(--mm-bg1);
 }
 .mm-sync-label {
-  font-size:11px; color:var(--mm-muted); margin-right:auto;
+  font-size:0.85em; color:var(--mm-muted); margin-right:auto;
   display:flex; align-items:center; gap:5px; cursor:pointer;
 }
 .mm-field  { margin-bottom:12px; }
-.mm-label  { display:block; font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--mm-red); margin-bottom:4px; }
+.mm-label  { display:block; font-size:0.77em; text-transform:uppercase; letter-spacing:1px; color:var(--mm-red); margin-bottom:4px; }
 .mm-input  {
   width:100%; padding:9px 11px;
   background:var(--mm-bg0); border:1px solid var(--mm-border); border-radius:8px;
-  color:var(--mm-text); font-family:'Inter',sans-serif; font-size:13px;
+  color:var(--mm-text); font-family:var(--font-sans); font-size:1em;
   outline:none; transition:border-color 0.15s; box-sizing:border-box;
 }
 .mm-input:focus { border-color:var(--mm-red); box-shadow:0 0 0 2px rgba(192,57,43,0.1); }
@@ -1799,7 +1838,7 @@ const MODAL_CSS = `
 .mm-textarea { min-height:66px; resize:vertical; }
 .mm-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
 
-.mm-btn { padding:10px 18px; border-radius:8px; border:none; font-family:'Inter',sans-serif; font-size:13px; font-weight:600; cursor:pointer; transition:all 0.15s; }
+.mm-btn { padding:10px 18px; border-radius:8px; border:none; font-family:var(--font-sans); font-size:1em; font-weight:600; cursor:pointer; transition:all 0.15s; }
 .mm-btn-primary { background:var(--mm-red); color:#fff; }
 .mm-btn-primary:hover { background:var(--mm-red-h); transform:translateY(-1px); }
 .mm-btn-ghost { background:var(--mm-bg3); color:var(--mm-text); border:1px solid var(--mm-border); }
@@ -1811,14 +1850,14 @@ const MODAL_CSS = `
 .mm-search-block { margin-bottom:14px; }
 .mm-search-row   { display:flex; gap:8px; align-items:center; }
 .mm-search-wrap  { position:relative; display:flex; align-items:center; flex:1; }
-.mm-search-icon  { position:absolute; left:11px; font-size:13px; pointer-events:none; }
+.mm-search-icon  { position:absolute; left:11px; font-size:1em; pointer-events:none; }
 .mm-search-input { padding-left:32px !important; }
 
 /* Bouton photo */
 .mm-btn-photo {
   flex-shrink:0; width:40px; height:40px; border-radius:8px;
   background:var(--mm-bg3); border:1px solid var(--mm-border); cursor:pointer;
-  font-size:18px; display:flex; align-items:center; justify-content:center;
+  font-size:1.38em; display:flex; align-items:center; justify-content:center;
   transition:all 0.15s;
 }
 .mm-btn-photo:hover { background:var(--mm-bg2); border-color:rgba(192,57,43,0.27); }
@@ -1844,14 +1883,14 @@ const MODAL_CSS = `
 }
 .mm-viv-item:hover { background:var(--mm-bg2); }
 .mm-viv-item:last-child { border-bottom:none; }
-.mm-viv-name { font-size:13px; color:var(--mm-text); font-weight:500; }
-.mm-viv-sub  { font-size:10px; color:var(--mm-muted); margin-top:2px; }
-.mm-viv-notes { font-size:10px; color:var(--mm-muted); margin-top:3px; font-style:italic; line-height:1.4; }
-.mm-viv-loading { padding:12px; font-size:12px; color:var(--mm-muted); text-align:center; display:flex; align-items:center; justify-content:center; gap:6px; }
+.mm-viv-name { font-size:1em; color:var(--mm-text); font-weight:500; }
+.mm-viv-sub  { font-size:0.77em; color:var(--mm-muted); margin-top:2px; }
+.mm-viv-notes { font-size:0.77em; color:var(--mm-muted); margin-top:3px; font-style:italic; line-height:1.4; }
+.mm-viv-loading { padding:12px; font-size:0.92em; color:var(--mm-muted); text-align:center; display:flex; align-items:center; justify-content:center; gap:6px; }
 
 /* Bannière erreur/info sous la recherche */
 .mm-search-banner {
-  font-size:11px; line-height:1.5; border-radius:6px;
+  font-size:0.85em; line-height:1.5; border-radius:6px;
   padding:8px 10px; margin-top:6px;
 }
 .mm-search-banner--error   { background:#200808; color:#ff9090; border:1px solid #401010; }
@@ -1861,7 +1900,7 @@ const MODAL_CSS = `
 /* Photo */
 .mm-photo-loading { text-align:center; padding:10px 0; }
 .mm-photo-error {
-  font-size:12px; color:#ff9090; background:#200808;
+  font-size:0.92em; color:#ff9090; background:#200808;
   border:1px solid #401010; border-radius:8px;
   padding:10px 12px; margin-bottom:10px; text-align:center;
 }
@@ -1890,18 +1929,18 @@ const MODAL_CSS = `
   opacity:0.75;
   cursor:not-allowed;
 }
-.sp-label { font-size:10px; color:var(--mm-muted); }
+.sp-label { font-size:0.77em; color:var(--mm-muted); }
 
 /* Détail */
 .mm-detail-hero  { text-align:center; margin-bottom:18px; }
-.mm-detail-name  { font-family:'Playfair Display',serif; font-size:20px; color:var(--mm-text); margin-bottom:4px; }
-.mm-detail-sub   { font-size:12px; color:var(--mm-muted); }
-.mm-vivino-link  { display:inline-block; margin-top:8px; color:var(--mm-red); font-size:11px; text-decoration:none; border:1px solid rgba(192,57,43,0.3); padding:3px 10px; border-radius:20px; }
+.mm-detail-name  { font-family:var(--font-serif); font-size:1.54em; color:var(--mm-text); margin-bottom:4px; }
+.mm-detail-sub   { font-size:0.92em; color:var(--mm-muted); }
+.mm-vivino-link  { display:inline-block; margin-top:8px; color:var(--mm-red); font-size:0.85em; text-decoration:none; border:1px solid rgba(192,57,43,0.3); padding:3px 10px; border-radius:20px; }
 .mm-detail-grid  { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-bottom:10px; }
 .mm-drow         { background:var(--mm-bg2); border-radius:8px; padding:9px 11px; border:1px solid var(--mm-border); }
-.mm-drow-label   { display:block; font-size:9px; text-transform:uppercase; letter-spacing:1px; color:var(--mm-muted); margin-bottom:2px; }
-.mm-drow-value   { font-size:13px; color:var(--mm-text); font-weight:500; }
-.mm-notes        { font-size:12px; color:var(--mm-muted); background:var(--mm-bg2); padding:10px 12px; border-radius:8px; border-left:2px solid var(--mm-red); line-height:1.55; margin-bottom:6px; }
+.mm-drow-label   { display:block; font-size:0.69em; text-transform:uppercase; letter-spacing:1px; color:var(--mm-muted); margin-bottom:2px; }
+.mm-drow-value   { font-size:1em; color:var(--mm-text); font-weight:500; }
+.mm-notes        { font-size:0.92em; color:var(--mm-muted); background:var(--mm-bg2); padding:10px 12px; border-radius:8px; border-left:2px solid var(--mm-red); line-height:1.55; margin-bottom:6px; }
 .mm-tasting      { border-left-color:var(--mm-red); font-style:italic; }
 .mm-pairing      { border-left-color:#27AE8F; font-style:normal; }
 
