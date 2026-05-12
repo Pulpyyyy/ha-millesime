@@ -556,7 +556,7 @@ class MillesimeCard extends HTMLElement {
           </div>
           <div class="mm-field" style="grid-column:1/-1">
             <label class="mm-label">Emplacements (cliquer pour sélectionner)</label>
-            <input type="hidden" id="bt-slots" value="${pendingSlot?.slot ?? 0}">
+            <input type="hidden" id="bt-slots" value="${pendingSlot != null ? pendingSlot.slot : ""}">
             <div id="bt-slot-picker" class="sp-picker"></div>
           </div>
         </div>` : ""}
