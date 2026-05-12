@@ -11,9 +11,9 @@ const DOMAIN = "millesime";
 const WINE_TYPES = {
   red:       { color: "#C0392B", glow: "rgba(192,57,43,0.6)",   label: "Rouge",        emoji: "🔴" },
   white:     { color: "#D4AC0D", glow: "rgba(212,172,13,0.5)",  label: "Blanc",        emoji: "🟡" },
-  rose:      { color: "#E74C8B", glow: "rgba(231,76,139,0.5)",  label: "Rosé",         emoji: "🌸" },
+  rose:      { color: "#E8607A", glow: "rgba(232,96,122,0.5)",  label: "Rosé",         emoji: "🌸" },
   sparkling: { color: "#27AE8F", glow: "rgba(39,174,143,0.5)",  label: "Effervescent", emoji: "✨" },
-  dessert:   { color: "#D68910", glow: "rgba(214,137,16,0.5)",  label: "Liquoreux",    emoji: "🍯" },
+  dessert:   { color: "#C47820", glow: "rgba(196,120,32,0.5)",  label: "Liquoreux",    emoji: "🍯" },
 };
 
 const EVENT_TYPES = [
@@ -1546,13 +1546,66 @@ class MillesimeCard extends HTMLElement {
         const wineId  = dot.dataset.wineId;
         const slotIdx = dot.dataset.slotIdx;
         if (!wineId) return;
-        e.dataTransfer.setData("text/plain", `${wineId}:${slotIdx}`);
+        this._draggingWineId = wineId;
+        e.dataTransfer.setData("text/plain", `${wineId}:${slotIdx}:${dot.dataset.floorId}:${dot.dataset.slot}`);
         e.dataTransfer.effectAllowed = "move";
         setTimeout(() => dot.classList.add("dot--dragging"), 0);
       });
       dot.addEventListener("dragend", () => {
+        this._draggingWineId = null;
         dot.classList.remove("dot--dragging");
         s.querySelectorAll(".dot--drag-over").forEach(d => d.classList.remove("dot--drag-over"));
+      });
+      // Swap : dépôt sur un slot occupé
+      dot.addEventListener("dragover", (e) => {
+        if (dot.dataset.wineId === this._draggingWineId) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        dot.classList.add("dot--drag-over");
+      });
+      dot.addEventListener("dragleave", () => dot.classList.remove("dot--drag-over"));
+      dot.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        dot.classList.remove("dot--drag-over");
+        const parts = (e.dataTransfer.getData("text/plain") || "").split(":");
+        const srcWineId  = parts[0];
+        const srcSlotIdx = parseInt(parts[1]);
+        const srcFloorId = parts[2];
+        const srcSlot    = parseInt(parts[3]);
+        const tgtWineId  = dot.dataset.wineId;
+        const tgtSlotIdx = parseInt(dot.dataset.slotIdx);
+        const tgtFloorId = dot.dataset.floorId;
+        const tgtSlot    = parseInt(dot.dataset.slot);
+        if (!srcWineId || !tgtWineId || srcWineId === tgtWineId) return;
+        if (isNaN(srcSlotIdx) || isNaN(srcSlot) || isNaN(tgtSlotIdx) || isNaN(tgtSlot)) return;
+
+        // Le backend interdit de déposer sur un slot occupé → swap en 3 étapes via un slot libre temporaire
+        const occupied = new Set();
+        wines.forEach(w => w.slots?.forEach(s => occupied.add(`${s.floor_id}:${s.slot}`)));
+        let tempFloorId = null, tempSlot = -1;
+        for (const floor of data.cellar.floors) {
+          const total = floor.slots || (floor.columns || 8) * (floor.rows || 2);
+          for (let i = 0; i < total; i++) {
+            if (!occupied.has(`${floor.id}:${i}`)) { tempFloorId = floor.id; tempSlot = i; break; }
+          }
+          if (tempSlot !== -1) break;
+        }
+        if (tempSlot === -1) {
+          this._showToast("error", "Cave pleine : permutation impossible.");
+          return;
+        }
+        try {
+          // 1. Libérer le slot source en déplaçant A vers le slot libre
+          await this._hass.callService(DOMAIN, "move_slot", { wine_id: srcWineId, slot_idx: srcSlotIdx, floor_id: tempFloorId, slot: tempSlot });
+          // 2. Déplacer B vers l'ancien slot de A (maintenant libre)
+          await this._hass.callService(DOMAIN, "move_slot", { wine_id: tgtWineId, slot_idx: tgtSlotIdx, floor_id: srcFloorId, slot: srcSlot });
+          // 3. Déplacer A depuis le slot temporaire vers l'ancien slot de B (maintenant libre)
+          await this._hass.callService(DOMAIN, "move_slot", { wine_id: srcWineId, slot_idx: srcSlotIdx, floor_id: tgtFloorId, slot: tgtSlot });
+          setTimeout(() => this._fetchData(), 500);
+        } catch (err) {
+          this._showToast("error", `Erreur permutation : ${err.message || JSON.stringify(err)}`);
+          setTimeout(() => this._fetchData(), 500);
+        }
       });
     });
 
