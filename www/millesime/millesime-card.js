@@ -1422,9 +1422,9 @@ class MillesimeCard extends HTMLElement {
             : BOTTLE_GHOST(Math.round(80 * 10 / 26)));
 
       // mode dot : seule la hauteur est imposée inline (width:100% vient du CSS, le SVG est centré par justify-content:center)
-      const sizeStyle = isCircle ? `height:${circleSize}px;` : ``;
+      const sizeStyle = isCircle ? `height:40px;` : ``;
       const dotEl = `<div
-        class="dot ${wine ? "dot--filled" : "dot--empty"} ${sel ? "dot--selected" : ""} ${!isCircle && alt ? "dot--alt" : ""}"
+        class="dot ${wine ? "dot--filled" : "dot--empty"} ${sel ? "dot--selected" : ""} ${!isCircle && alt ? "dot--alt" : ""} ${isCircle && alt ? "dot--c-alt" : ""}"
         data-slot="${i}" data-floor-id="${floor.id}" data-wine-id="${wine?.id || ""}" data-slot-idx="${slotIdx}"
         style="${[dotStyle, sizeStyle].filter(Boolean).join(";")}"
         title="${wine ? esc(wine.name) + (wine.vintage ? " " + esc(wine.vintage) : "") : "Vide — cliquer pour ajouter"}"
@@ -1762,7 +1762,7 @@ const CARD_CSS = `<style>
   font-size:0.85em; font-weight:700; text-align:center; line-height:1.3;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   text-transform:uppercase; letter-spacing:0.4px; opacity:0.9; padding-top:1px;
-  flex-shrink:0;
+  flex:1;
 }
 
 /* ─── Responsive mobile ─── */
@@ -1772,7 +1772,6 @@ const CARD_CSS = `<style>
   .floor-dots { gap:2px !important; grid-auto-rows:auto !important; }
   .dot-cell { height:auto !important; min-height:0 !important; }
   .dot { height:50px !important; min-height:0 !important; }
-  .dot-svg-c { width:40px !important; height:40px !important; }
   .dot-svg-b { height:50px !important; width:auto !important; }
   .dot-labels { height:auto !important; }
   .dot-lbl { font-size:0.69em; letter-spacing:0; }
