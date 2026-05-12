@@ -1715,6 +1715,26 @@ const CARD_CSS = `<style>
   text-transform:uppercase; letter-spacing:0.4px; opacity:0.9; padding-top:1px;
   flex-shrink:0;
 }
+
+/* ─── Responsive mobile ─── */
+@media (max-width: 500px) {
+  .cellar { padding:6px 5px; }
+  .floor-rack { padding:4px 5px; }
+  .floor-dots { gap:2px !important; grid-auto-rows:auto !important; }
+  .dot-cell { height:auto !important; min-height:0 !important; }
+  .dot { height:50px !important; min-height:0 !important; }
+  .dot svg { height:50px !important; width:auto !important; max-width:100%; }
+  .dot-labels { height:auto !important; }
+  .dot-lbl { font-size:9px; letter-spacing:0; }
+  .header { padding:7px 8px 6px; gap:7px; }
+  .header-glass { width:22px; }
+  .header-name { font-size:9px; }
+  .stat-value { font-size:12px; }
+  .stat { padding:3px 4px; }
+  .btn-primary, .btn-secondary { font-size:10px; padding:5px 7px; }
+  .filter-select { font-size:11px; min-height:30px; padding:4px 24px 4px 8px; }
+  .floor-label { font-size:7px; letter-spacing:1px; padding:3px 8px; }
+}
 </style>`;
 
 // ── CSS du modal ────────────────────────────────────────────────────────────────
