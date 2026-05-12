@@ -114,6 +114,11 @@ class MillesimeCard extends HTMLElement {
     this._pendingRender = false;
   }
 
+  disconnectedCallback() {
+    this._unsubs.forEach(u => u());
+    this._unsubs = [];
+  }
+
   setConfig(config) { this._config = config || {}; this._applyConfigColors(); this._renderLoading(); }
 
   _applyConfigColors() {
@@ -798,13 +803,18 @@ class MillesimeCard extends HTMLElement {
           await this._hass.callService(DOMAIN, "add_wine", payload);
           // Ajouter les emplacements supplémentaires
           if (slots.length > 1) {
-            await new Promise(r => setTimeout(r, 600));
-            const freshData = await this._hass.connection.sendMessagePromise({ type: "millesime/get_data" });
-            const added = (freshData.wines || []).find(w => w.name === name && w.slots?.some(s => s.floor_id === floorId && s.slot === slots[0]));
+            let added = null;
+            for (let attempt = 0; attempt < 5 && !added; attempt++) {
+              if (attempt > 0) await new Promise(r => setTimeout(r, 400));
+              const freshData = await this._hass.connection.sendMessagePromise({ type: "millesime/get_data" });
+              added = (freshData.wines || []).find(w => w.name === name && w.slots?.some(s => s.floor_id === floorId && s.slot === slots[0]));
+            }
             if (added) {
               for (let k = 1; k < slots.length; k++) {
                 await this._hass.callService(DOMAIN, "add_slot", { wine_id: added.id, floor_id: floorId, slot: slots[k] });
               }
+            } else {
+              this._showToast("warning", "Emplacements supplémentaires non ajoutés (vin introuvable après création).");
             }
           }
         }
@@ -982,7 +992,6 @@ class MillesimeCard extends HTMLElement {
       }
       const added = slots.length - failed.length;
       this._closeModal();
-      setTimeout(() => this._fetchData(), 600);
       if (failed.length) {
         this._showToast("warning", `${added} emplacement(s) ajouté(s), ${failed.length} en échec (slots : ${failed.join(", ")}).`);
       } else {
@@ -1054,7 +1063,6 @@ class MillesimeCard extends HTMLElement {
       try {
         // Appel direct (sans fermer le modal)
         await this._hass.callService(DOMAIN, "value_snapshot", {});
-        await new Promise(r => setTimeout(r, 600));
         await this._fetchData();
         // Rafraîchir le contenu du modal en place
         box.innerHTML = this._historyHTML();
