@@ -39,7 +39,7 @@ const ERROR_MESSAGES = {
 const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const safeUrl = url => /^https?:\/\//i.test(url ?? "") ? url : "#";
 
-const BOTTLE_MINI = (color, w = null) => `<svg viewBox="0 0 10 26" width="10" height="26" xmlns="http://www.w3.org/2000/svg" style="${w ? `width:${w}px;height:${Math.round(w*2.6)}px` : 'width:100%;height:auto'};display:block">
+const BOTTLE_MINI = (color, w = null) => `<svg class="dot-svg-b" viewBox="0 0 10 26" width="10" height="26" xmlns="http://www.w3.org/2000/svg" style="${w ? `width:${w}px;height:${Math.round(w*2.6)}px` : 'width:100%;height:auto'};display:block">
   <!-- Ombre au sol -->
   <ellipse cx="5" cy="25.3" rx="3.4" ry="0.65" fill="black" opacity="0.38"/>
   <!-- Capsule en étain -->
@@ -82,7 +82,7 @@ const BOTTLE_MINI = (color, w = null) => `<svg viewBox="0 0 10 26" width="10" he
 </svg>`;
 
 // Bouteille fantôme pour les emplacements vides (mode bottle)
-const BOTTLE_GHOST = (w = null) => `<svg viewBox="0 0 10 26" xmlns="http://www.w3.org/2000/svg" style="${w ? `width:${w}px;height:${Math.round(w*2.6)}px` : 'width:100%;height:auto'};display:block">
+const BOTTLE_GHOST = (w = null) => `<svg class="dot-svg-b" viewBox="0 0 10 26" xmlns="http://www.w3.org/2000/svg" style="${w ? `width:${w}px;height:${Math.round(w*2.6)}px` : 'width:100%;height:auto'};display:block">
   <rect x="3.5" y="0.2" width="3" height="2.4" rx="0.9" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.2)" stroke-width="0.4" stroke-dasharray="1.2 0.7"/>
   <rect x="3.8" y="2.5" width="2.4" height="4.2" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.2)" stroke-width="0.4" stroke-dasharray="1.2 0.7"/>
   <path d="M3.8,6.7 Q2.4,9.8 1.2,11.2 Q0.8,17 1.2,23 L8.8,23 Q9.2,17 8.8,11.2 Q7.6,9.8 6.2,6.7 Z" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.2)" stroke-width="0.4" stroke-dasharray="1.2 0.7"/>
@@ -1407,10 +1407,10 @@ class MillesimeCard extends HTMLElement {
       const circleSize = isCircle ? (alt ? 28 : 40) : 40;
       const bottleContent = wine
         ? (isCircle
-            ? `<svg viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg" style="width:${circleSize}px;height:${circleSize}px;display:block"><circle cx="5" cy="5" r="5" fill="${wt.color}"/><circle cx="5" cy="5" r="5" fill="white" opacity="0.12"/><ellipse cx="3.5" cy="3.5" rx="1.5" ry="1" fill="white" opacity="0.2"/></svg>`
+            ? `<svg class="dot-svg-c" viewBox="0 0 10 10" width="10" height="10" xmlns="http://www.w3.org/2000/svg" style="width:${circleSize}px;height:${circleSize}px;display:block"><circle cx="5" cy="5" r="5" fill="${wt.color}"/><circle cx="5" cy="5" r="5" fill="white" opacity="0.12"/><ellipse cx="3.5" cy="3.5" rx="1.5" ry="1" fill="white" opacity="0.2"/></svg>`
             : BOTTLE_MINI(wt.color, Math.round(80 * 10 / 26)))
         : (isCircle
-            ? `<svg viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg" style="width:${circleSize}px;height:${circleSize}px;display:block"><circle cx="5" cy="5" r="4.5" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="0.8" stroke-dasharray="1.8 1.2"/></svg>`
+            ? `<svg class="dot-svg-c" viewBox="0 0 10 10" width="10" height="10" xmlns="http://www.w3.org/2000/svg" style="width:${circleSize}px;height:${circleSize}px;display:block"><circle cx="5" cy="5" r="4.5" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="0.8" stroke-dasharray="1.8 1.2"/></svg>`
             : BOTTLE_GHOST(Math.round(80 * 10 / 26)));
 
       // mode dot : seule la hauteur est imposée inline (width:100% vient du CSS, le SVG est centré par justify-content:center)
@@ -1764,7 +1764,8 @@ const CARD_CSS = `<style>
   .floor-dots { gap:2px !important; grid-auto-rows:auto !important; }
   .dot-cell { height:auto !important; min-height:0 !important; }
   .dot { height:50px !important; min-height:0 !important; }
-  .dot svg { height:50px !important; width:auto !important; max-width:100%; }
+  .dot-svg-c { width:40px !important; height:40px !important; }
+  .dot-svg-b { height:50px !important; width:auto !important; }
   .dot-labels { height:auto !important; }
   .dot-lbl { font-size:0.69em; letter-spacing:0; }
   .header { padding:7px 8px 6px; gap:7px; }
