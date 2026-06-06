@@ -221,6 +221,10 @@ class MillesimeCard extends HTMLElement {
     if (type === "detail")    box.innerHTML = this._detailHTML(opts.bottle);
     if (type === "duplicate") box.innerHTML = this._duplicateFormHTML(opts.bottle);
     if (type === "history")   box.innerHTML = this._historyHTML();
+    if (type === "search")    box.innerHTML = this._searchModalHTML();
+    if (type === "movefloor") box.innerHTML = this._moveFloorHTML(opts.floor);
+    if (type === "drink")     box.innerHTML = this._drinkFormHTML(opts.bottle);
+    if (type === "journal")   box.innerHTML = this._journalHTML();
 
     overlay.appendChild(box);
     document.body.appendChild(overlay);
@@ -233,6 +237,10 @@ class MillesimeCard extends HTMLElement {
     if (type === "bottle")    this._bindBottleForm(box, opts.bottle, opts.slot);
     if (type === "detail")    this._bindDetailButtons(box, opts.bottle);
     if (type === "duplicate") this._bindDuplicateForm(box, opts.bottle);
+    if (type === "search")    this._bindSearchModal(box);
+    if (type === "movefloor") this._bindMoveFloor(box, opts.floor);
+    if (type === "drink")     this._bindDrinkForm(box, opts.bottle);
+    if (type === "journal")   this._bindJournal(box);
     if (type === "history") {
       this._bindHistory(box);
     }
@@ -320,7 +328,7 @@ class MillesimeCard extends HTMLElement {
                 value="${b.name || ""}">
             </div>
             <button class="mm-btn-photo" id="btn-photo" title="Scanner l'étiquette">📷</button>
-            <input type="file" id="photo-input" accept="image/*" style="display:none">
+            <input type="file" id="photo-input" accept="image/*" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;overflow:hidden">
           </div>
           <div id="search-banner"></div>
           <div id="viv-results" class="mm-viv-results"></div>
@@ -374,15 +382,9 @@ class MillesimeCard extends HTMLElement {
             <input class="mm-input" id="bt-until" value="${b.drink_until || ""}" placeholder="2035">
           </div>
         </div>
-        <div class="mm-row">
-          <div class="mm-field">
-            <label class="mm-label">Quantité</label>
-            <input class="mm-input" id="bt-quantity" type="number" min="1" value="${b.quantity || 1}">
-          </div>
-          <div class="mm-field">
-            <label class="mm-label">Note /5</label>
-            <input class="mm-input" id="bt-vrating" type="number" step="0.1" min="0" max="5" value="${b.vivino_rating || ""}">
-          </div>
+        <div class="mm-field">
+          <label class="mm-label">Note /5</label>
+          <input class="mm-input" id="bt-vrating" type="number" step="0.1" min="0" max="5" value="${b.vivino_rating || ""}">
         </div>
 
         ${!isEdit ? `
@@ -543,7 +545,7 @@ class MillesimeCard extends HTMLElement {
 
     fileInput?.addEventListener("change", async () => {
       const file = fileInput.files?.[0];
-      if (!file) return;
+      if (!file) { return; }
 
       // Aperçu immédiat
       const url = URL.createObjectURL(file);
@@ -557,13 +559,27 @@ class MillesimeCard extends HTMLElement {
       results.style.display = "none";
       banner.innerHTML = "";
 
-      // Encoder en base64
-      const b64 = await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload = () => res(r.result.split(",")[1]);
-        r.onerror = () => rej(new Error("Lecture fichier impossible"));
-        r.readAsDataURL(file);
-      });
+      // Encoder en base64 (robuste Android/iOS)
+      let b64;
+      try {
+        b64 = await new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => {
+            const result = r.result || "";
+            const comma = String(result).indexOf(",");
+            res(comma >= 0 ? String(result).slice(comma + 1) : "");
+          };
+          r.onerror = () => rej(new Error("Lecture fichier impossible"));
+          r.readAsDataURL(file);
+        });
+      } catch (e) {
+        imgWrap.innerHTML = `<div class="mm-photo-error">Impossible de lire l'image. Réessayez.</div>`;
+        return;
+      }
+      if (!b64) {
+        imgWrap.innerHTML = `<div class="mm-photo-error">Image vide ou format non supporté.</div>`;
+        return;
+      }
 
       const mimeType = file.type || "image/jpeg";
       const response = await this._analyzePhoto(b64, mimeType);
@@ -615,7 +631,7 @@ class MillesimeCard extends HTMLElement {
         region:        txt("bt-region"),
         country:       txt("bt-country"),
         price:         num("bt-price"),
-        quantity:      int("bt-quantity") || 1,
+        quantity:      1,
         drink_from:    txt("bt-from"),
         drink_until:   txt("bt-until"),
         notes:         txt("bt-notes"),
@@ -632,6 +648,15 @@ class MillesimeCard extends HTMLElement {
       } else {
         payload.floor_id = box.querySelector("#bt-floor")?.value || "";
         payload.slot     = int("bt-slot");
+        // Anti-doublon : vérifier que l'emplacement est libre
+        const occupied = (this._data?.bottles || []).find(
+          (x) => x.floor_id === payload.floor_id && x.slot === payload.slot
+        );
+        if (occupied) {
+          this._showToast("error",
+            `Emplacement n°${payload.slot} déjà occupé par « ${occupied.name} ». Choisissez un autre emplacement.`);
+          return;
+        }
         await this._callService("add_bottle", payload);
       }
     });
@@ -674,11 +699,14 @@ class MillesimeCard extends HTMLElement {
         ${b.food_pairing  ? `<div class="mm-notes mm-pairing">🍽️ ${b.food_pairing}</div>`  : ""}
         ${b.notes         ? `<div class="mm-notes">"${b.notes}"</div>`                     : ""}
       </div>
-      <div class="mm-footer">
-        <button class="mm-btn mm-btn-danger" id="det-remove">🗑</button>
-        <button class="mm-btn mm-btn-ghost"  id="det-price">💰 Prix</button>
-        <button class="mm-btn mm-btn-ghost"  id="det-dup">⎘ Dupliquer</button>
-        <button class="mm-btn mm-btn-ghost"  id="det-edit">✏️ Modifier</button>
+      <div class="mm-footer mm-footer-wrap">
+        <button class="mm-btn mm-btn-drink"  id="det-drink">🍷 J'ai bu cette bouteille</button>
+        <div class="mm-footer-row">
+          <button class="mm-btn mm-btn-danger" id="det-remove">🗑</button>
+          <button class="mm-btn mm-btn-ghost"  id="det-price">💰 Prix</button>
+          <button class="mm-btn mm-btn-ghost"  id="det-dup">⎘ Dupliquer</button>
+          <button class="mm-btn mm-btn-ghost"  id="det-edit">✏️ Modifier</button>
+        </div>
       </div>`;
   }
 
@@ -928,6 +956,319 @@ class MillesimeCard extends HTMLElement {
   }
 
 
+  // ── Formulaire « J'ai bu cette bouteille » ──────────────────────────────────
+
+  _drinkFormHTML(b) {
+    const t = WINE_TYPES[b.type] || WINE_TYPES.red;
+    const today = new Date().toISOString().slice(0, 10);
+    return `
+      <div class="mm-header" style="background:linear-gradient(135deg,${t.color}18,transparent)">
+        <span class="mm-title">🍷 Dégustation</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        <div class="mm-detail-hero" style="margin-bottom:14px">
+          <div class="mm-detail-name">${b.name}${b.vintage ? " " + b.vintage : ""}</div>
+          <div class="mm-detail-sub">${[b.producer, b.appellation].filter(Boolean).join(" · ")}</div>
+        </div>
+
+        <div class="mm-field">
+          <label class="mm-label">Ma note</label>
+          <div class="mm-stars" id="drink-stars">
+            ${[1,2,3,4,5].map(n => `<span class="mm-star" data-star="${n}">☆</span>`).join("")}
+          </div>
+          <input type="hidden" id="drink-rating" value="0">
+        </div>
+
+        <div class="mm-field">
+          <label class="mm-label">Date de dégustation</label>
+          <input class="mm-input" id="drink-date" type="date" value="${today}">
+        </div>
+
+        <div class="mm-field">
+          <label class="mm-label">Commentaire de dégustation</label>
+          <textarea class="mm-input mm-textarea" id="drink-comment"
+            placeholder="Vos impressions : arômes, accord, contexte..."></textarea>
+        </div>
+
+        <div class="mm-notes" style="border-left-color:${t.color}">
+          La bouteille sera retirée de la cave et conservée dans votre journal de dégustation.
+        </div>
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
+        <button class="mm-btn mm-btn-drink" id="drink-submit">🍷 Valider la dégustation</button>
+      </div>`;
+  }
+
+  _bindDrinkForm(box, bottle) {
+    // Sélecteur d'étoiles
+    const stars  = box.querySelectorAll(".mm-star");
+    const hidden = box.querySelector("#drink-rating");
+    const paint = (val) => stars.forEach((s) => {
+      s.textContent = parseInt(s.dataset.star) <= val ? "★" : "☆";
+      s.classList.toggle("mm-star--on", parseInt(s.dataset.star) <= val);
+    });
+    stars.forEach((s) => {
+      s.addEventListener("click", () => {
+        const v = parseInt(s.dataset.star);
+        hidden.value = v;
+        paint(v);
+      });
+    });
+
+    box.querySelector("#drink-submit")?.addEventListener("click", async () => {
+      const btn = box.querySelector("#drink-submit");
+      const rating  = parseFloat(hidden.value) || 0;
+      const comment = box.querySelector("#drink-comment")?.value?.trim() || "";
+      const drunk   = box.querySelector("#drink-date")?.value || "";
+      btn.textContent = "⏳ Enregistrement...";
+      btn.disabled = true;
+      try {
+        await this._hass.callService(DOMAIN, "drink_bottle", {
+          bottle_id:  bottle.id,
+          rating,
+          comment,
+          drunk_date: drunk,
+        });
+        this._closeModal();
+        setTimeout(() => this._fetchData(), 600);
+        this._showToast("success", `Dégustation enregistrée 🍷`);
+      } catch (err) {
+        btn.textContent = "🍷 Valider la dégustation";
+        btn.disabled = false;
+        this._showToast("error", "Erreur : " + (err.message || err));
+      }
+    });
+  }
+
+  // ── Journal de dégustation (vue tableau) ─────────────────────────────────────
+
+  _journalHTML() {
+    const log = (this._data?.cellar?.tasting_log || []).slice().reverse();
+    const totalSpent = log.reduce((s, e) => s + (parseFloat(e.price) || 0), 0);
+    const rated = log.filter(e => (e.my_rating || 0) > 0);
+    const avg = rated.length ? (rated.reduce((s, e) => s + e.my_rating, 0) / rated.length) : 0;
+
+    return `
+      <div class="mm-header">
+        <span class="mm-title">📓 Journal de dégustation</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        ${log.length === 0 ? `
+          <div style="text-align:center;padding:30px 0;color:#555">
+            <div style="font-size:32px;margin-bottom:10px">🍷</div>
+            <div>Aucune bouteille dégustée pour l'instant.</div>
+            <div style="font-size:11px;margin-top:6px">Cliquez « J'ai bu cette bouteille » sur une fiche.</div>
+          </div>` : `
+          <div class="hist-summary">
+            <div class="hist-stat">
+              <span class="hist-val">${log.length}</span>
+              <span class="hist-lbl">Dégustées</span>
+            </div>
+            <div class="hist-stat">
+              <span class="hist-val">${avg > 0 ? avg.toFixed(1) : "—"}</span>
+              <span class="hist-lbl">Note moy.</span>
+            </div>
+            <div class="hist-stat">
+              <span class="hist-val">${Math.round(totalSpent)}€</span>
+              <span class="hist-lbl">Total</span>
+            </div>
+          </div>
+          <div class="journal-list">
+            ${log.map((e) => {
+              const t = WINE_TYPES[e.type] || WINE_TYPES.red;
+              const r = parseFloat(e.my_rating) || 0;
+              const stars = r > 0 ? "★".repeat(Math.round(r)) + "☆".repeat(5 - Math.round(r)) : "—";
+              return `
+              <div class="journal-row">
+                <div class="journal-main">
+                  <span class="journal-dot" style="background:${t.color}"></span>
+                  <div style="flex:1;min-width:0">
+                    <div class="journal-name">${e.name}${e.vintage ? " " + e.vintage : ""}</div>
+                    <div class="journal-sub">${[e.producer, e.appellation].filter(Boolean).join(" · ")}</div>
+                    ${e.my_comment ? `<div class="journal-comment">« ${e.my_comment} »</div>` : ""}
+                  </div>
+                  <button class="journal-del" data-del-tasting="${e.id}" title="Supprimer">✕</button>
+                </div>
+                <div class="journal-meta">
+                  <span class="journal-stars" style="color:${t.color}">${stars}</span>
+                  <span class="journal-date">📅 ${e.drunk_date || "?"}</span>
+                  ${e.price ? `<span class="journal-price">${e.price}€</span>` : ""}
+                </div>
+              </div>`;
+            }).join("")}
+          </div>`}
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Fermer</button>
+      </div>`;
+  }
+
+  _bindJournal(box) {
+    box.querySelectorAll("[data-del-tasting]").forEach((btn) =>
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (!confirm("Supprimer cette dégustation du journal ?")) return;
+        try {
+          await this._hass.callService(DOMAIN, "delete_tasting", { tasting_id: btn.dataset.delTasting });
+          await new Promise(r => setTimeout(r, 500));
+          await this._fetchData();
+          box.innerHTML = this._journalHTML();
+          this._bindJournal(box);
+          box.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", () => this._closeModal()));
+        } catch (err) {
+          this._showToast("error", "Erreur : " + (err.message || err));
+        }
+      })
+    );
+  }
+
+  // ── Déplacer le contenu d'un étage vers un autre ────────────────────────────
+
+  _moveFloorHTML(floor) {
+    const floors = (this._data?.cellar?.floors || []).filter(f => f.id !== floor.id);
+    const cnt = (this._data?.bottles || []).filter(b => b.floor_id === floor.id).length;
+    return `
+      <div class="mm-header">
+        <span class="mm-title">📦 Déplacer l'étage</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        <div class="mm-notes mm-tasting" style="margin-bottom:14px">
+          Déplacer les <strong>${cnt} bouteille(s)</strong> de « ${floor.name} » vers un autre étage.
+          Les bouteilles seront placées dans les premiers emplacements libres.
+        </div>
+        <div class="mm-field">
+          <label class="mm-label">Étage de destination *</label>
+          <select class="mm-input" id="mv-dest">
+            ${floors.map(f => `<option value="${f.id}">${f.name}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
+        <button class="mm-btn mm-btn-primary" id="mv-submit">Déplacer</button>
+      </div>`;
+  }
+
+  _bindMoveFloor(box, floor) {
+    box.querySelector("#mv-submit")?.addEventListener("click", async () => {
+      const btn  = box.querySelector("#mv-submit");
+      const dest = box.querySelector("#mv-dest")?.value;
+      if (!dest) { this._showToast("warning", "Sélectionnez une destination."); return; }
+
+      const destFloor = (this._data?.cellar?.floors || []).find(f => f.id === dest);
+      const destTotal = destFloor.slots || (destFloor.columns || 8) * (destFloor.rows || 2);
+      const toMove    = (this._data?.bottles || []).filter(b => b.floor_id === floor.id);
+
+      // Emplacements déjà occupés dans la destination
+      const occupied = new Set(
+        (this._data?.bottles || []).filter(b => b.floor_id === dest).map(b => b.slot)
+      );
+      // Calculer les slots libres dans l'ordre
+      const freeSlots = [];
+      for (let i = 0; i < destTotal; i++) if (!occupied.has(i)) freeSlots.push(i);
+
+      if (freeSlots.length < toMove.length) {
+        this._showToast("error",
+          `Pas assez de place : ${freeSlots.length} emplacement(s) libre(s) pour ${toMove.length} bouteille(s).`);
+        return;
+      }
+
+      btn.textContent = "⏳ Déplacement...";
+      btn.disabled = true;
+      try {
+        for (let i = 0; i < toMove.length; i++) {
+          await this._hass.callService(DOMAIN, "update_bottle", {
+            bottle_id: toMove[i].id,
+            floor_id:  dest,
+            slot:      freeSlots[i],
+          });
+        }
+        this._closeModal();
+        setTimeout(() => this._fetchData(), 600);
+        this._showToast("success", `${toMove.length} bouteille(s) déplacée(s) vers ${destFloor.name} ✓`);
+      } catch (err) {
+        btn.textContent = "Déplacer";
+        btn.disabled = false;
+        this._showToast("error", "Erreur lors du déplacement : " + (err.message || err));
+      }
+    });
+  }
+
+  // ── Recherche par nom dans toute la cave ─────────────────────────────────────
+
+  _searchModalHTML() {
+    return `
+      <div class="mm-header">
+        <span class="mm-title">🔍 Rechercher une bouteille</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        <div class="mm-search-wrap" style="margin-bottom:12px">
+          <span class="mm-search-icon">🔍</span>
+          <input class="mm-input mm-search-input" id="gsearch-query"
+            placeholder="Nom, producteur, appellation..." autocomplete="off">
+        </div>
+        <div id="gsearch-results"></div>
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Fermer</button>
+      </div>`;
+  }
+
+  _bindSearchModal(box) {
+    const input   = box.querySelector("#gsearch-query");
+    const results = box.querySelector("#gsearch-results");
+    const floors  = this._data?.cellar?.floors || [];
+    const floorName = (fid) => floors.find(f => f.id === fid)?.name || "?";
+
+    const render = (q) => {
+      const query = q.trim().toLowerCase();
+      if (!query) {
+        results.innerHTML = `<div class="mm-viv-loading">Tapez pour rechercher dans votre cave…</div>`;
+        return;
+      }
+      const matches = (this._data?.bottles || []).filter((b) =>
+        [b.name, b.producer, b.appellation, b.region, b.vintage]
+          .filter(Boolean).join(" ").toLowerCase().includes(query)
+      );
+      if (!matches.length) {
+        results.innerHTML = `<div class="mm-viv-loading">Aucune bouteille trouvée pour « ${q} »</div>`;
+        return;
+      }
+      results.innerHTML = matches.map((b) => {
+        const t = WINE_TYPES[b.type] || WINE_TYPES.red;
+        return `
+        <div class="mm-viv-item gsearch-item" data-id="${b.id}">
+          <span style="font-size:18px;flex-shrink:0">${t.emoji}</span>
+          <div style="flex:1;min-width:0">
+            <div class="mm-viv-name">${b.name}${b.vintage ? " " + b.vintage : ""}</div>
+            <div class="mm-viv-sub">${[b.appellation, b.producer].filter(Boolean).join(" · ")}</div>
+            <div class="mm-viv-sub" style="color:${t.color}">📍 ${floorName(b.floor_id)} · emplacement n°${b.slot}</div>
+          </div>
+          ${b.price ? `<span style="color:#EDE0CC;font-weight:600;font-size:12px;flex-shrink:0">${b.price}€</span>` : ""}
+        </div>`;
+      }).join("");
+
+      results.querySelectorAll(".gsearch-item").forEach((el) =>
+        el.addEventListener("click", () => {
+          const bottle = (this._data?.bottles || []).find((x) => x.id === el.dataset.id);
+          if (bottle) {
+            this._closeModal();
+            this._openModal("detail", { bottle });
+          }
+        })
+      );
+    };
+
+    render("");
+    input?.addEventListener("input", () => render(input.value));
+    setTimeout(() => input?.focus(), 150);
+  }
+
   _bindDetailButtons(box, bottle) {
 
     // Retirer
@@ -948,6 +1289,12 @@ class MillesimeCard extends HTMLElement {
     box.querySelector("#det-dup")?.addEventListener("click", () => {
       this._closeModal();
       this._openModal("duplicate", { bottle });
+    });
+
+    // J'ai bu cette bouteille
+    box.querySelector("#det-drink")?.addEventListener("click", () => {
+      this._closeModal();
+      this._openModal("drink", { bottle });
     });
 
     // Estimer le prix
@@ -1036,6 +1383,8 @@ class MillesimeCard extends HTMLElement {
             <div class="stat"><span class="stat-value">${value > 0 ? Math.round(value) + "€" : "—"}</span><span class="stat-label">Valeur</span></div>
           </div>
           <div class="header-actions">
+            <button class="btn-icon" id="btn-search" title="Rechercher une bouteille">🔍</button>
+            <button class="btn-icon" id="btn-journal" title="Journal de dégustation">📓</button>
             <button class="btn-secondary" id="btn-add-floor">+ Étage</button>
             <button class="btn-primary"   id="btn-add-bottle">+ Vin</button>
           </div>
@@ -1112,6 +1461,7 @@ class MillesimeCard extends HTMLElement {
           <div class="floor-counters">${counters}</div>
           <div class="floor-dots" style="grid-template-columns:repeat(${cols},1fr)">${dots}</div>
           <div class="floor-actions">
+            <button class="icon-btn" data-move-floor="${floor.id}" title="Déplacer le contenu">📦</button>
             <button class="icon-btn" data-edit-floor="${floor.id}" title="Modifier">⚙</button>
             <button class="icon-btn" data-del-floor="${floor.id}"  title="Supprimer">✕</button>
           </div>
@@ -1138,6 +1488,8 @@ class MillesimeCard extends HTMLElement {
     });
 
     s.getElementById("btn-history")?.addEventListener("click", () => this._openModal("history"));
+    s.getElementById("btn-search")?.addEventListener("click", () => this._openModal("search"));
+    s.getElementById("btn-journal")?.addEventListener("click", () => this._openModal("journal"));
     s.getElementById("btn-add-floor")?.addEventListener("click",   () => this._openModal("floor"));
 
     s.getElementById("btn-add-bottle")?.addEventListener("click", () => {
@@ -1172,6 +1524,17 @@ class MillesimeCard extends HTMLElement {
         e.stopPropagation();
         const floor = data.cellar.floors.find((f) => f.id === btn.dataset.editFloor);
         this._openModal("floor", { floor });
+      })
+    );
+
+    s.querySelectorAll("[data-move-floor]").forEach((btn) =>
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const floor = data.cellar.floors.find((f) => f.id === btn.dataset.moveFloor);
+        const cnt = bottles.filter((b) => b.floor_id === floor.id).length;
+        if (cnt === 0) { this._showToast("warning", "Cet étage est vide."); return; }
+        if (data.cellar.floors.length < 2) { this._showToast("warning", "Il faut au moins 2 étages pour déplacer."); return; }
+        this._openModal("movefloor", { floor });
       })
     );
 
@@ -1254,8 +1617,14 @@ const CARD_CSS = `<style>
 .stat { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:5px 6px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border); flex:1; }
 .stat-value { font-size:14px; font-weight:700; color:var(--cream); font-family:'Playfair Display',serif; line-height:1; }
 .stat-label { font-size:7px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-top:2px; }
-.header-actions { display:flex; gap:6px; }
-.header-actions button { flex:1; }
+.header-actions { display:flex; gap:6px; align-items:stretch; }
+.header-actions .btn-secondary, .header-actions .btn-primary { flex:1; }
+.btn-icon {
+  flex-shrink:0; width:36px; padding:0; border-radius:8px;
+  border:1px solid var(--border); background:var(--bg-2);
+  color:var(--cream); font-size:15px; cursor:pointer; transition:all 0.15s;
+}
+.btn-icon:hover { background:var(--bg-3); }
 .btn-primary, .btn-secondary {
   padding:7px 12px; border-radius:8px; border:none;
   font-family:'Inter',sans-serif; font-size:11px; font-weight:600;
@@ -1473,6 +1842,46 @@ const MODAL_CSS = `
 .mm-notes        { font-size:12px; color:#888; background:#181818; padding:10px 12px; border-radius:8px; border-left:2px solid #C0392B; line-height:1.55; margin-bottom:6px; }
 .mm-tasting      { border-left-color:#C0392B; font-style:italic; }
 .mm-pairing      { border-left-color:#27AE8F; font-style:normal; }
+
+/* ── Footer fiche détail : bouton "J'ai bu" pleine largeur + ligne d'actions ── */
+.mm-footer-wrap { flex-direction:column; gap:8px; }
+.mm-footer-row { display:flex; gap:6px; width:100%; }
+.mm-footer-row .mm-btn { flex:1; min-width:0; font-size:11px; padding:8px 6px; }
+.mm-btn-drink {
+  width:100%; background:linear-gradient(135deg,#7B1D2E,#A02838); color:#F4D5D5;
+  border:1px solid #C0394A; font-size:13px; padding:11px;
+}
+.mm-btn-drink:hover { background:linear-gradient(135deg,#8B2030,#B83042); transform:translateY(-1px); }
+
+/* ── Sélecteur d'étoiles ── */
+.mm-stars { display:flex; gap:6px; font-size:30px; line-height:1; cursor:pointer; }
+.mm-star { color:#444; transition:color 0.12s, transform 0.12s; user-select:none; }
+.mm-star:hover { transform:scale(1.15); }
+.mm-star--on { color:#E8B84B; }
+
+/* ── Journal de dégustation ── */
+.journal-list { display:flex; flex-direction:column; gap:8px; }
+.journal-row {
+  background:var(--bg-2); border:1px solid var(--border); border-radius:10px;
+  padding:10px 12px;
+}
+.journal-main { display:flex; align-items:flex-start; gap:9px; }
+.journal-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; margin-top:5px; }
+.journal-name { font-size:13px; color:var(--cream); font-weight:600; }
+.journal-sub { font-size:10px; color:var(--muted); margin-top:2px; }
+.journal-comment { font-size:11px; color:#9a9a9a; font-style:italic; margin-top:5px; line-height:1.45; }
+.journal-del {
+  background:none; border:none; color:#555; cursor:pointer; font-size:13px;
+  padding:2px 4px; flex-shrink:0; transition:color 0.15s;
+}
+.journal-del:hover { color:#ff6b6b; }
+.journal-meta {
+  display:flex; align-items:center; gap:12px; margin-top:8px;
+  padding-top:8px; border-top:1px solid var(--border);
+}
+.journal-stars { font-size:14px; letter-spacing:1px; }
+.journal-date { font-size:10px; color:var(--muted); }
+.journal-price { font-size:11px; color:var(--cream); font-weight:600; margin-left:auto; font-family:'Playfair Display',serif; }
 `;
 
 // ── Enregistrement ─────────────────────────────────────────────────────────────
