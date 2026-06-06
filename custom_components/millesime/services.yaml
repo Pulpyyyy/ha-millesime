@@ -160,6 +160,4 @@ duplicate_bottle:
       description: Emplacement de destination
 
 value_snapshot:
-  name: Enregistrer la valeur
-  description: Enregistre la valeur actuelle de la cave dans l'historique.
-  fields: {}
+  name
