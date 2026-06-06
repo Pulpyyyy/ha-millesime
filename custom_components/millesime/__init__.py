@@ -769,6 +769,56 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         d["cellar"]["value_history"] = sorted(history, key=lambda x: x["date"])[-365:]
         await _persist(d)
 
+    async def svc_drink_bottle(call: ServiceCall) -> None:
+        """Marque une bouteille comme bue : retire de la cave, ajoute au journal."""
+        d = _get()
+        bottle_id = call.data["bottle_id"]
+        src = next((b for b in d["bottles"] if b["id"] == bottle_id), None)
+        if not src:
+            return
+        rating = call.data.get("rating", 0)
+        try:
+            rating = round(float(rating), 1)
+        except (TypeError, ValueError):
+            rating = 0
+        comment = str(call.data.get("comment", "") or "")
+        drunk_on = call.data.get("drunk_date") or datetime.now().strftime("%Y-%m-%d")
+
+        entry = {
+            "id":            _uid(),
+            "name":          src.get("name", ""),
+            "vintage":       src.get("vintage", ""),
+            "type":          src.get("type", "red"),
+            "appellation":   src.get("appellation", ""),
+            "region":        src.get("region", ""),
+            "country":       src.get("country", ""),
+            "producer":      src.get("producer", ""),
+            "price":         src.get("price", 0),
+            "tasting_notes": src.get("tasting_notes", ""),
+            "food_pairing":  src.get("food_pairing", ""),
+            "vivino_rating": src.get("vivino_rating", 0),
+            "image_url":     src.get("image_url", ""),
+            "added_date":    src.get("added_date", ""),
+            "drunk_date":    drunk_on,
+            "my_rating":     rating,
+            "my_comment":    comment,
+        }
+        log = d["cellar"].setdefault("tasting_log", [])
+        log.append(entry)
+        # Garder les 1000 dernières dégustations
+        d["cellar"]["tasting_log"] = log[-1000:]
+        # Retirer la bouteille de la cave
+        d["bottles"] = [b for b in d["bottles"] if b["id"] != bottle_id]
+        await _persist(d)
+
+    async def svc_delete_tasting(call: ServiceCall) -> None:
+        """Supprime une entrée du journal de dégustation."""
+        d = _get()
+        tid = call.data["tasting_id"]
+        log = d["cellar"].get("tasting_log", [])
+        d["cellar"]["tasting_log"] = [t for t in log if t.get("id") != tid]
+        await _persist(d)
+
     hass.services.async_register(DOMAIN, "add_floor",        svc_add_floor)
     hass.services.async_register(DOMAIN, "update_floor",     svc_update_floor)
     hass.services.async_register(DOMAIN, "remove_floor",     svc_remove_floor)
@@ -778,6 +828,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.services.async_register(DOMAIN, "duplicate_bottle", svc_duplicate_bottle)
     hass.services.async_register(DOMAIN, "rename_cellar",    svc_rename_cellar)
     hass.services.async_register(DOMAIN, "value_snapshot",   svc_value_snapshot)
+    hass.services.async_register(DOMAIN, "drink_bottle",     svc_drink_bottle)
+    hass.services.async_register(DOMAIN, "delete_tasting",   svc_delete_tasting)
 
     mode = "Gemini 1.5 Flash + photo" if gemini_key else "Open Food Facts"
     _LOGGER.info("Millésime v%s démarré — %s", VERSION, mode)
