@@ -1,12 +1,13 @@
 /**
- * Millésime Card v5.1.0
+ * Millésime Card v5.2.0
  * Cave à vin pour Home Assistant
+ * - Vue 3D isométrique (côte à côte + tête-bêche)
  * - Journal de dégustation (note étoiles, date, commentaire)
  * - Recherche globale, déplacement d'étage, anti-doublon
  * - Recherche texte + photo via Gemini, estimation de prix
  */
 
-const MILLESIME_CARD_VERSION = "5.1.0";
+const MILLESIME_CARD_VERSION = "5.2.0";
 
 const DOMAIN = "millesime";
 
@@ -56,6 +57,7 @@ class MillesimeCard extends HTMLElement {
     this._data       = null;
     this._filter     = "all";
     this._filterEvent= "all";
+    this._view       = "2d";   // "2d" | "3d"
     this._selected   = null;  // id bouteille sélectionnée
     this._modal      = null;
     this._modalStyle = null;
@@ -1359,7 +1361,9 @@ class MillesimeCard extends HTMLElement {
         <div class="cellar">
           ${floors.length === 0
             ? this._renderEmpty()
-            : floors.map((f, i) => this._renderFloor(f, bottles, i)).join("")}
+            : floors.map((f, i) => this._view === "3d"
+                ? this._renderFloor3D(f, bottles, i)
+                : this._renderFloor(f, bottles, i)).join("")}
         </div>
       </div>`;
     this._bindCardListeners(data, bottles);
@@ -1385,6 +1389,7 @@ class MillesimeCard extends HTMLElement {
             <div class="stat"><span class="stat-value">${value > 0 ? Math.round(value) + "€" : "—"}</span><span class="stat-label">Valeur</span></div>
           </div>
           <div class="header-actions">
+            <button class="btn-icon" id="btn-view" title="Vue 2D / 3D">${this._view === "3d" ? "▦" : "🧊"}</button>
             <button class="btn-icon" id="btn-search" title="Rechercher une bouteille">🔍</button>
             <button class="btn-icon" id="btn-journal" title="Journal de dégustation">📓</button>
             <button class="btn-secondary" id="btn-add-floor">+ Étage</button>
@@ -1424,6 +1429,124 @@ class MillesimeCard extends HTMLElement {
         <div class="empty-glass">${GLASS_SVG}</div>
         <div class="empty-title">Cave vide</div>
         <div class="empty-sub">Cliquez sur "+ Étage" pour commencer</div>
+      </div>`;
+  }
+
+  // ── Vue 3D isométrique ────────────────────────────────────────────────────────
+
+  _shade(hex, pct) {
+    // Éclaircit (pct>0) ou assombrit (pct<0) une couleur hex
+    const n = parseInt(hex.slice(1), 16);
+    const r = Math.min(255, Math.max(0, (n >> 16) + Math.round(2.55 * pct)));
+    const g = Math.min(255, Math.max(0, ((n >> 8) & 255) + Math.round(2.55 * pct)));
+    const b = Math.min(255, Math.max(0, (n & 255) + Math.round(2.55 * pct)));
+    return "#" + ((r << 16) | (g << 8) | b).toString(16).padStart(6, "0");
+  }
+
+  _renderFloor3D(floor, allBottles, index) {
+    const fb    = allBottles.filter((b) => b.floor_id === floor.id);
+    const cols  = floor.columns || 8;
+    const total = floor.slots || cols * (floor.rows || 2);
+    const isAlt = floor.layout === "alternating";
+    const pct   = Math.round((fb.length / total) * 100);
+
+    // ── Géométrie ──
+    const BW   = 46;                       // espacement horizontal par bouteille
+    const RX   = 19, RY = 22;              // rayons du culot
+    const DX   = 9,  DY = -40;             // vecteur de profondeur (corps qui recule)
+    const ML   = 56;                       // marge gauche (badge numéro)
+    const W    = ML + total * BW + 70;
+    const H    = 158;
+    const shY  = H - 24;                   // y du bord avant de l'étagère
+    const sDX  = 40, sDY = -28;            // profondeur de l'étagère
+
+    let svg = "";
+
+    // ── Étagère bois ──
+    const sx = ML - 8, sw = total * BW + 44;
+    svg += `<path d="M ${sx} ${shY} L ${sx+sw} ${shY} L ${sx+sw+sDX} ${shY+sDY} L ${sx+sDX} ${shY+sDY} Z" fill="#E4C492"/>`;
+    svg += `<path d="M ${sx} ${shY} L ${sx+sw} ${shY} L ${sx+sw} ${shY+8} L ${sx} ${shY+8} Z" fill="#C49A60"/>`;
+    svg += `<path d="M ${sx+sw} ${shY} L ${sx+sw+sDX} ${shY+sDY} L ${sx+sw+sDX} ${shY+sDY+8} L ${sx+sw} ${shY+8} Z" fill="#96703A"/>`;
+
+    // ── Badge numéro d'étage ──
+    svg += `<rect x="8" y="${shY-26}" width="26" height="26" rx="7" fill="#1A1A1A" stroke="#333"/>`;
+    svg += `<text x="21" y="${shY-7}" text-anchor="middle" fill="#C0392B" font-family="Georgia,serif" font-size="14" font-weight="700">${index+1}</text>`;
+
+    // ── Bouteilles ──
+    for (let i = 0; i < total; i++) {
+      const bt = fb.find((b) => b.slot === i);
+      const cx = ML + i * BW + RX + 4;
+      const stag = i % 2 === 1 ? -6 : 0;          // léger décalage alterné (même plan)
+      const cy = shY - RY - 5 + stag;
+      const neck = isAlt && i % 2 === 1;           // tête-bêche : goulot une fois sur deux
+
+      if (!bt) {
+        // Emplacement vide — cercle pointillé cliquable
+        svg += `<g class="b3d b3d-empty" data-slot="${i}" data-floor-id="${floor.id}">
+          <ellipse cx="${cx}" cy="${cy}" rx="${RX-3}" ry="${RY-3}" fill="#1A1A1A" stroke="#333" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.5"/>
+        </g>`;
+        continue;
+      }
+
+      const t = WINE_TYPES[bt.type] || WINE_TYPES.red;
+      const face = t.color;
+      const body = this._shade(t.color, -26);
+      const top  = this._shade(t.color, 22);
+      const filteredType  = this._filter !== "all" && bt.type !== this._filter;
+      const filteredEvent = this._filterEvent !== "all" && (bt.event || "") !== this._filterEvent;
+      const op  = (filteredType || filteredEvent) ? 0.15 : 1;
+      const sel = bt.id === this._selected;
+      const title = `${bt.name}${bt.vintage ? " " + bt.vintage : ""}`;
+
+      svg += `<g class="b3d" data-slot="${i}" data-floor-id="${floor.id}" style="opacity:${op}">`;
+      svg += `<title>${title}</title>`;
+
+      if (!neck) {
+        // ── Culot face au spectateur ──
+        const bx = cx + DX, by = cy + DY;
+        svg += `<ellipse cx="${bx}" cy="${by}" rx="${RX}" ry="${RY}" fill="${body}"/>`;
+        svg += `<path d="M ${cx-RX} ${cy} L ${bx-RX} ${by} L ${bx+RX} ${by} L ${cx+RX} ${cy} Z" fill="${body}"/>`;
+        svg += `<path d="M ${cx-RX+3} ${cy} L ${bx-RX+3} ${by} L ${bx-RX+9} ${by} L ${cx-RX+9} ${cy} Z" fill="${top}" opacity="0.4"/>`;
+        svg += `<ellipse cx="${cx}" cy="${cy}" rx="${RX}" ry="${RY}" fill="${face}"/>`;
+        svg += `<ellipse cx="${cx}" cy="${cy}" rx="${RX}" ry="${RY}" fill="none" stroke="${body}" stroke-width="2.5" opacity="0.85"/>`;
+        svg += `<ellipse cx="${cx}" cy="${cy}" rx="${RX*0.42}" ry="${RY*0.42}" fill="${body}" opacity="0.55"/>`;
+        svg += `<ellipse cx="${cx-RX*0.34}" cy="${cy-RY*0.4}" rx="${RX*0.26}" ry="${RY*0.3}" fill="${top}" opacity="0.5"/>`;
+        if (sel) svg += `<ellipse cx="${cx}" cy="${cy}" rx="${RX+4}" ry="${RY+4}" fill="none" stroke="#C9A84C" stroke-width="2.5"/>`;
+      } else {
+        // ── Goulot face au spectateur (tête-bêche) ──
+        const capR = 8, capRy = 9;
+        const mx = cx + DX*0.4, my = cy + DY*0.38;   // épaule
+        const bx = cx + DX,     by = cy + DY;          // corps arrière
+        const cap = this._shade(t.color, 12);
+        // Corps arrière
+        svg += `<ellipse cx="${bx}" cy="${by}" rx="${RX}" ry="${RY}" fill="${body}"/>`;
+        svg += `<path d="M ${mx-RX*0.92} ${my} L ${bx-RX} ${by} L ${bx+RX} ${by} L ${mx+RX*0.92} ${my} Z" fill="${body}"/>`;
+        // Épaule
+        svg += `<ellipse cx="${mx}" cy="${my}" rx="${RX*0.92}" ry="${RY*0.92}" fill="${this._shade(t.color, -14)}"/>`;
+        // Cône du goulot
+        svg += `<path d="M ${cx-capR} ${cy} L ${mx-RX*0.55} ${my} L ${mx+RX*0.55} ${my} L ${cx+capR} ${cy} Z" fill="${this._shade(t.color, -8)}"/>`;
+        // Capsule
+        svg += `<ellipse cx="${cx}" cy="${cy}" rx="${capR}" ry="${capRy}" fill="${cap}"/>`;
+        svg += `<ellipse cx="${cx}" cy="${cy}" rx="${capR}" ry="${capRy}" fill="none" stroke="${body}" stroke-width="1.5" opacity="0.7"/>`;
+        svg += `<ellipse cx="${cx-capR*0.3}" cy="${cy-capRy*0.35}" rx="${capR*0.3}" ry="${capRy*0.35}" fill="${top}" opacity="0.6"/>`;
+        if (sel) svg += `<ellipse cx="${cx}" cy="${cy}" rx="${capR+5}" ry="${capRy+5}" fill="none" stroke="#C9A84C" stroke-width="2.5"/>`;
+      }
+      svg += `</g>`;
+    }
+
+    return `
+      <div class="floor floor-3d" style="animation-delay:${index * 0.06}s">
+        <div class="floor3d-wrap">
+          <svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="display:block;width:100%;height:auto">${svg}</svg>
+          <div class="floor-actions floor3d-actions">
+            <button class="icon-btn" data-move-floor="${floor.id}" title="Déplacer le contenu">📦</button>
+            <button class="icon-btn" data-edit-floor="${floor.id}" title="Modifier">⚙</button>
+            <button class="icon-btn" data-del-floor="${floor.id}"  title="Supprimer">✕</button>
+          </div>
+        </div>
+        <div class="floor-label">
+          <span>${floor.name}</span><span class="floor-pct">${pct}%</span>
+        </div>
       </div>`;
   }
 
@@ -1490,6 +1613,10 @@ class MillesimeCard extends HTMLElement {
     });
 
     s.getElementById("btn-history")?.addEventListener("click", () => this._openModal("history"));
+    s.getElementById("btn-view")?.addEventListener("click", () => {
+      this._view = this._view === "3d" ? "2d" : "3d";
+      this._render();
+    });
     s.getElementById("btn-search")?.addEventListener("click", () => this._openModal("search"));
     s.getElementById("btn-journal")?.addEventListener("click", () => this._openModal("journal"));
     s.getElementById("btn-add-floor")?.addEventListener("click",   () => this._openModal("floor"));
@@ -1502,7 +1629,7 @@ class MillesimeCard extends HTMLElement {
       this._openModal("bottle");
     });
 
-    s.querySelectorAll(".dot").forEach((dot) =>
+    s.querySelectorAll(".dot, .b3d").forEach((dot) =>
       dot.addEventListener("click", () => {
         const slot    = parseInt(dot.dataset.slot);
         const floorId = dot.dataset.floorId;
@@ -1696,6 +1823,14 @@ const CARD_CSS = `<style>
   font-size:9px; font-weight:600; color:var(--gold); letter-spacing:2px; text-transform:uppercase;
 }
 .floor-pct { color:var(--wood-lt); font-size:8px; }
+
+/* ─── Vue 3D isométrique ─── */
+.floor-3d { margin-bottom:4px; }
+.floor3d-wrap { position:relative; background:var(--bg-1); border:1px solid var(--border); border-bottom:none; border-radius:10px 10px 0 0; padding:6px 4px 0; }
+.floor3d-actions { position:absolute; top:8px; right:8px; flex-direction:row; gap:6px; }
+.b3d { cursor:pointer; transition:opacity 0.15s, filter 0.15s; }
+.b3d:hover { filter:brightness(1.25); }
+.b3d-empty:hover { opacity:1 !important; filter:none; }
 
 /* ─── Footer détail : 4 boutons ─── */
 .mm-footer-detail { gap:5px; flex-wrap:wrap; }
