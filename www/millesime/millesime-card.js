@@ -1,10 +1,12 @@
 /**
- * Millésime Card v5.0.0
+ * Millésime Card v5.1.0
  * Cave à vin pour Home Assistant
- * - Recherche texte avec suggestions temps réel
- * - Lecture d'étiquette par photo (Gemini Vision)
- * - Messages d'erreur pro : quota, clé invalide, indisponibilité
+ * - Journal de dégustation (note étoiles, date, commentaire)
+ * - Recherche globale, déplacement d'étage, anti-doublon
+ * - Recherche texte + photo via Gemini, estimation de prix
  */
+
+const MILLESIME_CARD_VERSION = "5.1.0";
 
 const DOMAIN = "millesime";
 
@@ -1886,12 +1888,18 @@ const MODAL_CSS = `
 
 // ── Enregistrement ─────────────────────────────────────────────────────────────
 
+console.info(
+  "%c 🍷 MILLESIME-CARD %c v" + MILLESIME_CARD_VERSION + " ",
+  "background:#7B1D2E;color:#F4D5D5;font-weight:700;border-radius:4px 0 0 4px;padding:2px 6px",
+  "background:#222;color:#EDE0CC;border-radius:0 4px 4px 0;padding:2px 6px"
+);
+
 customElements.define("millesime-card", MillesimeCard);
 
 window.customCards = window.customCards || [];
 window.customCards.push({
   type:        "millesime-card",
   name:        "Millésime — Cave à Vin",
-  description: "Visualisation cave à vin avec Gemini AI (texte + photo)",
+  description: "Cave à vin — Vinotag, Gemini AI, journal de dégustation (v" + MILLESIME_CARD_VERSION + ")",
   preview:     true,
 });
