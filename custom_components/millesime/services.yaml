@@ -160,4 +160,28 @@ duplicate_bottle:
       description: Emplacement de destination
 
 value_snapshot:
-  name
+  name: Enregistrer la valeur
+  description: Enregistre la valeur actuelle de la cave dans l'historique.
+  fields: {}
+
+drink_bottle:
+  name: Marquer comme bue
+  description: Retire une bouteille de la cave et l'ajoute au journal de dégustation.
+  fields:
+    bottle_id:
+      description: ID de la bouteille
+      required: true
+    rating:
+      description: Note personnelle /5
+    comment:
+      description: Commentaire de dégustation
+    drunk_date:
+      description: Date de dégustation (YYYY-MM-DD)
+
+delete_tasting:
+  name: Supprimer une dégustation
+  description: Supprime une entrée du journal de dégustation.
+  fields:
+    tasting_id:
+      description: ID de l'entrée du journal
+      required: true
