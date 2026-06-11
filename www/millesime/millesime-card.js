@@ -1,5 +1,5 @@
 /**
- * Millésime Card v5.2.0
+ * Millésime Card v5.3.3
  * Cave à vin pour Home Assistant
  * - Vue 3D isométrique (côte à côte + tête-bêche)
  * - Journal de dégustation (note étoiles, date, commentaire)
@@ -7,7 +7,7 @@
  * - Recherche texte + photo via Gemini, estimation de prix
  */
 
-const MILLESIME_CARD_VERSION = "5.2.0";
+const MILLESIME_CARD_VERSION = "5.3.3";
 
 const DOMAIN = "millesime";
 
@@ -58,6 +58,8 @@ class MillesimeCard extends HTMLElement {
     this._filter     = "all";
     this._filterEvent= "all";
     this._view       = "2d";   // "2d" | "3d"
+    this._three      = null;    // contexte WebGL (vue 3D)
+    this._threeModP  = null;    // promesse du module three.js (chargé une fois)
     this._selected   = null;  // id bouteille sélectionnée
     this._modal      = null;
     this._modalStyle = null;
@@ -1361,12 +1363,13 @@ class MillesimeCard extends HTMLElement {
         <div class="cellar">
           ${floors.length === 0
             ? this._renderEmpty()
-            : floors.map((f, i) => this._view === "3d"
-                ? this._renderFloor3D(f, bottles, i)
-                : this._renderFloor(f, bottles, i)).join("")}
+            : (this._view === "3d"
+                ? `<div class="view3d-stage" id="view3d-stage"></div>`
+                : floors.map((f, i) => this._renderFloor(f, bottles, i)).join(""))}
         </div>
       </div>`;
     this._bindCardListeners(data, bottles);
+    if (this._view === "3d") this._mount3D(); else this._unmount3D();
   }
 
   _renderHeader(data, bottles) {
@@ -1389,9 +1392,11 @@ class MillesimeCard extends HTMLElement {
             <div class="stat"><span class="stat-value">${value > 0 ? Math.round(value) + "€" : "—"}</span><span class="stat-label">Valeur</span></div>
           </div>
           <div class="header-actions">
-            <button class="btn-icon" id="btn-view" title="Vue 2D / 3D">${this._view === "3d" ? "▦" : "🧊"}</button>
-            <button class="btn-icon" id="btn-search" title="Rechercher une bouteille">🔍</button>
-            <button class="btn-icon" id="btn-journal" title="Journal de dégustation">📓</button>
+            <div class="ha-icons">
+              <button class="btn-icon" id="btn-view" title="Vue 2D / 3D">${this._view === "3d" ? "▦" : "🧊"}</button>
+              <button class="btn-icon" id="btn-search" title="Rechercher une bouteille">🔍</button>
+              <button class="btn-icon" id="btn-journal" title="Journal de dégustation">📓</button>
+            </div>
             <button class="btn-secondary" id="btn-add-floor">+ Étage</button>
             <button class="btn-primary"   id="btn-add-bottle">+ Vin</button>
           </div>
@@ -1434,6 +1439,366 @@ class MillesimeCard extends HTMLElement {
 
   // ── Vue 3D isométrique ────────────────────────────────────────────────────────
 
+  // ════════════════════════════════════════════════════════════════════
+  //  VUE 3D — moteur Three.js (WebGL) : éclairage studio, ombres douces
+  // ════════════════════════════════════════════════════════════════════
+
+  _loadThree() {
+    if (!this._threeModP) {
+      this._threeModP = import("https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js");
+    }
+    return this._threeModP;
+  }
+
+  _unmount3D() {
+    const t = this._three;
+    if (!t) return;
+    try {
+      t.ro?.disconnect();
+      t.renderer.domElement.removeEventListener("click", t.onPick);
+      t.scene.traverse((o) => {
+        o.geometry?.dispose?.();
+        if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.dispose());
+      });
+      t.renderer.dispose();
+      t.renderer.domElement.remove();
+    } catch (e) { /* noop */ }
+    this._three = null;
+  }
+
+  // Profil de révolution d'une bouteille bordelaise (r, y) — punt inclus
+  _bottleProfile(THREE) {
+    const pts = [
+      [0.00, 0.42],   // apex du punt (creux)
+      [0.30, 0.10],
+      [0.44, 0.04],
+      [0.47, 0.22],   // talon
+      [0.47, 2.55],   // fût
+      [0.43, 2.78],
+      [0.30, 3.00],   // épaule
+      [0.155, 3.18],
+      [0.145, 3.62],  // goulot
+      [0.175, 3.66],  // bague
+      [0.175, 3.74],
+      [0.00, 3.74],   // dessus
+    ];
+    return pts.map(([x, y]) => new THREE.Vector2(x, y));
+  }
+
+  async _mount3D() {
+    this._unmount3D();
+    const stage = this.shadowRoot.getElementById("view3d-stage");
+    if (!stage) return;
+    // Conserver la hauteur précédente pendant le remontage (évite le saut de scroll)
+    const prevH = this._three?.lastH || 0;
+    if (prevH > 60) stage.style.height = prevH + "px";
+    stage.innerHTML = `<div class="three-loading"><span class="mm-spinner"></span> Vue 3D…</div>`;
+
+    let THREE;
+    try {
+      THREE = await this._loadThree();
+    } catch (e) {
+      this._showToast("warning", "Vue 3D indisponible (chargement WebGL). Retour à la vue 2D.");
+      this._view = "2d";
+      this._render();
+      return;
+    }
+    // Le rendu a pu changer pendant le chargement
+    if (this._view !== "3d" || !this.shadowRoot.getElementById("view3d-stage")) return;
+
+    const data    = this._data || DEFAULT_DATA();
+    const floors  = data.cellar?.floors || [];
+    const bottles = data.bottles || [];
+    if (!floors.length) { stage.innerHTML = ""; return; }
+
+    // ── Dimensions ──
+    const width  = stage.clientWidth || 360;
+
+    // ── Scène ──
+    const scene = new THREE.Scene();
+
+    // ── Lumières (studio doux) ──
+    scene.add(new THREE.AmbientLight(0xfff4e0, 0.55));
+    const key = new THREE.DirectionalLight(0xffffff, 1.35);
+    key.position.set(5, 12, 9);
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.bias = -0.0004;
+    key.shadow.radius = 5;
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0xc9d4ff, 0.35);
+    fill.position.set(-6, 4, 5);
+    scene.add(fill);
+    const rim = new THREE.DirectionalLight(0xffe2c0, 0.3);
+    rim.position.set(0, 6, -8);
+    scene.add(rim);
+
+    // ── Géométries partagées ──
+    const bottleGeo = new THREE.LatheGeometry(this._bottleProfile(THREE), 48);
+    bottleGeo.rotateX(Math.PI / 2);           // axe le long de Z, culot vers +Z
+    bottleGeo.translate(0, 0.47, -1.87);      // posée sur le dos, centrée en Z
+
+    const capGeo = new THREE.CylinderGeometry(0.165, 0.165, 0.55, 24);
+    capGeo.rotateX(Math.PI / 2);
+
+    const emptyGeo = new THREE.CircleGeometry(0.42, 32);
+    emptyGeo.rotateX(-Math.PI / 2);
+    const ringGeo = new THREE.RingGeometry(0.40, 0.46, 32);
+    ringGeo.rotateX(-Math.PI / 2);
+
+    // ── Matériaux par type de vin ──
+    const mats = {}, capMats = {}, fadedMats = {};
+    for (const [k, t] of Object.entries(WINE_TYPES)) {
+      mats[k] = new THREE.MeshPhysicalMaterial({
+        color: t.color, roughness: 0.32, metalness: 0.05,
+        clearcoat: 0.55, clearcoatRoughness: 0.35,
+      });
+      fadedMats[k] = mats[k].clone();
+      fadedMats[k].transparent = true;
+      fadedMats[k].opacity = 0.13;
+      capMats[k] = new THREE.MeshStandardMaterial({
+        color: this._shade(t.color, 18), roughness: 0.25, metalness: 0.75,
+      });
+    }
+    const woodTop = new THREE.MeshStandardMaterial({ color: 0xE6C896, roughness: 0.72, metalness: 0 });
+    const woodSide = new THREE.MeshStandardMaterial({ color: 0xB8905C, roughness: 0.8, metalness: 0 });
+    const emptyMat = new THREE.MeshBasicMaterial({ color: 0x141414, transparent: true, opacity: 0.85 });
+    const ringMat  = new THREE.MeshBasicMaterial({ color: 0x3a3a3a, transparent: true, opacity: 0.9 });
+    const goldMat  = new THREE.MeshBasicMaterial({ color: 0xC9A84C });
+
+    // ── Construction des étages ──
+    const SPACING = 1.06;                      // entre bouteilles (unités monde)
+    const FLOOR_DY = 3.4;                      // entre étages (compact)
+    const pickables = [];
+    const floorAnchors = [];                   // pour les overlays HTML
+    let maxHalfW = 1;
+
+    floors.forEach((floor, fi) => {
+      const total = floor.slots || (floor.columns || 8) * (floor.rows || 2);
+      const isAlt = floor.layout === "alternating";
+      const fb    = bottles.filter((b) => b.floor_id === floor.id);
+      const yBase = -fi * FLOOR_DY;
+      const halfW = (total * SPACING) / 2;
+      maxHalfW = Math.max(maxHalfW, halfW + 0.8);
+
+      // Étagère
+      const shelf = new THREE.Mesh(
+        new THREE.BoxGeometry(total * SPACING + 1.1, 0.22, 4.0),
+        [woodSide, woodSide, woodTop, woodSide, woodSide, woodSide]
+      );
+      shelf.position.set(0, yBase - 0.11, 0);
+      shelf.receiveShadow = true;
+      shelf.castShadow = true;
+      scene.add(shelf);
+
+      floorAnchors.push({ floor, fi, yBase, halfW });
+
+      for (let i = 0; i < total; i++) {
+        const bt = fb.find((b) => b.slot === i);
+        const x  = -halfW + SPACING / 2 + i * SPACING;
+        const stag = i % 2 === 1 ? -0.30 : 0.30;  // léger décalage avant/arrière (même plan)
+
+        if (!bt) {
+          const disc = new THREE.Mesh(emptyGeo, emptyMat);
+          disc.position.set(x, yBase + 0.012, stag);
+          const ring = new THREE.Mesh(ringGeo, ringMat);
+          ring.position.set(x, yBase + 0.013, stag);
+          disc.userData = { empty: true, slot: i, floorId: floor.id };
+          pickables.push(disc);
+          scene.add(disc, ring);
+          continue;
+        }
+
+        const tp = WINE_TYPES[bt.type] ? bt.type : "red";
+        const filtered =
+          (this._filter !== "all" && bt.type !== this._filter) ||
+          (this._filterEvent !== "all" && (bt.event || "") !== this._filterEvent);
+
+        const g = new THREE.Group();
+        const body = new THREE.Mesh(bottleGeo, filtered ? fadedMats[tp] : mats[tp]);
+        body.castShadow = !filtered;
+        body.receiveShadow = true;
+        const cap = new THREE.Mesh(capGeo, capMats[tp]);
+        cap.position.set(0, 0.47, -1.62);
+        cap.visible = !filtered;
+        g.add(body, cap);
+
+        const neckFront = isAlt && i % 2 === 1;   // tête-bêche : goulot vers le spectateur
+        if (neckFront) g.rotation.y = Math.PI;
+        g.position.set(x, yBase, stag);
+        g.userData = { bottleId: bt.id, slot: i, floorId: floor.id };
+
+        if (bt.id === this._selected) {
+          const halo = new THREE.Mesh(new THREE.RingGeometry(0.52, 0.60, 40), goldMat);
+          halo.rotateX(-Math.PI / 2);
+          halo.position.y = 0.015;
+          g.add(halo);
+        }
+        body.userData = g.userData;
+        cap.userData = g.userData;
+        pickables.push(body);
+        scene.add(g);
+      }
+    });
+
+    // ── Cadrage au plus juste : pleine largeur, hauteur exacte ──
+    const bbox = new THREE.Box3().setFromObject(scene);
+    const c3 = bbox.getCenter(new THREE.Vector3());
+    const s3 = bbox.getSize(new THREE.Vector3());
+    const MARGIN_X = 1.03;
+    const PAD_TOP = 0.45, PAD_BOT = 0.95;     // marges monde (bas = place du badge)
+
+    // Ombres : couvrir toute la scène
+    key.target.position.copy(c3);
+    scene.add(key.target);
+    key.position.set(c3.x + 5, c3.y + s3.y / 2 + 8, c3.z + 9);
+    const sc = key.shadow.camera;
+    sc.left = -(s3.x / 2 + 3); sc.right = s3.x / 2 + 3;
+    sc.top  =  s3.y / 2 + 4;   sc.bottom = -(s3.y / 2 + 4);
+    sc.near = 1; sc.far = 90;
+    sc.updateProjectionMatrix();
+
+    const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
+
+    // ── Renderer HD ──
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.12;
+
+    stage.innerHTML = "";
+    stage.appendChild(renderer.domElement);
+    renderer.domElement.style.cssText = "display:block;width:100%;height:100%;border-radius:12px;touch-action:pan-y";
+
+    const draw = () => renderer.render(scene, cam);
+
+    // ── Overlays : badge sous chaque clayette + rail vertical à droite ──
+    const placeOverlays = (w, h) => {
+      stage.querySelectorAll(".t3-badge,.t3-rail").forEach((el) => el.remove());
+      const toPx = (x, y, z) => {
+        const p = new THREE.Vector3(x, y, z).project(cam);
+        return { x: (p.x * 0.5 + 0.5) * w, y: (-p.y * 0.5 + 0.5) * h };
+      };
+      floorAnchors.forEach(({ floor, fi, yBase, halfW }) => {
+        const fb  = bottles.filter((b) => b.floor_id === floor.id);
+        const tot = floor.slots || (floor.columns || 8) * (floor.rows || 2);
+        const pct = Math.round((fb.length / tot) * 100);
+
+        // Badge centré sous le bord avant de la clayette
+        const pb = toPx(0, yBase - 0.30, 2.15);
+        const badge = document.createElement("div");
+        badge.className = "t3-badge";
+        badge.style.left = pb.x + "px";
+        badge.style.top  = pb.y + "px";
+        badge.innerHTML = `<b>${fi + 1}</b> ${floor.name} <span>${pct}%</span>`;
+        stage.appendChild(badge);
+
+        // Rail vertical aligné sur l'étage
+        const pr = toPx(halfW, yBase + 0.7, 0);
+        const rail = document.createElement("div");
+        rail.className = "t3-rail";
+        rail.style.top = Math.max(4, pr.y - 50) + "px";
+        rail.innerHTML = `
+          <button class="icon-btn" data-move-floor="${floor.id}" title="Déplacer">📦</button>
+          <button class="icon-btn" data-edit-floor="${floor.id}" title="Modifier">⚙</button>
+          <button class="icon-btn" data-del-floor="${floor.id}" title="Supprimer">✕</button>`;
+        stage.appendChild(rail);
+      });
+      this._bind3DOverlays(stage, data, bottles);
+    };
+
+    // ── Layout : la largeur dicte l'échelle, la hauteur suit le contenu ──
+    let curW = 0;
+    const RAIL_PX = 48;                        // zone réservée au rail d'actions
+    const layout = (w) => {
+      curW = w;
+      const usable = Math.max(120, w - RAIL_PX);
+      const pxPerUnit = usable / (s3.x * MARGIN_X);
+      const h = Math.max(150, Math.round((s3.y + PAD_TOP + PAD_BOT) * pxPerUnit));
+      const hW = (s3.x * MARGIN_X) / 2;
+      const extra = RAIL_PX / pxPerUnit;       // unités monde à droite (hors clayettes)
+      const hH = h / (2 * pxPerUnit);
+      const cy = c3.y - (PAD_BOT - PAD_TOP) / 2;
+      cam.left = -hW; cam.right = hW + extra; cam.top = hH; cam.bottom = -hH;
+      cam.position.set(c3.x + 4.2, cy + 8.0, c3.z + 28);
+      cam.lookAt(new THREE.Vector3(c3.x, cy, c3.z));
+      cam.updateProjectionMatrix();
+      stage.style.height = h + "px";
+      if (this._three) this._three.lastH = h;
+      renderer.setSize(w, h);
+      draw();
+      placeOverlays(w, h);
+    };
+    layout(width);
+
+    // ── Picking au tap : "click" est synthétisé par iOS après un vrai tap
+    //    et jamais après un scroll → fiable sur iPhone ──
+    const ray = new THREE.Raycaster();
+    const ptr = new THREE.Vector2();
+    const onPick = (e) => {
+      const r = renderer.domElement.getBoundingClientRect();
+      ptr.x = ((e.clientX - r.left) / r.width) * 2 - 1;
+      ptr.y = -((e.clientY - r.top) / r.height) * 2 + 1;
+      ray.setFromCamera(ptr, cam);
+      const hit = ray.intersectObjects(pickables, false)[0];
+      if (!hit) return;
+      const u = hit.object.userData;
+      if (u.empty) {
+        this._openModal("bottle", { slot: { floor_id: u.floorId, slot: u.slot } });
+      } else {
+        const bt = bottles.find((b) => b.id === u.bottleId);
+        if (!bt) return;
+        this._selected = bt.id;                 // mémorisé pour la vue 2D
+        this._openModal("detail", { bottle: bt }); // ouverture directe, sans re-render
+      }
+    };
+    renderer.domElement.addEventListener("click", onPick);
+
+    // ── Redimensionnement (largeur uniquement) ──
+    const ro = new ResizeObserver(() => {
+      const w = stage.clientWidth || curW;
+      if (Math.abs(w - curW) > 1) layout(w);
+    });
+    ro.observe(stage);
+
+    this._three = { renderer, scene, cam, ro, onPick, lastH: stage.offsetHeight };
+  }
+
+  _bind3DOverlays(stage, data, bottles) {
+    stage.querySelectorAll("[data-edit-floor]").forEach((btn) =>
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const floor = data.cellar.floors.find((f) => f.id === btn.dataset.editFloor);
+        this._openModal("floor", { floor });
+      })
+    );
+    stage.querySelectorAll("[data-move-floor]").forEach((btn) =>
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const floor = data.cellar.floors.find((f) => f.id === btn.dataset.moveFloor);
+        const cnt = bottles.filter((b) => b.floor_id === floor.id).length;
+        if (cnt === 0) { this._showToast("warning", "Cet étage est vide."); return; }
+        if (data.cellar.floors.length < 2) { this._showToast("warning", "Il faut au moins 2 étages."); return; }
+        this._openModal("movefloor", { floor });
+      })
+    );
+    stage.querySelectorAll("[data-del-floor]").forEach((btn) =>
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const fid = btn.dataset.delFloor;
+        const floor = data.cellar.floors.find((f) => f.id === fid);
+        const cnt = bottles.filter((b) => b.floor_id === fid).length;
+        const msg = cnt > 0
+          ? `Supprimer "${floor?.name}" et ses ${cnt} bouteille(s) ?`
+          : `Supprimer l'étage "${floor?.name}" ?`;
+        if (confirm(msg)) await this._callService("remove_floor", { floor_id: fid });
+      })
+    );
+  }
+
   _shade(hex, pct) {
     // Éclaircit (pct>0) ou assombrit (pct<0) une couleur hex
     const n = parseInt(hex.slice(1), 16);
@@ -1441,113 +1806,6 @@ class MillesimeCard extends HTMLElement {
     const g = Math.min(255, Math.max(0, ((n >> 8) & 255) + Math.round(2.55 * pct)));
     const b = Math.min(255, Math.max(0, (n & 255) + Math.round(2.55 * pct)));
     return "#" + ((r << 16) | (g << 8) | b).toString(16).padStart(6, "0");
-  }
-
-  _renderFloor3D(floor, allBottles, index) {
-    const fb    = allBottles.filter((b) => b.floor_id === floor.id);
-    const cols  = floor.columns || 8;
-    const total = floor.slots || cols * (floor.rows || 2);
-    const isAlt = floor.layout === "alternating";
-    const pct   = Math.round((fb.length / total) * 100);
-
-    // ── Géométrie ──
-    const BW   = 46;                       // espacement horizontal par bouteille
-    const RX   = 19, RY = 22;              // rayons du culot
-    const DX   = 9,  DY = -40;             // vecteur de profondeur (corps qui recule)
-    const ML   = 56;                       // marge gauche (badge numéro)
-    const W    = ML + total * BW + 70;
-    const H    = 158;
-    const shY  = H - 24;                   // y du bord avant de l'étagère
-    const sDX  = 40, sDY = -28;            // profondeur de l'étagère
-
-    let svg = "";
-
-    // ── Étagère bois ──
-    const sx = ML - 8, sw = total * BW + 44;
-    svg += `<path d="M ${sx} ${shY} L ${sx+sw} ${shY} L ${sx+sw+sDX} ${shY+sDY} L ${sx+sDX} ${shY+sDY} Z" fill="#E4C492"/>`;
-    svg += `<path d="M ${sx} ${shY} L ${sx+sw} ${shY} L ${sx+sw} ${shY+8} L ${sx} ${shY+8} Z" fill="#C49A60"/>`;
-    svg += `<path d="M ${sx+sw} ${shY} L ${sx+sw+sDX} ${shY+sDY} L ${sx+sw+sDX} ${shY+sDY+8} L ${sx+sw} ${shY+8} Z" fill="#96703A"/>`;
-
-    // ── Badge numéro d'étage ──
-    svg += `<rect x="8" y="${shY-26}" width="26" height="26" rx="7" fill="#1A1A1A" stroke="#333"/>`;
-    svg += `<text x="21" y="${shY-7}" text-anchor="middle" fill="#C0392B" font-family="Georgia,serif" font-size="14" font-weight="700">${index+1}</text>`;
-
-    // ── Bouteilles ──
-    for (let i = 0; i < total; i++) {
-      const bt = fb.find((b) => b.slot === i);
-      const cx = ML + i * BW + RX + 4;
-      const stag = i % 2 === 1 ? -6 : 0;          // léger décalage alterné (même plan)
-      const cy = shY - RY - 5 + stag;
-      const neck = isAlt && i % 2 === 1;           // tête-bêche : goulot une fois sur deux
-
-      if (!bt) {
-        // Emplacement vide — cercle pointillé cliquable
-        svg += `<g class="b3d b3d-empty" data-slot="${i}" data-floor-id="${floor.id}">
-          <ellipse cx="${cx}" cy="${cy}" rx="${RX-3}" ry="${RY-3}" fill="#1A1A1A" stroke="#333" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.5"/>
-        </g>`;
-        continue;
-      }
-
-      const t = WINE_TYPES[bt.type] || WINE_TYPES.red;
-      const face = t.color;
-      const body = this._shade(t.color, -26);
-      const top  = this._shade(t.color, 22);
-      const filteredType  = this._filter !== "all" && bt.type !== this._filter;
-      const filteredEvent = this._filterEvent !== "all" && (bt.event || "") !== this._filterEvent;
-      const op  = (filteredType || filteredEvent) ? 0.15 : 1;
-      const sel = bt.id === this._selected;
-      const title = `${bt.name}${bt.vintage ? " " + bt.vintage : ""}`;
-
-      svg += `<g class="b3d" data-slot="${i}" data-floor-id="${floor.id}" style="opacity:${op}">`;
-      svg += `<title>${title}</title>`;
-
-      if (!neck) {
-        // ── Culot face au spectateur ──
-        const bx = cx + DX, by = cy + DY;
-        svg += `<ellipse cx="${bx}" cy="${by}" rx="${RX}" ry="${RY}" fill="${body}"/>`;
-        svg += `<path d="M ${cx-RX} ${cy} L ${bx-RX} ${by} L ${bx+RX} ${by} L ${cx+RX} ${cy} Z" fill="${body}"/>`;
-        svg += `<path d="M ${cx-RX+3} ${cy} L ${bx-RX+3} ${by} L ${bx-RX+9} ${by} L ${cx-RX+9} ${cy} Z" fill="${top}" opacity="0.4"/>`;
-        svg += `<ellipse cx="${cx}" cy="${cy}" rx="${RX}" ry="${RY}" fill="${face}"/>`;
-        svg += `<ellipse cx="${cx}" cy="${cy}" rx="${RX}" ry="${RY}" fill="none" stroke="${body}" stroke-width="2.5" opacity="0.85"/>`;
-        svg += `<ellipse cx="${cx}" cy="${cy}" rx="${RX*0.42}" ry="${RY*0.42}" fill="${body}" opacity="0.55"/>`;
-        svg += `<ellipse cx="${cx-RX*0.34}" cy="${cy-RY*0.4}" rx="${RX*0.26}" ry="${RY*0.3}" fill="${top}" opacity="0.5"/>`;
-        if (sel) svg += `<ellipse cx="${cx}" cy="${cy}" rx="${RX+4}" ry="${RY+4}" fill="none" stroke="#C9A84C" stroke-width="2.5"/>`;
-      } else {
-        // ── Goulot face au spectateur (tête-bêche) ──
-        const capR = 8, capRy = 9;
-        const mx = cx + DX*0.4, my = cy + DY*0.38;   // épaule
-        const bx = cx + DX,     by = cy + DY;          // corps arrière
-        const cap = this._shade(t.color, 12);
-        // Corps arrière
-        svg += `<ellipse cx="${bx}" cy="${by}" rx="${RX}" ry="${RY}" fill="${body}"/>`;
-        svg += `<path d="M ${mx-RX*0.92} ${my} L ${bx-RX} ${by} L ${bx+RX} ${by} L ${mx+RX*0.92} ${my} Z" fill="${body}"/>`;
-        // Épaule
-        svg += `<ellipse cx="${mx}" cy="${my}" rx="${RX*0.92}" ry="${RY*0.92}" fill="${this._shade(t.color, -14)}"/>`;
-        // Cône du goulot
-        svg += `<path d="M ${cx-capR} ${cy} L ${mx-RX*0.55} ${my} L ${mx+RX*0.55} ${my} L ${cx+capR} ${cy} Z" fill="${this._shade(t.color, -8)}"/>`;
-        // Capsule
-        svg += `<ellipse cx="${cx}" cy="${cy}" rx="${capR}" ry="${capRy}" fill="${cap}"/>`;
-        svg += `<ellipse cx="${cx}" cy="${cy}" rx="${capR}" ry="${capRy}" fill="none" stroke="${body}" stroke-width="1.5" opacity="0.7"/>`;
-        svg += `<ellipse cx="${cx-capR*0.3}" cy="${cy-capRy*0.35}" rx="${capR*0.3}" ry="${capRy*0.35}" fill="${top}" opacity="0.6"/>`;
-        if (sel) svg += `<ellipse cx="${cx}" cy="${cy}" rx="${capR+5}" ry="${capRy+5}" fill="none" stroke="#C9A84C" stroke-width="2.5"/>`;
-      }
-      svg += `</g>`;
-    }
-
-    return `
-      <div class="floor floor-3d" style="animation-delay:${index * 0.06}s">
-        <div class="floor3d-wrap">
-          <svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="display:block;width:100%;height:auto">${svg}</svg>
-          <div class="floor-actions floor3d-actions">
-            <button class="icon-btn" data-move-floor="${floor.id}" title="Déplacer le contenu">📦</button>
-            <button class="icon-btn" data-edit-floor="${floor.id}" title="Modifier">⚙</button>
-            <button class="icon-btn" data-del-floor="${floor.id}"  title="Supprimer">✕</button>
-          </div>
-        </div>
-        <div class="floor-label">
-          <span>${floor.name}</span><span class="floor-pct">${pct}%</span>
-        </div>
-      </div>`;
   }
 
   _renderFloor(floor, allBottles, index) {
@@ -1629,7 +1887,7 @@ class MillesimeCard extends HTMLElement {
       this._openModal("bottle");
     });
 
-    s.querySelectorAll(".dot, .b3d").forEach((dot) =>
+    s.querySelectorAll(".dot").forEach((dot) =>
       dot.addEventListener("click", () => {
         const slot    = parseInt(dot.dataset.slot);
         const floorId = dot.dataset.floorId;
@@ -1684,6 +1942,7 @@ class MillesimeCard extends HTMLElement {
   disconnectedCallback() {
     this._unsubs.forEach((f) => f());
     this._closeModal();
+    this._unmount3D();
   }
 }
 
@@ -1746,8 +2005,9 @@ const CARD_CSS = `<style>
 .stat { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:5px 6px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border); flex:1; }
 .stat-value { font-size:14px; font-weight:700; color:var(--cream); font-family:'Playfair Display',serif; line-height:1; }
 .stat-label { font-size:7px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-top:2px; }
-.header-actions { display:flex; gap:6px; align-items:stretch; }
-.header-actions .btn-secondary, .header-actions .btn-primary { flex:1; }
+.header-actions { display:grid; grid-template-columns:1fr 1fr 1fr; gap:5px; align-items:stretch; }
+.ha-icons { display:flex; gap:5px; }
+.ha-icons .btn-icon { flex:1; width:auto; }
 .btn-icon {
   flex-shrink:0; width:36px; padding:0; border-radius:8px;
   border:1px solid var(--border); background:var(--bg-2);
@@ -1828,9 +2088,31 @@ const CARD_CSS = `<style>
 .floor-3d { margin-bottom:4px; }
 .floor3d-wrap { position:relative; background:var(--bg-1); border:1px solid var(--border); border-bottom:none; border-radius:10px 10px 0 0; padding:6px 4px 0; }
 .floor3d-actions { position:absolute; top:8px; right:8px; flex-direction:row; gap:6px; }
-.b3d { cursor:pointer; transition:opacity 0.15s, filter 0.15s; }
-.b3d:hover { filter:brightness(1.25); }
-.b3d-empty:hover { opacity:1 !important; filter:none; }
+/* ─── Scène 3D (Three.js) ─── */
+.view3d-stage {
+  position:relative; background:linear-gradient(180deg,#15100C 0%,#0C0A08 100%);
+  border:1px solid var(--border); border-radius:12px; overflow:hidden;
+}
+.three-loading {
+  display:flex; align-items:center; justify-content:center; gap:8px;
+  height:170px; color:#777; font-size:12px;
+}
+.t3-badge {
+  position:absolute; transform:translateX(-50%); display:flex; align-items:center; gap:6px;
+  background:rgba(14,12,10,0.82); border:1px solid #2E2620;
+  border-radius:8px; padding:3px 10px; font-size:10px; color:var(--cream);
+  letter-spacing:0.5px; pointer-events:none; backdrop-filter:blur(3px);
+  white-space:nowrap;
+}
+.t3-badge b { color:var(--red); font-family:'Playfair Display',serif; font-size:12px; }
+.t3-badge span { color:var(--wood-lt); font-size:9px; }
+.t3-rail {
+  position:absolute; right:6px; display:flex; flex-direction:column; gap:10px;
+  background:rgba(14,12,10,0.82); border:1px solid #2E2620;
+  border-radius:9px; padding:7px 5px; backdrop-filter:blur(3px);
+}
+.t3-rail .icon-btn { opacity:0.6; font-size:13px; }
+.t3-rail .icon-btn:hover { opacity:1; }
 
 /* ─── Footer détail : 4 boutons ─── */
 .mm-footer-detail { gap:5px; flex-wrap:wrap; }
