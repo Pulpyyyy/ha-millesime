@@ -1,1968 +1,1968 @@
 /**
-* Millésime Card v5.4.0
-* Cave à vin pour Home Assistant
-* - Vue 3D isométrique (côte à côte + tête-bêche)
-* - Journal de dégustation (note étoiles, date, commentaire)
-* - Recherche globale, déplacement d'étage, anti-doublon
-* - Recherche texte + photo via Gemini, estimation de prix
-*/
+ * Millésime Card v5.4.0
+ * Cave à vin pour Home Assistant
+ * - Vue 3D isométrique (côte à côte + tête-bêche)
+ * - Journal de dégustation (note étoiles, date, commentaire)
+ * - Recherche globale, déplacement d'étage, anti-doublon
+ * - Recherche texte + photo via Gemini, estimation de prix
+ */
 
 const MILLESIME_CARD_VERSION = "5.4.0";
 
 const DOMAIN = "millesime";
 
 const WINE_TYPES = {
-red: { color: "#C0392B", glow: "rgba(192,57,43,0.6)", label: "Rouge", emoji: "🔴" },
-white: { color: "#D4AC0D", glow: "rgba(212,172,13,0.5)", label: "Blanc", emoji: "🟡" },
-rose: { color: "#E74C8B", glow: "rgba(231,76,139,0.5)", label: "Rosé", emoji: "🌸" },
-sparkling: { color: "#27AE8F", glow: "rgba(39,174,143,0.5)", label: "Effervescent", emoji: "✨" },
-dessert: { color: "#D68910", glow: "rgba(214,137,16,0.5)", label: "Liquoreux", emoji: "🍯" },
+  red:       { color: "#C0392B", glow: "rgba(192,57,43,0.6)",   label: "Rouge",        emoji: "🔴" },
+  white:     { color: "#D4AC0D", glow: "rgba(212,172,13,0.5)",  label: "Blanc",        emoji: "🟡" },
+  rose:      { color: "#E74C8B", glow: "rgba(231,76,139,0.5)",  label: "Rosé",         emoji: "🌸" },
+  sparkling: { color: "#27AE8F", glow: "rgba(39,174,143,0.5)",  label: "Effervescent", emoji: "✨" },
+  dessert:   { color: "#D68910", glow: "rgba(214,137,16,0.5)",  label: "Liquoreux",    emoji: "🍯" },
 };
 
 const EVENT_TYPES = [
-{ v: "", l: "— Non défini —", emoji: "" },
-{ v: "no_touch", l: "Ne pas toucher", emoji: "🚫" },
-{ v: "keep", l: "À garder", emoji: "📦" },
-{ v: "special", l: "Grande occasion", emoji: "🎉" },
-{ v: "small_occasion",l: "Petite Occasion", emoji: "🥂" },
-{ v: "table", l: "Vin de table", emoji: "🍽️" },
+  { v: "",              l: "— Non défini —",   emoji: "" },
+  { v: "no_touch",      l: "Ne pas toucher",   emoji: "🚫" },
+  { v: "keep",          l: "À garder",         emoji: "📦" },
+  { v: "special",       l: "Grande occasion",  emoji: "🎉" },
+  { v: "small_occasion",l: "Petite Occasion",   emoji: "🥂" },
+  { v: "table",         l: "Vin de table",     emoji: "🍽️" },
 ];
 const EVENT_LABEL = Object.fromEntries(EVENT_TYPES.map(e => [e.v, e]));
 
 // Messages d'erreur affichés à l'utilisateur selon le code retourné par le backend
 const ERROR_MESSAGES = {
-quota_exceeded: "⚠️ Quota journalier Gemini dépassé. Les résultats viennent d'Open Food Facts — réessayez demain ou vérifiez votre quota sur aistudio.google.com.",
-invalid_key: "🔑 Clé Gemini invalide ou expirée. Allez dans Paramètres → Appareils → Millésime → ⚙️ pour la mettre à jour.",
-service_unavailable: "🔄 Gemini temporairement indisponible. Les résultats viennent d'Open Food Facts.",
-parse_error: "⚠️ Réponse Gemini inattendue. Réessayez ou remplissez manuellement.",
-no_key: "ℹ️ Résultats Open Food Facts. Configurez une clé Gemini pour obtenir notes de dégustation et accords mets-vins.",
-no_wine_found: "📷 Aucune étiquette de vin reconnue. Assurez-vous que l'étiquette est nette et bien éclairée.",
+  quota_exceeded:      "⚠️ Quota journalier Gemini dépassé. Les résultats viennent d'Open Food Facts — réessayez demain ou vérifiez votre quota sur aistudio.google.com.",
+  invalid_key:         "🔑 Clé Gemini invalide ou expirée. Allez dans Paramètres → Appareils → Millésime → ⚙️ pour la mettre à jour.",
+  service_unavailable: "🔄 Gemini temporairement indisponible. Les résultats viennent d'Open Food Facts.",
+  parse_error:         "⚠️ Réponse Gemini inattendue. Réessayez ou remplissez manuellement.",
+  no_key:              "ℹ️ Résultats Open Food Facts. Configurez une clé Gemini pour obtenir notes de dégustation et accords mets-vins.",
+  no_wine_found:       "📷 Aucune étiquette de vin reconnue. Assurez-vous que l'étiquette est nette et bien éclairée.",
 };
 
 const GLASS_SVG = `<svg viewBox="0 0 40 56" xmlns="http://www.w3.org/2000/svg">
-<path d="M8 2 Q8 20 20 30 Q32 20 32 2 Z" fill="#C0392B" opacity="0.92"/>
-<path d="M11 6 Q11 19 20 28" fill="none" stroke="#E74C3C" stroke-width="1" opacity="0.35"/>
-<path d="M14 22 Q17 27 20 29 Q23 27 26 22" fill="#922B21" opacity="0.5"/>
-<rect x="18.5" y="30" width="3" height="17" rx="1.5" fill="#7B241C"/>
-<ellipse cx="20" cy="48" rx="8" ry="2.2" fill="#6E2118"/>
+  <path d="M8 2 Q8 20 20 30 Q32 20 32 2 Z" fill="#C0392B" opacity="0.92"/>
+  <path d="M11 6 Q11 19 20 28" fill="none" stroke="#E74C3C" stroke-width="1" opacity="0.35"/>
+  <path d="M14 22 Q17 27 20 29 Q23 27 26 22" fill="#922B21" opacity="0.5"/>
+  <rect x="18.5" y="30" width="3" height="17" rx="1.5" fill="#7B241C"/>
+  <ellipse cx="20" cy="48" rx="8" ry="2.2" fill="#6E2118"/>
 </svg>`;
 
 // ── Classe principale ──────────────────────────────────────────────────────────
 
 class MillesimeCard extends HTMLElement {
-constructor() {
-super();
-this.attachShadow({ mode: "open" });
-this._hass = null;
-this._data = null;
-this._filter = "all";
-this._filterEvent= "all";
-let savedView = "2d";
-try { savedView = localStorage.getItem("millesime-view") || "2d"; } catch (e) {}
-this._view = savedView === "3d" ? "3d" : "2d"; // "2d" | "3d" (mémorisé)
-this._three = null; // contexte WebGL (vue 3D)
-this._threeModP = null; // promesse du module three.js (chargé une fois)
-this._selected = null; // id bouteille sélectionnée
-this._modal = null;
-this._modalStyle = null;
-this._unsubs = [];
-}
-
-setConfig(config) { this._config = config || {}; this._renderLoading(); }
-
-set hass(hass) {
-const first = !this._hass;
-this._hass = hass;
-if (first) { this._subscribeUpdates(); this._fetchData(); }
-}
-
-getCardSize() { return 8; }
-
-// ── WebSocket ────────────────────────────────────────────────────────────────
-
-async _fetchData() {
-if (!this._hass) return;
-try {
-this._data = await this._hass.connection.sendMessagePromise({ type: "millesime/get_data" });
-} catch (err) {
-console.error("[Millésime] fetchData:", err);
-this._data = this._data || DEFAULT_DATA();
-}
-if (!this._modal) this._render();
-}
-
-_subscribeUpdates() {
-this._hass.connection
-.subscribeEvents(() => { if (!this._modal) this._fetchData(); }, `${DOMAIN}_updated`)
-.then((u) => this._unsubs.push(u));
-}
-
-async _callService(service, data) {
-try {
-await this._hass.callService(DOMAIN, service, data);
-this._closeModal();
-setTimeout(() => this._fetchData(), 500);
-return true;
-} catch (err) {
-this._showToast("error", `Erreur : ${err.message || JSON.stringify(err)}`);
-return false;
-}
-}
-
-// ── Recherche texte ───────────────────────────────────────────────────────────
-
-async _searchWine(query) {
-try {
-return await this._hass.connection.sendMessagePromise({
-type: "millesime/search_wine",
-query,
-});
-} catch (err) {
-console.error("[Millésime] searchWine:", err);
-return { results: [], error: "service_unavailable", source: "off" };
-}
-}
-
-// ── Analyse photo ─────────────────────────────────────────────────────────────
-
-async _analyzePhoto(imageB64, mimeType) {
-try {
-return await this._hass.connection.sendMessagePromise({
-type: "millesime/analyze_photo",
-image_b64: imageB64,
-mime_type: mimeType,
-});
-} catch (err) {
-console.error("[Millésime] analyzePhoto:", err);
-return { results: [], error: "service_unavailable", source: "gemini" };
-}
-}
-
-async _estimatePrice(query) {
-try {
-return await this._hass.connection.sendMessagePromise({
-type: "millesime/estimate_price",
-query,
-});
-} catch (err) {
-return { price: 0, error: "service_unavailable" };
-}
-}
-
-// ── Toast notifications ───────────────────────────────────────────────────────
-
-_showToast(type, message) {
-const existing = document.querySelector(".mm-toast");
-if (existing) existing.remove();
-
-const toast = document.createElement("div");
-toast.className = `mm-toast mm-toast--${type}`;
-toast.textContent = message;
-document.body.appendChild(toast);
-
-// Injection CSS toast si pas déjà là
-if (!document.querySelector("#mm-toast-css")) {
-const s = document.createElement("style");
-s.id = "mm-toast-css";
-s.textContent = `
-.mm-toast {
-position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-max-width: 420px; width: calc(100% - 32px);
-padding: 12px 16px; border-radius: 10px;
-font-family: Inter, sans-serif; font-size: 13px; line-height: 1.5;
-z-index: 999999; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-animation: mm-toast-in 0.2s ease;
-}
-@keyframes mm-toast-in { from { opacity:0; transform:translateX(-50%) translateY(10px); } }
-.mm-toast--error { background:#2A0A0A; color:#ff8f8f; border:1px solid #5A1010; }
-.mm-toast--warning { background:#2A1E00; color:#ffc85a; border:1px solid #5A3F00; }
-.mm-toast--info { background:#0A1A2A; color:#7db8f7; border:1px solid #1A4070; }
-.mm-toast--success { background:#0A2A15; color:#6ee098; border:1px solid #1A5030; }
-`;
-document.head.appendChild(s);
-}
-
-setTimeout(() => toast.remove(), type === "error" ? 8000 : 5000);
-}
-
-// ── Gestion des erreurs de recherche ─────────────────────────────────────────
-
-_handleSearchError(error, source, resultsEl) {
-if (!error) return;
-const msg = ERROR_MESSAGES[error];
-if (!msg) return;
-
-// Quota dépassé = warning visible (mais résultats OFF disponibles)
-const level = error === "quota_exceeded" || error === "service_unavailable"
-? "warning" : "error";
-
-// Afficher sous la barre de recherche si des résultats OFF existent
-const banner = document.createElement("div");
-banner.className = `mm-search-banner mm-search-banner--${level}`;
-banner.textContent = msg;
-if (resultsEl && resultsEl.parentNode) {
-resultsEl.parentNode.insertBefore(banner, resultsEl);
-}
-
-// Toast si c'est une erreur critique (pas de résultats)
-if (error === "invalid_key" || error === "parse_error") {
-this._showToast(level, msg);
-}
-}
-
-// ── Modal ─────────────────────────────────────────────────────────────────────
-
-_openModal(type, opts = {}) {
-this._closeModal();
-const style = document.createElement("style");
-style.textContent = MODAL_CSS;
-document.head.appendChild(style);
-this._modalStyle = style;
-
-const overlay = document.createElement("div");
-overlay.className = "mm-overlay";
-const box = document.createElement("div");
-box.className = "mm-box";
-
-if (type === "floor") box.innerHTML = this._floorFormHTML(opts.floor);
-if (type === "bottle") box.innerHTML = this._bottleFormHTML(opts.bottle, opts.slot);
-if (type === "detail") box.innerHTML = this._detailHTML(opts.bottle);
-if (type === "duplicate") box.innerHTML = this._duplicateFormHTML(opts.bottle);
-if (type === "history") box.innerHTML = this._historyHTML();
-if (type === "search") box.innerHTML = this._searchModalHTML();
-if (type === "movefloor") box.innerHTML = this._moveFloorHTML(opts.floor);
-if (type === "drink") box.innerHTML = this._drinkFormHTML(opts.bottle);
-if (type === "journal") box.innerHTML = this._journalHTML();
-
-overlay.appendChild(box);
-document.body.appendChild(overlay);
-this._modal = overlay;
-
-overlay.addEventListener("click", (e) => { if (e.target === overlay) this._closeModal(); });
-box.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", () => this._closeModal()));
-
-if (type === "floor") this._bindFloorForm(box, opts.floor);
-if (type === "bottle") this._bindBottleForm(box, opts.bottle, opts.slot);
-if (type === "detail") this._bindDetailButtons(box, opts.bottle);
-if (type === "duplicate") this._bindDuplicateForm(box, opts.bottle);
-if (type === "search") this._bindSearchModal(box);
-if (type === "movefloor") this._bindMoveFloor(box, opts.floor);
-if (type === "drink") this._bindDrinkForm(box, opts.bottle);
-if (type === "journal") this._bindJournal(box);
-if (type === "history") {
-this._bindHistory(box);
-}
-}
-
-_closeModal() {
-this._modal?.remove(); this._modal = null;
-this._modalStyle?.remove(); this._modalStyle = null;
-}
-
-// ── HTML formulaire étage ──────────────────────────────────────────────────────
-
-_floorFormHTML(floor) {
-const next = (this._data?.cellar?.floors?.length || 0) + 1;
-const isEdit = !!floor;
-return `
-<div class="mm-header">
-<span class="mm-title">${isEdit ? "Modifier l'étage" : "Nouvel étage"}</span>
-<button class="mm-close" data-close>✕</button>
-</div>
-<div class="mm-body">
-<div class="mm-field">
-<label class="mm-label">Nom</label>
-<input class="mm-input" id="fl-name" type="text"
-value="${floor?.name || "Étage " + next}" placeholder="Bordeaux, Bourgogne...">
-</div>
-<div class="mm-row">
-<div class="mm-field">
-<label class="mm-label">Colonnes</label>
-<input class="mm-input" id="fl-cols" type="number" value="${floor?.columns || 8}" min="1" max="20">
-</div>
-<div class="mm-field">
-<label class="mm-label">Rangées</label>
-<input class="mm-input" id="fl-rows" type="number" value="${floor?.rows || 2}" min="1" max="10">
-</div>
-</div>
-<div class="mm-field">
-<label class="mm-label">Disposition</label>
-<select class="mm-input" id="fl-layout">
-<option value="side_by_side" ${(floor?.layout || "side_by_side") === "side_by_side" ? "selected" : ""}>Côte à côte</option>
-<option value="alternating" ${floor?.layout === "alternating" ? "selected" : ""}>Tête bêche</option>
-<option value="semi_lying" ${floor?.layout === "semi_lying" ? "selected" : ""}>Semi-couché</option>
-</select>
-</div>
-</div>
-<div class="mm-footer">
-<button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
-<button class="mm-btn mm-btn-primary" id="fl-submit">${isEdit ? "Enregistrer" : "Créer l'étage"}</button>
-</div>`;
-}
-
-_bindFloorForm(box, floor) {
-box.querySelector("#fl-submit").addEventListener("click", async () => {
-const name = box.querySelector("#fl-name").value.trim() || "Nouvel étage";
-const cols = parseInt(box.querySelector("#fl-cols").value) || 8;
-const rows = parseInt(box.querySelector("#fl-rows").value) || 2;
-const layout = box.querySelector("#fl-layout").value;
-if (floor) {
-await this._callService("update_floor", { floor_id: floor.id, name, columns: cols, rows, layout });
-} else {
-await this._callService("add_floor", { name, columns: cols, rows, layout, slots: cols * rows });
-}
-});
-}
-
-// ── HTML formulaire bouteille ──────────────────────────────────────────────────
-
-_bottleFormHTML(bottle, pendingSlot) {
-const floors = this._data?.cellar?.floors || [];
-const isEdit = !!bottle;
-const b = bottle || {};
-return `
-<div class="mm-header">
-<span class="mm-title">${isEdit ? "Modifier le vin" : "Ajouter un vin"}</span>
-<button class="mm-close" data-close>✕</button>
-</div>
-<div class="mm-body">
-
-<!-- Bloc recherche / photo -->
-<div class="mm-search-block">
-<div class="mm-search-row">
-<div class="mm-search-wrap">
-<span class="mm-search-icon">🔍</span>
-<input class="mm-input mm-search-input" id="viv-query"
-placeholder="Rechercher : château, domaine, appellation..."
-value="${b.name || ""}">
-</div>
-<button class="mm-btn-photo" id="btn-photo" title="Scanner l'étiquette">📷</button>
-<input type="file" id="photo-input" accept="image/*" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;overflow:hidden">
-</div>
-<div id="search-banner"></div>
-<div id="viv-results" class="mm-viv-results"></div>
-</div>
-
-<!-- Aperçu image -->
-<div id="viv-img-preview"></div>
-
-<!-- Champs principaux -->
-<div class="mm-row">
-<div class="mm-field">
-<label class="mm-label">Nom du vin *</label>
-<input class="mm-input" id="bt-name" value="${b.name || ""}" placeholder="Château Pétrus">
-</div>
-<div class="mm-field">
-<label class="mm-label">Millésime</label>
-<input class="mm-input" id="bt-vintage" value="${b.vintage || ""}" placeholder="2019" maxlength="4">
-</div>
-</div>
-<div class="mm-row">
-<div class="mm-field">
-<label class="mm-label">Type</label>
-<select class="mm-input" id="bt-type">
-${Object.entries(WINE_TYPES).map(([v, t]) =>
-`<option value="${v}" ${(b.type || "red") === v ? "selected" : ""}>${t.emoji} ${t.label}</option>`
-).join("")}
-</select>
-</div>
-<div class="mm-field">
-<label class="mm-label">Prix (€)</label>
-<input class="mm-input" id="bt-price" type="number" step="0.5" min="0" value="${b.price || ""}">
-</div>
-</div>
-<div class="mm-row">
-<div class="mm-field">
-<label class="mm-label">Producteur</label>
-<input class="mm-input" id="bt-producer" value="${b.producer || ""}" placeholder="Domaine...">
-</div>
-<div class="mm-field">
-<label class="mm-label">Appellation</label>
-<input class="mm-input" id="bt-appellation" value="${b.appellation || ""}" placeholder="Pomerol, Chablis...">
-</div>
-</div>
-<div class="mm-row">
-<div class="mm-field">
-<label class="mm-label">À boire à partir de</label>
-<input class="mm-input" id="bt-from" value="${b.drink_from || ""}" placeholder="2025">
-</div>
-<div class="mm-field">
-<label class="mm-label">À boire avant</label>
-<input class="mm-input" id="bt-until" value="${b.drink_until || ""}" placeholder="2035">
-</div>
-</div>
-<div class="mm-field">
-<label class="mm-label">Note /5</label>
-<input class="mm-input" id="bt-vrating" type="number" step="0.1" min="0" max="5" value="${b.vivino_rating || ""}">
-</div>
-
-${!isEdit ? `
-<div class="mm-row">
-<div class="mm-field">
-<label class="mm-label">Étage *</label>
-<select class="mm-input" id="bt-floor">
-${floors.map((f) =>
-`<option value="${f.id}" ${pendingSlot?.floor_id === f.id ? "selected" : ""}>${f.name}</option>`
-).join("")}
-</select>
-</div>
-<div class="mm-field">
-<label class="mm-label">Emplacement n°</label>
-<input class="mm-input" id="bt-slot" type="number" min="0" value="${pendingSlot?.slot ?? 0}">
-</div>
-</div>` : ""}
-
-<div class="mm-row">
-<div class="mm-field" style="grid-column:1/-1">
-<label class="mm-label">Événement</label>
-<select class="mm-input" id="bt-event">
-${EVENT_TYPES.map(e =>
-`<option value="${e.v}" ${(b.event || "") === e.v ? "selected" : ""}>${e.emoji ? e.emoji + " " : ""}${e.l}</option>`
-).join("")}
-</select>
-</div>
-</div>
-
-<div class="mm-field">
-<label class="mm-label">Notes personnelles</label>
-<textarea class="mm-input mm-textarea" id="bt-notes"
-placeholder="Impressions, occasion...">${b.notes || ""}</textarea>
-</div>
-
-<!-- Champs cachés remplis par Gemini -->
-<input type="hidden" id="bt-image_url" value="${b.image_url || ""}">
-<input type="hidden" id="bt-vivino_url" value="${b.vivino_url || ""}">
-<input type="hidden" id="bt-region" value="${b.region || ""}">
-<input type="hidden" id="bt-country" value="${b.country || ""}">
-<input type="hidden" id="bt-tasting" value="${b.tasting_notes|| ""}">
-<input type="hidden" id="bt-pairing" value="${b.food_pairing || ""}">
-</div>
-<div class="mm-footer">
-<button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
-<button class="mm-btn mm-btn-primary" id="bt-submit">
-${isEdit ? "Enregistrer" : "Ajouter à la cave"}
-</button>
-</div>`;
-}
-
-_bindBottleForm(box, bottle, pendingSlot) {
-let searchTimer;
-const qInput = box.querySelector("#viv-query");
-const results = box.querySelector("#viv-results");
-const imgWrap = box.querySelector("#viv-img-preview");
-const banner = box.querySelector("#search-banner");
-const btnPhoto = box.querySelector("#btn-photo");
-const fileInput= box.querySelector("#photo-input");
-
-// ── Auto-remplissage depuis un résultat ──────────────────────────────────
-const fillFrom = (wine) => {
-const set = (id, val) => {
-const el = box.querySelector(`#${id}`);
-if (el && val != null && val !== "" && val !== 0) el.value = val;
-};
-set("bt-name", wine.name);
-set("bt-vintage", wine.vintage);
-set("bt-producer", wine.producer);
-set("bt-appellation", wine.appellation);
-set("bt-from", wine.drink_from || "");
-set("bt-until", wine.drink_until || "");
-set("bt-vrating", wine.vivino_rating || "");
-if (wine.price > 0) { const el = box.querySelector("#bt-price"); if (el) el.value = wine.price; }
-set("bt-image_url", wine.image_url || "");
-set("bt-vivino_url", wine.vivino_url || "");
-set("bt-region", wine.region || "");
-set("bt-country", wine.country || "");
-set("bt-tasting", wine.tasting_notes || "");
-set("bt-pairing", wine.food_pairing || "");
-const typeEl = box.querySelector("#bt-type");
-if (typeEl && wine.type) typeEl.value = wine.type;
-results.innerHTML = "";
-results.style.display = "none";
-if (wine.image_url) {
-imgWrap.innerHTML = `<img src="${wine.image_url}"
-style="width:56px;display:block;margin:0 auto 10px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.5)">`;
-}
-};
-
-// ── Affichage des résultats ───────────────────────────────────────────────
-const showResults = (response) => {
-// Nettoyer les anciens banners
-banner.innerHTML = "";
-const { results: wines = [], error, source } = response;
-
-// Afficher le banner d'erreur si besoin
-if (error) {
-const msg = ERROR_MESSAGES[error] || error;
-const level = (error === "quota_exceeded" || error === "service_unavailable") ? "warning" : "error";
-banner.innerHTML = `<div class="mm-search-banner mm-search-banner--${level}">${msg}</div>`;
-} else if (source === "off" && box.querySelector("#viv-query").value.trim().length >= 3) {
-// Info discrète : résultats OFF sans erreur (pas de clé Gemini)
-// On ne l'affiche que si la recherche a produit des résultats
-if (wines.length > 0) {
-banner.innerHTML = `<div class="mm-search-banner mm-search-banner--info">
-ℹ️ Résultats Open Food Facts — ajoutez une clé Gemini pour les notes de dégustation.
-</div>`;
-}
-}
-
-if (!wines.length) {
-results.innerHTML = `<div class="mm-viv-loading">Aucun résultat — remplissez manuellement</div>`;
-results.style.display = "block";
-return;
-}
-
-results.style.display = "block";
-results.innerHTML = wines.map((w, i) => `
-<div class="mm-viv-item" data-idx="${i}">
-${w.image_url
-? `<img src="${w.image_url}" style="width:28px;border-radius:4px;flex-shrink:0">`
-: `<span style="font-size:18px;flex-shrink:0">${WINE_TYPES[w.type]?.emoji || "🍷"}</span>`}
-<div style="flex:1;min-width:0">
-<div class="mm-viv-name">${w.name}${w.vintage ? " " + w.vintage : ""}</div>
-<div class="mm-viv-sub">${[w.appellation, w.region, w.vivino_rating ? "⭐ " + w.vivino_rating : ""].filter(Boolean).join(" · ")}</div>
-${w.tasting_notes ? `<div class="mm-viv-notes">${w.tasting_notes}</div>` : ""}
-</div>
-</div>`).join("");
-
-results.querySelectorAll(".mm-viv-item").forEach((el) =>
-el.addEventListener("click", () => fillFrom(wines[parseInt(el.dataset.idx)]))
-);
-};
-
-// ── Recherche texte avec debounce 600ms ───────────────────────────────────
-qInput?.addEventListener("input", () => {
-clearTimeout(searchTimer);
-const q = qInput.value.trim();
-if (q.length < 3) {
-results.innerHTML = "";
-results.style.display = "none";
-banner.innerHTML = "";
-return;
-}
-results.style.display = "block";
-results.innerHTML = `<div class="mm-viv-loading">
-<span class="mm-spinner"></span> Recherche en cours...
-</div>`;
-searchTimer = setTimeout(async () => {
-const response = await this._searchWine(q);
-showResults(response);
-}, 600);
-});
-
-// ── Scan photo de l'étiquette ─────────────────────────────────────────────
-btnPhoto?.addEventListener("click", () => fileInput?.click());
-
-fileInput?.addEventListener("change", async () => {
-const file = fileInput.files?.[0];
-if (!file) { return; }
-
-// Aperçu immédiat
-const url = URL.createObjectURL(file);
-imgWrap.innerHTML = `<div class="mm-photo-loading">
-<img src="${url}" style="width:80px;border-radius:8px;opacity:0.6;display:block;margin:0 auto 6px">
-<div style="text-align:center;font-size:11px;color:#888">
-<span class="mm-spinner"></span> Analyse de l'étiquette...
-</div>
-</div>`;
-results.innerHTML = "";
-results.style.display = "none";
-banner.innerHTML = "";
-
-// Encoder en base64 (robuste Android/iOS)
-let b64;
-try {
-b64 = await new Promise((res, rej) => {
-const r = new FileReader();
-r.onload = () => {
-const result = r.result || "";
-const comma = String(result).indexOf(",");
-res(comma >= 0 ? String(result).slice(comma + 1) : "");
-};
-r.onerror = () => rej(new Error("Lecture fichier impossible"));
-r.readAsDataURL(file);
-});
-} catch (e) {
-imgWrap.innerHTML = `<div class="mm-photo-error">Impossible de lire l'image. Réessayez.</div>`;
-return;
-}
-if (!b64) {
-imgWrap.innerHTML = `<div class="mm-photo-error">Image vide ou format non supporté.</div>`;
-return;
-}
-
-const mimeType = file.type || "image/jpeg";
-const response = await this._analyzePhoto(b64, mimeType);
-URL.revokeObjectURL(url);
-
-const { results: wines = [], error } = response;
-
-// Nettoyer l'aperçu loading
-imgWrap.innerHTML = "";
-
-if (error === "invalid_key" || error === "no_key") {
-imgWrap.innerHTML = `<div class="mm-photo-error">${ERROR_MESSAGES.invalid_key}</div>`;
-return;
-}
-if (!wines.length) {
-imgWrap.innerHTML = `<div class="mm-photo-error">${ERROR_MESSAGES.no_wine_found}</div>`;
-return;
-}
-if (error) {
-banner.innerHTML = `<div class="mm-search-banner mm-search-banner--warning">${ERROR_MESSAGES[error] || error}</div>`;
-}
-
-if (wines.length === 1) {
-// Un seul vin identifié → remplissage direct
-fillFrom(wines[0]);
-this._showToast("success", `✅ Étiquette reconnue : ${wines[0].name}`);
-} else {
-// Plusieurs vins possibles → afficher les suggestions
-showResults({ results: wines, error: null, source: "gemini" });
-this._showToast("info", "📷 Plusieurs vins possibles — sélectionnez le bon");
-}
-});
-
-// ── Soumission du formulaire ──────────────────────────────────────────────
-box.querySelector("#bt-submit")?.addEventListener("click", async () => {
-const txt = (id) => box.querySelector(`#${id}`)?.value?.trim() || "";
-const num = (id) => parseFloat(box.querySelector(`#${id}`)?.value) || 0;
-const int = (id) => parseInt(box.querySelector(`#${id}`)?.value) || 0;
-
-const name = txt("bt-name");
-if (!name) { this._showToast("error", "Le nom du vin est requis."); return; }
-
-const payload = {
-name,
-vintage: txt("bt-vintage"),
-type: box.querySelector("#bt-type")?.value || "red",
-producer: txt("bt-producer"),
-appellation: txt("bt-appellation"),
-region: txt("bt-region"),
-country: txt("bt-country"),
-price: num("bt-price"),
-quantity: 1,
-drink_from: txt("bt-from"),
-drink_until: txt("bt-until"),
-notes: txt("bt-notes"),
-tasting_notes: txt("bt-tasting"),
-food_pairing: txt("bt-pairing"),
-vivino_rating: num("bt-vrating"),
-event: box.querySelector("#bt-event")?.value || "",
-image_url: txt("bt-image_url"),
-vivino_url: txt("bt-vivino_url"),
-};
-
-if (bottle) {
-await this._callService("update_bottle", { bottle_id: bottle.id, ...payload });
-} else {
-payload.floor_id = box.querySelector("#bt-floor")?.value || "";
-payload.slot = int("bt-slot");
-// Anti-doublon : vérifier que l'emplacement est libre
-const occupied = (this._data?.bottles || []).find(
-(x) => x.floor_id === payload.floor_id && x.slot === payload.slot
-);
-if (occupied) {
-this._showToast("error",
-`Emplacement n°${payload.slot} déjà occupé par « ${occupied.name} ». Choisissez un autre emplacement.`);
-return;
-}
-await this._callService("add_bottle", payload);
-}
-});
-}
-
-// ── Fiche détail bouteille ─────────────────────────────────────────────────────
-
-_detailHTML(b) {
-const t = WINE_TYPES[b.type] || WINE_TYPES.red;
-const vr = parseFloat(b.vivino_rating) || 0;
-const stars = vr > 0
-? "★".repeat(Math.round(vr)) + "☆".repeat(5 - Math.round(vr)) : "";
-return `
-<div class="mm-header" style="background:linear-gradient(135deg,${t.color}18,transparent)">
-<button class="mm-close" data-close style="order:-1;font-size:20px">←</button>
-<span class="mm-title">${b.name}</span>
-<span style="color:${t.color};font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px">${t.label}</span>
-</div>
-<div class="mm-body">
-${b.image_url ? `<img src="${b.image_url}" style="width:64px;display:block;margin:0 auto 16px;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,0.6)">` : ""}
-<div class="mm-detail-hero">
-<div class="mm-detail-name">${b.name}</div>
-<div class="mm-detail-sub">${[b.producer, b.appellation].filter(Boolean).join(" · ")}</div>
-${vr > 0 ? `
-<div style="color:${t.color};font-size:20px;margin-top:10px;letter-spacing:2px">${stars}</div>
-<div style="color:#555;font-size:11px;margin-top:2px">${vr.toFixed(1)} / 5</div>` : ""}
-${b.vivino_url ? `<a href="${b.vivino_url}" target="_blank" class="mm-vivino-link">Voir sur Vivino →</a>` : ""}
-</div>
-<div class="mm-detail-grid">
-${_drow("Millésime", b.vintage)}
-${_drow("Région", [b.region, b.country].filter(Boolean).join(", "))}
-${b.price ? `<div class="mm-drow"><span class="mm-drow-label">Prix</span><span class="mm-drow-value det-price-display">${b.price} €</span></div>` : ""}
-${_drow("Quantité", (b.quantity || 1) > 1 ? b.quantity + " bouteilles" : "")}
-${_drow("À boire", (b.drink_from || b.drink_until)
-? (b.drink_from || "?") + " — " + (b.drink_until || "?") : "")}
-${_drow("Ajouté le", b.added_date || "")}
-${b.event && EVENT_LABEL[b.event]?.l ? _drow("Événement", EVENT_LABEL[b.event].emoji + " " + EVENT_LABEL[b.event].l) : ""}
-</div>
-${b.tasting_notes ? `<div class="mm-notes mm-tasting">🍷 ${b.tasting_notes}</div>` : ""}
-${b.food_pairing ? `<div class="mm-notes mm-pairing">🍽️ ${b.food_pairing}</div>` : ""}
-${b.notes ? `<div class="mm-notes">"${b.notes}"</div>` : ""}
-</div>
-<div class="mm-footer mm-footer-wrap">
-<button class="mm-btn mm-btn-drink" id="det-drink">🍷 J'ai bu cette bouteille</button>
-<div class="mm-footer-row">
-<button class="mm-btn mm-btn-danger" id="det-remove">🗑</button>
-<button class="mm-btn mm-btn-ghost" id="det-price">💰 Prix</button>
-<button class="mm-btn mm-btn-ghost" id="det-dup">⎘ Dupliquer</button>
-<button class="mm-btn mm-btn-ghost" id="det-edit">✏️ Modifier</button>
-</div>
-</div>`;
-}
-
-// ── Formulaire duplication ──────────────────────────────────────────────────
-
-_duplicateFormHTML(b) {
-const floors = this._data?.cellar?.floors || [];
-return `
-<div class="mm-header">
-<span class="mm-title">⎘ Dupliquer</span>
-<button class="mm-close" data-close>✕</button>
-</div>
-<div class="mm-body">
-<div class="mm-notes mm-tasting" style="margin-bottom:14px">
-Copie de <strong>${b.name}${b.vintage ? " " + b.vintage : ""}</strong>
-</div>
-<div class="mm-row">
-<div class="mm-field">
-<label class="mm-label">Étage *</label>
-<select class="mm-input" id="dup-floor">
-${floors.map(f => `<option value="${f.id}">${f.name}</option>`).join("")}
-</select>
-</div>
-<div class="mm-field">
-<label class="mm-label">Emplacement n°</label>
-<input class="mm-input" id="dup-slot" type="number" min="0" value="0">
-</div>
-</div>
-<div class="mm-field">
-<label class="mm-label">Quantité à dupliquer</label>
-<input class="mm-input" id="dup-qty" type="number" min="1" max="24" value="1">
-</div>
-</div>
-<div class="mm-footer">
-<button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
-<button class="mm-btn mm-btn-primary" id="dup-submit">Dupliquer</button>
-</div>`;
-}
-
-_bindDuplicateForm(box, bottle) {
-box.querySelector("#dup-submit")?.addEventListener("click", async () => {
-const btn = box.querySelector("#dup-submit");
-const floorId = box.querySelector("#dup-floor")?.value;
-const slot = parseInt(box.querySelector("#dup-slot")?.value) || 0;
-const qty = parseInt(box.querySelector("#dup-qty")?.value) || 1;
-if (!floorId) { this._showToast("warning", "Sélectionnez un étage."); return; }
-btn.textContent = "⏳ Copie en cours...";
-btn.disabled = true;
-try {
-for (let i = 0; i < qty; i++) {
-await this._hass.callService(DOMAIN, "duplicate_bottle", {
-bottle_id: bottle.id,
-floor_id: floorId,
-slot: slot + i,
-});
-}
-this._closeModal();
-setTimeout(() => this._fetchData(), 600);
-this._showToast("success", `${qty} bouteille(s) dupliquée(s) ✓`);
-} catch(err) {
-btn.textContent = "Dupliquer";
-btn.disabled = false;
-this._showToast("error", "Erreur lors de la duplication : " + (err.message || err));
-}
-});
-}
-
-// ── Historique valeur cave ──────────────────────────────────────────────────
-
-_historyHTML() {
-const history = this._data?.cellar?.value_history || [];
-const last = history[history.length - 1];
-return `
-<div class="mm-header">
-<span class="mm-title">📈 Valeur de la cave</span>
-<button class="mm-close" data-close>✕</button>
-</div>
-<div class="mm-body">
-${history.length === 0 ? `
-<div style="text-align:center;padding:30px 0;color:#555">
-<div style="font-size:32px;margin-bottom:10px">📊</div>
-<div>Aucun historique enregistré.</div>
-<div style="font-size:11px;margin-top:6px">Utilisez "Enregistrer la valeur" pour commencer.</div>
-</div>` : `
-<div class="hist-summary">
-<div class="hist-stat">
-<span class="hist-val">${last?.value ?? 0} €</span>
-<span class="hist-lbl">Valeur actuelle</span>
-</div>
-<div class="hist-stat">
-<span class="hist-val">${last?.bottles ?? 0}</span>
-<span class="hist-lbl">Bouteilles</span>
-</div>
-<div class="hist-stat">
-<span class="hist-val">${history.length}</span>
-<span class="hist-lbl">Relevés</span>
-</div>
-</div>
-<div id="hist-chart-wrap" style="width:100%;height:180px;margin-top:12px;background:#0D0D0D;border-radius:8px;border:1px solid #222"></div>
-<div class="hist-table">
-${[...history].reverse().slice(0, 12).map(h => `
-<div class="hist-row">
-<span class="hist-date">${h.date}</span>
-<span class="hist-bottles">${h.bottles} 🍾</span>
-<span class="hist-price">${h.value} €</span>
-</div>`).join("")}
-</div>`}
-</div>
-<div class="mm-footer">
-<button class="mm-btn mm-btn-ghost" data-close>Fermer</button>
-<button class="mm-btn mm-btn-primary" id="hist-snapshot">📸 Enregistrer la valeur</button>
-</div>`;
-}
-
-_bindHistory(box) {
-// Dessiner le graphique immédiatement (DOM pur, pas de timing)
-const wrap = box.querySelector("#hist-chart-wrap");
-if (wrap) this._renderChart(wrap, this._data?.cellar?.value_history || []);
-
-box.querySelector("#hist-snapshot")?.addEventListener("click", async () => {
-const btn = box.querySelector("#hist-snapshot");
-btn.textContent = "⏳ Enregistrement...";
-btn.disabled = true;
-try {
-// Appel direct (sans fermer le modal)
-await this._hass.callService(DOMAIN, "value_snapshot", {});
-await new Promise(r => setTimeout(r, 600));
-await this._fetchData();
-// Rafraîchir le contenu du modal en place
-box.innerHTML = this._historyHTML();
-this._bindHistory(box);
-box.querySelectorAll("[data-close]").forEach(b =>
-b.addEventListener("click", () => this._closeModal()));
-this._showToast("success", "Valeur enregistrée ✓");
-// _bindHistory s'occupe déjà du chart via le wrap
-
-} catch(err) {
-btn.textContent = "📸 Enregistrer la valeur";
-btn.disabled = false;
-this._showToast("error", "Erreur : " + (err.message || err));
-}
-});
-
-}
-
-
-
-_renderChart(wrap, history) {
-wrap.innerHTML = "";
-
-if (!history || history.length === 0) {
-wrap.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#444;font-size:12px;font-family:Inter,sans-serif">Aucun relevé</div>';
-return;
-}
-
-if (history.length === 1) {
-const h = history[0];
-wrap.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#888;font-size:12px;font-family:Inter,sans-serif;gap:6px">
-<div style="font-size:22px;font-weight:700;color:#EDE0CC;font-family:Playfair Display,serif">${h.value} €</div>
-<div>${h.date} · ${h.bottles} bouteilles</div>
-<div style="color:#555;font-size:11px;margin-top:4px">Ajoutez un 2ᵉ relevé pour voir l'évolution</div>
-</div>`;
-return;
-}
-
-// ── SVG créé en DOM (pas en innerHTML) ──────────────────
-const NS = "http://www.w3.org/2000/svg";
-const W = wrap.offsetWidth || wrap.parentElement?.offsetWidth || 340;
-const H = 180;
-const pad = { t: 18, r: 14, b: 30, l: 48 };
-const cw = W - pad.l - pad.r;
-const ch = H - pad.t - pad.b;
-
-const vals = history.map(h => h.value);
-const lo = Math.min(...vals) - (Math.max(...vals) - Math.min(...vals)) * 0.12 || 0;
-const hi = Math.max(...vals) + (Math.max(...vals) - Math.min(...vals)) * 0.12 || 1;
-const span = hi - lo || 1;
-
-const px = i => pad.l + (i / (history.length - 1)) * cw;
-const py = v => pad.t + ch - ((v - lo) / span) * ch;
-
-const mk = tag => document.createElementNS(NS, tag);
-const at = (el, attrs) => { Object.entries(attrs).forEach(([k,v]) => el.setAttribute(k,v)); return el; };
-
-const svg = at(mk("svg"), { width: W, height: H, viewBox: `0 0 ${W} ${H}` });
-svg.style.cssText = "display:block;width:100%;height:100%";
-
-// Dégradé
-const defs = mk("defs");
-const grad = at(mk("linearGradient"), { id: "cg", x1:"0", y1:"0", x2:"0", y2:"1" });
-const s1 = at(mk("stop"), { offset:"0%", "stop-color":"#C0392B", "stop-opacity":"0.4" });
-const s2 = at(mk("stop"), { offset:"100%", "stop-color":"#C0392B", "stop-opacity":"0.02" });
-grad.appendChild(s1); grad.appendChild(s2); defs.appendChild(grad); svg.appendChild(defs);
-
-// Fond
-svg.appendChild(at(mk("rect"), { x:0, y:0, width:W, height:H, fill:"#0D0D0D" }));
-
-// Grilles horizontales
-for (let g = 0; g <= 4; g++) {
-const v = hi - span * g / 4;
-const y = (pad.t + ch * g / 4).toFixed(1);
-svg.appendChild(at(mk("line"), { x1: pad.l, y1: y, x2: W - pad.r, y2: y, stroke:"#222", "stroke-width":"1" }));
-const txt = at(mk("text"), { x: pad.l - 5, y: (parseFloat(y) + 4).toFixed(1), "text-anchor":"end", fill:"#555", "font-size":"10", "font-family":"Inter,sans-serif" });
-txt.textContent = Math.round(v) + "€";
-svg.appendChild(txt);
-}
-
-// Axe gauche
-svg.appendChild(at(mk("line"), { x1: pad.l, y1: pad.t, x2: pad.l, y2: pad.t + ch, stroke:"#333", "stroke-width":"1" }));
-
-// Aire
-const pts = history.map((h, i) => `${px(i).toFixed(1)},${py(h.value).toFixed(1)}`).join(" ");
-const areaD = `M ${px(0).toFixed(1)},${py(vals[0]).toFixed(1)} ` +
-history.slice(1).map((h,i) => `L ${px(i+1).toFixed(1)},${py(h.value).toFixed(1)}`).join(" ") +
-` L ${px(history.length-1).toFixed(1)},${(pad.t+ch).toFixed(1)} L ${px(0).toFixed(1)},${(pad.t+ch).toFixed(1)} Z`;
-svg.appendChild(at(mk("path"), { d: areaD, fill:"url(#cg)" }));
-
-// Courbe
-const line = at(mk("polyline"), { points: pts, fill:"none", stroke:"#C0392B", "stroke-width":"2.5", "stroke-linejoin":"round", "stroke-linecap":"round" });
-svg.appendChild(line);
-
-// Points + dates X
-const step = Math.max(1, Math.floor(history.length / 5));
-history.forEach((h, i) => {
-// Point
-const dot = at(mk("circle"), { cx: px(i).toFixed(1), cy: py(h.value).toFixed(1), r:"3.5", fill:"#E74C3C", stroke:"#0D0D0D", "stroke-width":"1.5" });
-svg.appendChild(dot);
-// Label X
-if (i % step === 0 || i === history.length - 1) {
-const xt = at(mk("text"), { x: px(i).toFixed(1), y: H - 8, "text-anchor":"middle", fill:"#555", "font-size":"9", "font-family":"Inter,sans-serif" });
-xt.textContent = h.date.slice(5);
-svg.appendChild(xt);
-}
-});
-
-// Valeur sur le dernier point
-const last = history[history.length - 1];
-const lx = px(history.length - 1);
-const ly = py(last.value);
-const balloon = at(mk("rect"), { x: lx - 28, y: ly - 22, width: 56, height: 18, rx: 5, fill:"#C0392B" });
-svg.appendChild(balloon);
-const blt = at(mk("text"), { x: lx, y: ly - 9, "text-anchor":"middle", fill:"white", "font-size":"10", "font-weight":"700", "font-family":"Inter,sans-serif" });
-blt.textContent = last.value + " €";
-svg.appendChild(blt);
-
-wrap.appendChild(svg);
-}
-
-
-// ── Formulaire « J'ai bu cette bouteille » ──────────────────────────────────
-
-_drinkFormHTML(b) {
-const t = WINE_TYPES[b.type] || WINE_TYPES.red;
-const today = new Date().toISOString().slice(0, 10);
-return `
-<div class="mm-header" style="background:linear-gradient(135deg,${t.color}18,transparent)">
-<span class="mm-title">🍷 Dégustation</span>
-<button class="mm-close" data-close>✕</button>
-</div>
-<div class="mm-body">
-<div class="mm-detail-hero" style="margin-bottom:14px">
-<div class="mm-detail-name">${b.name}${b.vintage ? " " + b.vintage : ""}</div>
-<div class="mm-detail-sub">${[b.producer, b.appellation].filter(Boolean).join(" · ")}</div>
-</div>
-
-<div class="mm-field">
-<label class="mm-label">Ma note</label>
-<div class="mm-stars" id="drink-stars">
-${[1,2,3,4,5].map(n => `<span class="mm-star" data-star="${n}">☆</span>`).join("")}
-</div>
-<input type="hidden" id="drink-rating" value="0">
-</div>
-
-<div class="mm-field">
-<label class="mm-label">Date de dégustation</label>
-<input class="mm-input" id="drink-date" type="date" value="${today}">
-</div>
-
-<div class="mm-field">
-<label class="mm-label">Commentaire de dégustation</label>
-<textarea class="mm-input mm-textarea" id="drink-comment"
-placeholder="Vos impressions : arômes, accord, contexte..."></textarea>
-</div>
-
-<div class="mm-notes" style="border-left-color:${t.color}">
-La bouteille sera retirée de la cave et conservée dans votre journal de dégustation.
-</div>
-</div>
-<div class="mm-footer">
-<button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
-<button class="mm-btn mm-btn-drink" id="drink-submit">🍷 Valider la dégustation</button>
-</div>`;
-}
-
-_bindDrinkForm(box, bottle) {
-// Sélecteur d'étoiles
-const stars = box.querySelectorAll(".mm-star");
-const hidden = box.querySelector("#drink-rating");
-const paint = (val) => stars.forEach((s) => {
-s.textContent = parseInt(s.dataset.star) <= val ? "★" : "☆";
-s.classList.toggle("mm-star--on", parseInt(s.dataset.star) <= val);
-});
-stars.forEach((s) => {
-s.addEventListener("click", () => {
-const v = parseInt(s.dataset.star);
-hidden.value = v;
-paint(v);
-});
-});
-
-box.querySelector("#drink-submit")?.addEventListener("click", async () => {
-const btn = box.querySelector("#drink-submit");
-const rating = parseFloat(hidden.value) || 0;
-const comment = box.querySelector("#drink-comment")?.value?.trim() || "";
-const drunk = box.querySelector("#drink-date")?.value || "";
-btn.textContent = "⏳ Enregistrement...";
-btn.disabled = true;
-try {
-await this._hass.callService(DOMAIN, "drink_bottle", {
-bottle_id: bottle.id,
-rating,
-comment,
-drunk_date: drunk,
-});
-this._closeModal();
-setTimeout(() => this._fetchData(), 600);
-this._showToast("success", `Dégustation enregistrée 🍷`);
-} catch (err) {
-btn.textContent = "🍷 Valider la dégustation";
-btn.disabled = false;
-this._showToast("error", "Erreur : " + (err.message || err));
-}
-});
-}
-
-// ── Journal de dégustation (vue tableau) ─────────────────────────────────────
-
-_journalHTML() {
-const log = (this._data?.cellar?.tasting_log || []).slice().reverse();
-const totalSpent = log.reduce((s, e) => s + (parseFloat(e.price) || 0), 0);
-const rated = log.filter(e => (e.my_rating || 0) > 0);
-const avg = rated.length ? (rated.reduce((s, e) => s + e.my_rating, 0) / rated.length) : 0;
-
-return `
-<div class="mm-header">
-<span class="mm-title">📓 Journal de dégustation</span>
-<button class="mm-close" data-close>✕</button>
-</div>
-<div class="mm-body">
-${log.length === 0 ? `
-<div style="text-align:center;padding:30px 0;color:#555">
-<div style="font-size:32px;margin-bottom:10px">🍷</div>
-<div>Aucune bouteille dégustée pour l'instant.</div>
-<div style="font-size:11px;margin-top:6px">Cliquez « J'ai bu cette bouteille » sur une fiche.</div>
-</div>` : `
-<div class="hist-summary">
-<div class="hist-stat">
-<span class="hist-val">${log.length}</span>
-<span class="hist-lbl">Dégustées</span>
-</div>
-<div class="hist-stat">
-<span class="hist-val">${avg > 0 ? avg.toFixed(1) : "—"}</span>
-<span class="hist-lbl">Note moy.</span>
-</div>
-<div class="hist-stat">
-<span class="hist-val">${Math.round(totalSpent)}€</span>
-<span class="hist-lbl">Total</span>
-</div>
-</div>
-<div class="journal-list">
-${log.map((e) => {
-const t = WINE_TYPES[e.type] || WINE_TYPES.red;
-const r = parseFloat(e.my_rating) || 0;
-const stars = r > 0 ? "★".repeat(Math.round(r)) + "☆".repeat(5 - Math.round(r)) : "—";
-return `
-<div class="journal-row">
-<div class="journal-main">
-<span class="journal-dot" style="background:${t.color}"></span>
-<div style="flex:1;min-width:0">
-<div class="journal-name">${e.name}${e.vintage ? " " + e.vintage : ""}</div>
-<div class="journal-sub">${[e.producer, e.appellation].filter(Boolean).join(" · ")}</div>
-${e.my_comment ? `<div class="journal-comment">« ${e.my_comment} »</div>` : ""}
-</div>
-<button class="journal-del" data-del-tasting="${e.id}" title="Supprimer">✕</button>
-</div>
-<div class="journal-meta">
-<span class="journal-stars" style="color:${t.color}">${stars}</span>
-<span class="journal-date">📅 ${e.drunk_date || "?"}</span>
-${e.price ? `<span class="journal-price">${e.price}€</span>` : ""}
-</div>
-</div>`;
-}).join("")}
-</div>`}
-</div>
-<div class="mm-footer">
-<button class="mm-btn mm-btn-ghost" data-close>Fermer</button>
-</div>`;
-}
-
-_bindJournal(box) {
-box.querySelectorAll("[data-del-tasting]").forEach((btn) =>
-btn.addEventListener("click", async (e) => {
-e.stopPropagation();
-if (!confirm("Supprimer cette dégustation du journal ?")) return;
-try {
-await this._hass.callService(DOMAIN, "delete_tasting", { tasting_id: btn.dataset.delTasting });
-await new Promise(r => setTimeout(r, 500));
-await this._fetchData();
-box.innerHTML = this._journalHTML();
-this._bindJournal(box);
-box.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", () => this._closeModal()));
-} catch (err) {
-this._showToast("error", "Erreur : " + (err.message || err));
-}
-})
-);
-}
-
-// ── Déplacer le contenu d'un étage vers un autre ────────────────────────────
-
-_moveFloorHTML(floor) {
-const floors = (this._data?.cellar?.floors || []).filter(f => f.id !== floor.id);
-const cnt = (this._data?.bottles || []).filter(b => b.floor_id === floor.id).length;
-return `
-<div class="mm-header">
-<span class="mm-title">📦 Déplacer l'étage</span>
-<button class="mm-close" data-close>✕</button>
-</div>
-<div class="mm-body">
-<div class="mm-notes mm-tasting" style="margin-bottom:14px">
-Déplacer les <strong>${cnt} bouteille(s)</strong> de « ${floor.name} » vers un autre étage.
-Les bouteilles seront placées dans les premiers emplacements libres.
-</div>
-<div class="mm-field">
-<label class="mm-label">Étage de destination *</label>
-<select class="mm-input" id="mv-dest">
-${floors.map(f => `<option value="${f.id}">${f.name}</option>`).join("")}
-</select>
-</div>
-</div>
-<div class="mm-footer">
-<button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
-<button class="mm-btn mm-btn-primary" id="mv-submit">Déplacer</button>
-</div>`;
-}
-
-_bindMoveFloor(box, floor) {
-box.querySelector("#mv-submit")?.addEventListener("click", async () => {
-const btn = box.querySelector("#mv-submit");
-const dest = box.querySelector("#mv-dest")?.value;
-if (!dest) { this._showToast("warning", "Sélectionnez une destination."); return; }
-
-const destFloor = (this._data?.cellar?.floors || []).find(f => f.id === dest);
-const destTotal = destFloor.slots || (destFloor.columns || 8) * (destFloor.rows || 2);
-const toMove = (this._data?.bottles || []).filter(b => b.floor_id === floor.id);
-
-// Emplacements déjà occupés dans la destination
-const occupied = new Set(
-(this._data?.bottles || []).filter(b => b.floor_id === dest).map(b => b.slot)
-);
-// Calculer les slots libres dans l'ordre
-const freeSlots = [];
-for (let i = 0; i < destTotal; i++) if (!occupied.has(i)) freeSlots.push(i);
-
-if (freeSlots.length < toMove.length) {
-this._showToast("error",
-`Pas assez de place : ${freeSlots.length} emplacement(s) libre(s) pour ${toMove.length} bouteille(s).`);
-return;
-}
-
-btn.textContent = "⏳ Déplacement...";
-btn.disabled = true;
-try {
-for (let i = 0; i < toMove.length; i++) {
-await this._hass.callService(DOMAIN, "update_bottle", {
-bottle_id: toMove[i].id,
-floor_id: dest,
-slot: freeSlots[i],
-});
-}
-this._closeModal();
-setTimeout(() => this._fetchData(), 600);
-this._showToast("success", `${toMove.length} bouteille(s) déplacée(s) vers ${destFloor.name} ✓`);
-} catch (err) {
-btn.textContent = "Déplacer";
-btn.disabled = false;
-this._showToast("error", "Erreur lors du déplacement : " + (err.message || err));
-}
-});
-}
-
-// ── Recherche par nom dans toute la cave ─────────────────────────────────────
-
-_searchModalHTML() {
-return `
-<div class="mm-header">
-<span class="mm-title">🔍 Rechercher une bouteille</span>
-<button class="mm-close" data-close>✕</button>
-</div>
-<div class="mm-body">
-<div class="mm-search-wrap" style="margin-bottom:12px">
-<span class="mm-search-icon">🔍</span>
-<input class="mm-input mm-search-input" id="gsearch-query"
-placeholder="Nom, producteur, appellation..." autocomplete="off">
-</div>
-<div id="gsearch-results"></div>
-</div>
-<div class="mm-footer">
-<button class="mm-btn mm-btn-ghost" data-close>Fermer</button>
-</div>`;
-}
-
-_bindSearchModal(box) {
-const input = box.querySelector("#gsearch-query");
-const results = box.querySelector("#gsearch-results");
-const floors = this._data?.cellar?.floors || [];
-const floorName = (fid) => floors.find(f => f.id === fid)?.name || "?";
-
-const render = (q) => {
-const query = q.trim().toLowerCase();
-if (!query) {
-results.innerHTML = `<div class="mm-viv-loading">Tapez pour rechercher dans votre cave…</div>`;
-return;
-}
-const matches = (this._data?.bottles || []).filter((b) =>
-[b.name, b.producer, b.appellation, b.region, b.vintage]
-.filter(Boolean).join(" ").toLowerCase().includes(query)
-);
-if (!matches.length) {
-results.innerHTML = `<div class="mm-viv-loading">Aucune bouteille trouvée pour « ${q} »</div>`;
-return;
-}
-results.innerHTML = matches.map((b) => {
-const t = WINE_TYPES[b.type] || WINE_TYPES.red;
-return `
-<div class="mm-viv-item gsearch-item" data-id="${b.id}">
-<span style="font-size:18px;flex-shrink:0">${t.emoji}</span>
-<div style="flex:1;min-width:0">
-<div class="mm-viv-name">${b.name}${b.vintage ? " " + b.vintage : ""}</div>
-<div class="mm-viv-sub">${[b.appellation, b.producer].filter(Boolean).join(" · ")}</div>
-<div class="mm-viv-sub" style="color:${t.color}">📍 ${floorName(b.floor_id)} · emplacement n°${b.slot}</div>
-</div>
-${b.price ? `<span style="color:#EDE0CC;font-weight:600;font-size:12px;flex-shrink:0">${b.price}€</span>` : ""}
-</div>`;
-}).join("");
-
-results.querySelectorAll(".gsearch-item").forEach((el) =>
-el.addEventListener("click", () => {
-const bottle = (this._data?.bottles || []).find((x) => x.id === el.dataset.id);
-if (bottle) {
-this._closeModal();
-this._openModal("detail", { bottle });
-}
-})
-);
-};
-
-render("");
-input?.addEventListener("input", () => render(input.value));
-setTimeout(() => input?.focus(), 150);
-}
-
-_bindDetailButtons(box, bottle) {
-
-// Retirer
-box.querySelector("#det-remove")?.addEventListener("click", async () => {
-if (confirm("Retirer cette bouteille de la cave ?")) {
-this._selected = null;
-await this._callService("remove_bottle", { bottle_id: bottle.id });
-}
-});
-
-// Modifier
-box.querySelector("#det-edit")?.addEventListener("click", () => {
-this._closeModal();
-this._openModal("bottle", { bottle });
-});
-
-// Dupliquer
-box.querySelector("#det-dup")?.addEventListener("click", () => {
-this._closeModal();
-this._openModal("duplicate", { bottle });
-});
-
-// J'ai bu cette bouteille
-box.querySelector("#det-drink")?.addEventListener("click", () => {
-this._closeModal();
-this._openModal("drink", { bottle });
-});
-
-// Estimer le prix
-box.querySelector("#det-price")?.addEventListener("click", async () => {
-const btn = box.querySelector("#det-price");
-const query = [bottle.name, bottle.vintage, bottle.appellation].filter(Boolean).join(" ");
-if (!query) { this._showToast("warning", "Nom du vin manquant."); return; }
-
-btn.textContent = "⏳ Recherche...";
-btn.disabled = true;
-
-const resp = await this._estimatePrice(query);
-
-if (resp.error || !resp.price) {
-btn.textContent = "💰 Prix";
-btn.disabled = false;
-this._showToast("warning",
-resp.error === "invalid_key"
-? "🔑 Clé Gemini requise pour estimer le prix."
-: resp.price === 0
-? "Prix introuvable pour ce vin."
-: "Estimation impossible, réessayez."
-);
-return;
-}
-
-btn.textContent = `✅ ${resp.price} €`;
-
-// Mettre à jour la fiche prix affiché
-const priceEl = box.querySelector(".det-price-display");
-if (priceEl) priceEl.textContent = resp.price + " €";
-
-// Enregistrer après 1.5s
-setTimeout(async () => {
-await this._callService("update_bottle", { bottle_id: bottle.id, price: resp.price });
-btn.textContent = "💰 Prix";
-btn.disabled = false;
-this._showToast("success", `Prix mis à jour : ${resp.price} €`);
-}, 1500);
-});
-}
-
-// ── Rendu principal ───────────────────────────────────────────────────────────
-
-_renderLoading() {
-this.shadowRoot.innerHTML = CARD_CSS + `
-<div class="card">
-<div class="loading-state"><div class="loading-glass">${GLASS_SVG}</div></div>
-</div>`;
-}
-
-_render() {
-const data = this._data || DEFAULT_DATA();
-const floors = data.cellar?.floors || [];
-const bottles = data.bottles || [];
-this.shadowRoot.innerHTML = CARD_CSS + `
-<div class="card">
-${this._renderHeader(data, bottles)}
-${this._renderFilters()}
-<div class="cellar">
-${floors.length === 0
-? this._renderEmpty()
-: (this._view === "3d"
-? `<div class="view3d-stage" id="view3d-stage"></div>`
-: floors.map((f, i) => this._renderFloor(f, bottles, i)).join(""))}
-</div>
-</div>`;
-this._bindCardListeners(data, bottles);
-if (this._view === "3d") this._mount3D(); else this._unmount3D();
-}
-
-_renderHeader(data, bottles) {
-const total = bottles.reduce((s, b) => s + (b.quantity || 1), 0);
-const value = bottles.reduce((s, b) => s + (b.price || 0) * (b.quantity || 1), 0);
-const nFloor = data.cellar?.floors?.length || 0;
-return `
-<div class="header">
-<div class="header-left">
-<div class="header-glass" id="btn-history" title="Historique de valeur" style="cursor:pointer">${GLASS_SVG}</div>
-<div class="header-meta">
-<div class="header-name">${data.cellar?.name || "Millésime"}</div>
-<div class="header-tagline">Cave à vin</div>
-</div>
-</div>
-<div class="header-right">
-<div class="header-stats">
-<div class="stat"><span class="stat-value">${total}</span><span class="stat-label">Bouteilles</span></div>
-<div class="stat"><span class="stat-value">${nFloor}</span><span class="stat-label">Étages</span></div>
-<div class="stat"><span class="stat-value">${value > 0 ? Math.round(value) + "€" : "—"}</span><span class="stat-label">Valeur</span></div>
-</div>
-<div class="header-actions">
-<div class="ha-icons">
-<button class="btn-icon" id="btn-view" title="Vue 2D / 3D">${this._view === "3d" ? "▦" : "🧊"}</button>
-<button class="btn-icon" id="btn-search" title="Rechercher une bouteille">🔍</button>
-<button class="btn-icon" id="btn-journal" title="Journal de dégustation">📓</button>
-</div>
-<button class="btn-secondary" id="btn-add-floor">+ Étage</button>
-<button class="btn-primary" id="btn-add-bottle">+ Vin</button>
-</div>
-</div>
-</div>`;
-}
-
-_renderFilters() {
-return `
-<div class="filters">
-<div class="filter-group">
-<span class="filter-label">Type</span>
-<select class="filter-select" id="sel-type">
-<option value="all" ${this._filter === "all" ? "selected" : ""}>Tous les vins</option>
-${Object.entries(WINE_TYPES).map(([v, t]) =>
-`<option value="${v}" ${this._filter === v ? "selected" : ""}>${t.emoji} ${t.label}</option>`
-).join("")}
-</select>
-</div>
-<div class="filter-group">
-<span class="filter-label">Événement</span>
-<select class="filter-select" id="sel-event">
-<option value="all" ${this._filterEvent === "all" ? "selected" : ""}>Tous</option>
-${EVENT_TYPES.filter(e => e.v).map(e =>
-`<option value="${e.v}" ${this._filterEvent === e.v ? "selected" : ""}>${e.emoji} ${e.l}</option>`
-).join("")}
-</select>
-</div>
-</div>`;
-}
-
-_renderEmpty() {
-return `
-<div class="empty-state">
-<div class="empty-glass">${GLASS_SVG}</div>
-<div class="empty-title">Cave vide</div>
-<div class="empty-sub">Cliquez sur "+ Étage" pour commencer</div>
-</div>`;
-}
-
-// ── Vue 3D isométrique ────────────────────────────────────────────────────────
-
-// ════════════════════════════════════════════════════════════════════
-// VUE 3D — moteur Three.js (WebGL) : éclairage studio, ombres douces
-// ════════════════════════════════════════════════════════════════════
-
-_loadThree() {
-if (!this._threeModP) {
-this._threeModP = import("https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js");
-}
-return this._threeModP;
-}
-
-_unmount3D() {
-const t = this._three;
-if (!t) return;
-try {
-t.ro?.disconnect();
-t.renderer.domElement.removeEventListener("click", t.onPick);
-t.scene.traverse((o) => {
-o.geometry?.dispose?.();
-if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { m.map?.dispose?.(); m.dispose(); });
-});
-t.renderer.dispose();
-t.renderer.domElement.remove();
-} catch (e) { /* noop */ }
-this._three = null;
-}
-
-// Profil de révolution d'une bouteille bordelaise (r, y) — punt inclus
-_bottleProfile(THREE) {
-const pts = [
-[0.00, 0.42], // apex du punt (creux)
-[0.30, 0.10],
-[0.44, 0.04],
-[0.47, 0.22], // talon
-[0.47, 2.55], // fût
-[0.43, 2.78],
-[0.30, 3.00], // épaule
-[0.155, 3.18],
-[0.145, 3.62], // goulot
-[0.175, 3.66], // bague
-[0.175, 3.74],
-[0.00, 3.74], // dessus
-];
-return pts.map(([x, y]) => new THREE.Vector2(x, y));
-}
-
-async _mount3D() {
-this._unmount3D();
-const stage = this.shadowRoot.getElementById("view3d-stage");
-if (!stage) return;
-// Conserver la hauteur précédente pendant le remontage (évite le saut de scroll)
-const prevH = this._three?.lastH || 0;
-if (prevH > 60) stage.style.height = prevH + "px";
-stage.innerHTML = `<div class="three-loading"><span class="mm-spinner"></span> Vue 3D…</div>`;
-
-let THREE;
-try {
-THREE = await this._loadThree();
-} catch (e) {
-this._showToast("warning", "Vue 3D indisponible (chargement WebGL). Retour à la vue 2D.");
-this._view = "2d";
-this._render();
-return;
-}
-// Le rendu a pu changer pendant le chargement
-if (this._view !== "3d" || !this.shadowRoot.getElementById("view3d-stage")) return;
-
-const data = this._data || DEFAULT_DATA();
-const floors = data.cellar?.floors || [];
-const bottles = data.bottles || [];
-if (!floors.length) { stage.innerHTML = ""; return; }
-
-// ── Dimensions ──
-const width = stage.clientWidth || 360;
-
-// ── Scène ──
-const scene = new THREE.Scene();
-
-// ── Lumières (studio doux) ──
-scene.add(new THREE.AmbientLight(0xfff4e0, 0.55));
-const key = new THREE.DirectionalLight(0xffffff, 1.35);
-key.position.set(5, 12, 9);
-scene.add(key);
-const fill = new THREE.DirectionalLight(0xc9d4ff, 0.35);
-fill.position.set(-6, 4, 5);
-scene.add(fill);
-const rim = new THREE.DirectionalLight(0xffe2c0, 0.3);
-rim.position.set(0, 6, -8);
-scene.add(rim);
-
-// ── Géométries partagées ──
-const bottleGeo = new THREE.LatheGeometry(this._bottleProfile(THREE), 48);
-bottleGeo.rotateX(-Math.PI / 2); // axe le long de Z — PIQÛRE (culot) vers +Z = spectateur
-bottleGeo.translate(0, 0.47, 1.87); // posée sur le dos, centrée en Z (goulot vers -Z)
-
-const capGeo = new THREE.CylinderGeometry(0.165, 0.165, 0.55, 24);
-capGeo.rotateX(Math.PI / 2);
-
-const emptyGeo = new THREE.CircleGeometry(0.42, 32);
-emptyGeo.rotateX(-Math.PI / 2);
-
-// Ombre de contact (douce, limitée à la clayette de la bouteille)
-const shCanvas = document.createElement("canvas");
-shCanvas.width = shCanvas.height = 128;
-const sctx = shCanvas.getContext("2d");
-const sgrd = sctx.createRadialGradient(64, 64, 6, 64, 64, 62);
-sgrd.addColorStop(0, "rgba(0,0,0,0.40)");
-sgrd.addColorStop(0.62, "rgba(0,0,0,0.16)");
-sgrd.addColorStop(1, "rgba(0,0,0,0)");
-sctx.fillStyle = sgrd; sctx.fillRect(0, 0, 128, 128);
-const shadowTex = new THREE.CanvasTexture(shCanvas);
-const shadowMat = new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false });
-const shadowGeo = new THREE.PlaneGeometry(1.05, 3.55);
-shadowGeo.rotateX(-Math.PI / 2);
-const ringGeo = new THREE.RingGeometry(0.40, 0.46, 32);
-ringGeo.rotateX(-Math.PI / 2);
-
-// ── Matériaux par type de vin ──
-const mats = {}, capMats = {}, fadedMats = {};
-for (const [k, t] of Object.entries(WINE_TYPES)) {
-mats[k] = new THREE.MeshPhysicalMaterial({
-color: t.color, roughness: 0.32, metalness: 0.05,
-clearcoat: 0.55, clearcoatRoughness: 0.35,
-});
-fadedMats[k] = mats[k].clone();
-fadedMats[k].transparent = true;
-fadedMats[k].opacity = 0.13;
-capMats[k] = new THREE.MeshStandardMaterial({
-color: this._shade(t.color, 18), roughness: 0.25, metalness: 0.75,
-});
-}
-const woodTop = new THREE.MeshStandardMaterial({ color: 0xE6C896, roughness: 0.72, metalness: 0 });
-const woodSide = new THREE.MeshStandardMaterial({ color: 0xB8905C, roughness: 0.8, metalness: 0 });
-const emptyMat = new THREE.MeshBasicMaterial({ color: 0x141414, transparent: true, opacity: 0.85 });
-const ringMat = new THREE.MeshBasicMaterial({ color: 0x3a3a3a, transparent: true, opacity: 0.9 });
-const goldMat = new THREE.MeshBasicMaterial({ color: 0xC9A84C });
-
-// ── Construction des étages ──
-const SPACING = 1.06; // entre bouteilles (unités monde)
-const FLOOR_DY = 3.85; // espace entre étages (badge + respiration)
-const TILT_A = 0.56; // ~32° (semi-couché)
-const TILT_LIFT = 1.87 * Math.sin(TILT_A) + 0.01; // culot posé sur la clayette
-const TILT_EXTRA = 1.45; // hauteur en plus d'un étage semi-couché
-const pickables = [];
-const floorAnchors = []; // pour les overlays HTML
-let maxHalfW = 1;
-let yCursor = 0;
-
-floors.forEach((floor, fi) => {
-const total = floor.slots || (floor.columns || 8) * (floor.rows || 2);
-const isAlt = floor.layout === "alternating";
-const tilt = floor.layout === "semi_lying";
-const fb = bottles.filter((b) => b.floor_id === floor.id);
-// Même espace visuel entre clayettes quelle que soit la disposition :
-// un étage semi-couché (bouteilles plus hautes) réclame plus de place au-dessus
-if (fi > 0) yCursor -= FLOOR_DY + (tilt ? TILT_EXTRA : 0);
-const yBase = yCursor;
-const halfW = (total * SPACING) / 2;
-maxHalfW = Math.max(maxHalfW, halfW + 0.8);
-
-// Étagère
-const shelf = new THREE.Mesh(
-new THREE.BoxGeometry(total * SPACING + 1.1, 0.22, 4.0),
-[woodSide, woodSide, woodTop, woodSide, woodSide, woodSide]
-);
-shelf.position.set(0, yBase - 0.11, 0);
-scene.add(shelf);
-
-floorAnchors.push({ floor, fi, yBase, halfW });
-
-for (let i = 0; i < total; i++) {
-const bt = fb.find((b) => b.slot === i);
-const x = -halfW + SPACING / 2 + i * SPACING;
-const stag = 0; // toutes alignées (bouteilles et emplacements vides)
-
-if (!bt) {
-const disc = new THREE.Mesh(emptyGeo, emptyMat);
-disc.position.set(x, yBase + 0.012, stag);
-const ring = new THREE.Mesh(ringGeo, ringMat);
-ring.position.set(x, yBase + 0.013, stag);
-disc.userData = { empty: true, slot: i, floorId: floor.id };
-pickables.push(disc);
-scene.add(disc, ring);
-continue;
-}
-
-const tp = WINE_TYPES[bt.type] ? bt.type : "red";
-const filtered =
-(this._filter !== "all" && bt.type !== this._filter) ||
-(this._filterEvent !== "all" && (bt.event || "") !== this._filterEvent);
-
-if (!filtered) {
-const shp = new THREE.Mesh(shadowGeo, shadowMat);
-shp.position.set(x, yBase + 0.011, 0);
-if (tilt) shp.scale.set(1, 1, 0.88);
-scene.add(shp);
-}
-
-const g = new THREE.Group();
-const body = new THREE.Mesh(bottleGeo, filtered ? fadedMats[tp] : mats[tp]);
-const cap = new THREE.Mesh(capGeo, capMats[tp]);
-cap.position.set(0, 0.47, -1.62);
-cap.visible = !filtered;
-g.add(body, cap);
-
-const neckFront = isAlt && i % 2 === 1; // tête-bêche : goulot vers le spectateur (slot 0 = piqûre, comme en 2D)
-if (neckFront) g.rotation.y = Math.PI;
-if (tilt) g.rotation.x = TILT_A; // semi-couché : goulot relevé vers le fond
-g.position.set(x, yBase + (tilt ? TILT_LIFT : 0), stag);
-g.userData = { bottleId: bt.id, slot: i, floorId: floor.id };
-
-if (bt.id === this._selected) {
-const halo = new THREE.Mesh(new THREE.RingGeometry(0.52, 0.60, 40), goldMat);
-halo.rotateX(-Math.PI / 2);
-halo.position.y = 0.015;
-g.add(halo);
-}
-body.userData = g.userData;
-cap.userData = g.userData;
-pickables.push(body);
-scene.add(g);
-}
-});
-
-// ── Cadrage au plus juste : pleine largeur, hauteur exacte ──
-const bbox = new THREE.Box3().setFromObject(scene);
-const c3 = bbox.getCenter(new THREE.Vector3());
-const s3 = bbox.getSize(new THREE.Vector3());
-const MARGIN_X = 1.03;
-const PAD_TOP = 0.45, PAD_BOT = 0.95; // marges monde (bas = place du badge)
-
-// Ombres : couvrir toute la scène
-key.target.position.copy(c3);
-scene.add(key.target);
-key.position.set(c3.x + 5, c3.y + s3.y / 2 + 8, c3.z + 9);
-
-const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
-
-// ── Renderer HD ──
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.12;
-
-stage.innerHTML = "";
-stage.appendChild(renderer.domElement);
-renderer.domElement.style.cssText = "display:block;width:100%;height:100%;border-radius:12px;touch-action:pan-y";
-
-const draw = () => renderer.render(scene, cam);
-
-// ── Overlays : badge sous chaque clayette + rail vertical à droite ──
-const placeOverlays = (w, h) => {
-stage.querySelectorAll(".t3-badge,.t3-rail").forEach((el) => el.remove());
-const toPx = (x, y, z) => {
-const p = new THREE.Vector3(x, y, z).project(cam);
-return { x: (p.x * 0.5 + 0.5) * w, y: (-p.y * 0.5 + 0.5) * h };
-};
-floorAnchors.forEach(({ floor, fi, yBase, halfW }) => {
-const fb = bottles.filter((b) => b.floor_id === floor.id);
-const tot = floor.slots || (floor.columns || 8) * (floor.rows || 2);
-const pct = Math.round((fb.length / tot) * 100);
-
-// Badge centré sous le bord avant de la clayette
-const pb = toPx(0, yBase - 0.30, 2.15);
-const badge = document.createElement("div");
-badge.className = "t3-badge";
-badge.style.left = pb.x + "px";
-badge.style.top = pb.y + "px";
-badge.innerHTML = `<b>${fi + 1}</b> ${floor.name} <span>${pct}%</span>`;
-stage.appendChild(badge);
-
-// Rail vertical aligné sur l'étage
-const pr = toPx(halfW, yBase + 0.7, 0);
-const rail = document.createElement("div");
-rail.className = "t3-rail";
-rail.style.top = Math.max(4, pr.y - 50) + "px";
-rail.innerHTML = `
-<button class="icon-btn" data-move-floor="${floor.id}" title="Déplacer">📦</button>
-<button class="icon-btn" data-edit-floor="${floor.id}" title="Modifier">⚙</button>
-<button class="icon-btn" data-del-floor="${floor.id}" title="Supprimer">✕</button>`;
-stage.appendChild(rail);
-});
-this._bind3DOverlays(stage, data, bottles);
-};
-
-// ── Layout : la largeur dicte l'échelle, la hauteur suit le contenu ──
-let curW = 0;
-const RAIL_PX = 48; // zone réservée au rail d'actions
-const layout = (w) => {
-curW = w;
-const usable = Math.max(120, w - RAIL_PX);
-const pxPerUnit = usable / (s3.x * MARGIN_X);
-const h = Math.max(150, Math.round((s3.y + PAD_TOP + PAD_BOT) * pxPerUnit));
-const hW = (s3.x * MARGIN_X) / 2;
-const extra = RAIL_PX / pxPerUnit; // unités monde à droite (hors clayettes)
-const hH = h / (2 * pxPerUnit);
-const cy = c3.y - (PAD_BOT - PAD_TOP) / 2;
-cam.left = -hW; cam.right = hW + extra; cam.top = hH; cam.bottom = -hH;
-cam.position.set(c3.x + 4.2, cy + 8.0, c3.z + 28);
-cam.lookAt(new THREE.Vector3(c3.x, cy, c3.z));
-cam.updateProjectionMatrix();
-stage.style.height = h + "px";
-if (this._three) this._three.lastH = h;
-renderer.setSize(w, h);
-draw();
-placeOverlays(w, h);
-};
-layout(width);
-
-// ── Picking au tap : "click" est synthétisé par iOS après un vrai tap
-// et jamais après un scroll → fiable sur iPhone ──
-const ray = new THREE.Raycaster();
-const ptr = new THREE.Vector2();
-const onPick = (e) => {
-const r = renderer.domElement.getBoundingClientRect();
-ptr.x = ((e.clientX - r.left) / r.width) * 2 - 1;
-ptr.y = -((e.clientY - r.top) / r.height) * 2 + 1;
-ray.setFromCamera(ptr, cam);
-const hit = ray.intersectObjects(pickables, false)[0];
-if (!hit) return;
-const u = hit.object.userData;
-if (u.empty) {
-this._openModal("bottle", { slot: { floor_id: u.floorId, slot: u.slot } });
-} else {
-const bt = bottles.find((b) => b.id === u.bottleId);
-if (!bt) return;
-this._selected = bt.id; // mémorisé pour la vue 2D
-this._openModal("detail", { bottle: bt }); // ouverture directe, sans re-render
-}
-};
-renderer.domElement.addEventListener("click", onPick);
-
-// ── Redimensionnement (largeur uniquement) ──
-const ro = new ResizeObserver(() => {
-const w = stage.clientWidth || curW;
-if (Math.abs(w - curW) > 1) layout(w);
-});
-ro.observe(stage);
-
-this._three = { renderer, scene, cam, ro, onPick, lastH: stage.offsetHeight };
-}
-
-_bind3DOverlays(stage, data, bottles) {
-stage.querySelectorAll("[data-edit-floor]").forEach((btn) =>
-btn.addEventListener("click", (e) => {
-e.stopPropagation();
-const floor = data.cellar.floors.find((f) => f.id === btn.dataset.editFloor);
-this._openModal("floor", { floor });
-})
-);
-stage.querySelectorAll("[data-move-floor]").forEach((btn) =>
-btn.addEventListener("click", (e) => {
-e.stopPropagation();
-const floor = data.cellar.floors.find((f) => f.id === btn.dataset.moveFloor);
-const cnt = bottles.filter((b) => b.floor_id === floor.id).length;
-if (cnt === 0) { this._showToast("warning", "Cet étage est vide."); return; }
-if (data.cellar.floors.length < 2) { this._showToast("warning", "Il faut au moins 2 étages."); return; }
-this._openModal("movefloor", { floor });
-})
-);
-stage.querySelectorAll("[data-del-floor]").forEach((btn) =>
-btn.addEventListener("click", async (e) => {
-e.stopPropagation();
-const fid = btn.dataset.delFloor;
-const floor = data.cellar.floors.find((f) => f.id === fid);
-const cnt = bottles.filter((b) => b.floor_id === fid).length;
-const msg = cnt > 0
-? `Supprimer "${floor?.name}" et ses ${cnt} bouteille(s) ?`
-: `Supprimer l'étage "${floor?.name}" ?`;
-if (confirm(msg)) await this._callService("remove_floor", { floor_id: fid });
-})
-);
-}
-
-_shade(hex, pct) {
-// Éclaircit (pct>0) ou assombrit (pct<0) une couleur hex
-const n = parseInt(hex.slice(1), 16);
-const r = Math.min(255, Math.max(0, (n >> 16) + Math.round(2.55 * pct)));
-const g = Math.min(255, Math.max(0, ((n >> 8) & 255) + Math.round(2.55 * pct)));
-const b = Math.min(255, Math.max(0, (n & 255) + Math.round(2.55 * pct)));
-return "#" + ((r << 16) | (g << 8) | b).toString(16).padStart(6, "0");
-}
-
-_renderFloor(floor, allBottles, index) {
-const fb = allBottles.filter((b) => b.floor_id === floor.id);
-const cols = floor.columns || 8;
-const total = floor.slots || cols * (floor.rows || 2);
-const isAlt = floor.layout === "alternating";
-const pct = Math.round((fb.length / total) * 100);
-
-const byType = {};
-fb.forEach((b) => { byType[b.type] = (byType[b.type] || 0) + (b.quantity || 1); });
-const counters = Object.entries(byType)
-.map(([t, n]) => `<span class="type-count" style="color:${WINE_TYPES[t]?.color || "#C0392B"}">${n}x</span>`)
-.join("");
-
-let dots = "";
-for (let i = 0; i < total; i++) {
-const bt = fb.find((b) => b.slot === i);
-const filteredType = this._filter !== "all" && bt && bt.type !== this._filter;
-const filteredEvent = this._filterEvent !== "all" && bt && (bt.event || "") !== this._filterEvent;
-const filtered = filteredType || filteredEvent;
-const wt = bt ? WINE_TYPES[bt.type] || WINE_TYPES.red : null;
-const sel = bt && bt.id === this._selected;
-const alt = isAlt && i % 2 === 1;
-dots += `<div
-class="dot ${bt ? "dot--filled" : "dot--empty"} ${sel ? "dot--selected" : ""} ${alt ? "dot--alt" : ""}"
-data-slot="${i}" data-floor-id="${floor.id}"
-style="${bt ? `--dot-color:${wt.color};--dot-glow:${wt.glow};opacity:${filtered ? 0.15 : 1}` : ""}"
-title="${bt ? bt.name + (bt.vintage ? " " + bt.vintage : "") : "Vide — cliquer pour ajouter"}"
-></div>`;
-}
-
-return `
-<div class="floor" style="animation-delay:${index * 0.06}s">
-<div class="floor-rack">
-<div class="floor-counters">${counters}</div>
-<div class="floor-dots" style="grid-template-columns:repeat(${cols},1fr)">${dots}</div>
-<div class="floor-actions">
-<button class="icon-btn" data-move-floor="${floor.id}" title="Déplacer le contenu">📦</button>
-<button class="icon-btn" data-edit-floor="${floor.id}" title="Modifier">⚙</button>
-<button class="icon-btn" data-del-floor="${floor.id}" title="Supprimer">✕</button>
-</div>
-</div>
-<div class="floor-label">
-<span>${floor.name}</span><span class="floor-pct">${pct}%</span>
-</div>
-</div>`;
-}
-
-// ── Listeners carte ────────────────────────────────────────────────────────────
-
-_bindCardListeners(data, bottles) {
-const s = this.shadowRoot;
-
-// Filtres par type et événement (selects)
-s.getElementById("sel-type")?.addEventListener("change", (e) => {
-this._filter = e.target.value;
-this._render();
-});
-s.getElementById("sel-event")?.addEventListener("change", (e) => {
-this._filterEvent = e.target.value;
-this._render();
-});
-
-s.getElementById("btn-history")?.addEventListener("click", () => this._openModal("history"));
-s.getElementById("btn-view")?.addEventListener("click", () => {
-this._view = this._view === "3d" ? "2d" : "3d";
-try { localStorage.setItem("millesime-view", this._view); } catch (e) {}
-this._render();
-});
-s.getElementById("btn-search")?.addEventListener("click", () => this._openModal("search"));
-s.getElementById("btn-journal")?.addEventListener("click", () => this._openModal("journal"));
-s.getElementById("btn-add-floor")?.addEventListener("click", () => this._openModal("floor"));
-
-s.getElementById("btn-add-bottle")?.addEventListener("click", () => {
-if (!data.cellar.floors.length) {
-this._showToast("error", "Créez d'abord un étage !");
-return;
-}
-this._openModal("bottle");
-});
-
-s.querySelectorAll(".dot").forEach((dot) =>
-dot.addEventListener("click", () => {
-const slot = parseInt(dot.dataset.slot);
-const floorId = dot.dataset.floorId;
-const bt = bottles.find((b) => b.floor_id === floorId && b.slot === slot);
-if (bt) {
-if (this._selected === bt.id) {
-this._selected = null;
-this._openModal("detail", { bottle: bt });
-} else {
-this._selected = bt.id;
-this._render();
-}
-} else {
-this._openModal("bottle", { slot: { floor_id: floorId, slot } });
-}
-})
-);
-
-s.querySelectorAll("[data-edit-floor]").forEach((btn) =>
-btn.addEventListener("click", (e) => {
-e.stopPropagation();
-const floor = data.cellar.floors.find((f) => f.id === btn.dataset.editFloor);
-this._openModal("floor", { floor });
-})
-);
-
-s.querySelectorAll("[data-move-floor]").forEach((btn) =>
-btn.addEventListener("click", (e) => {
-e.stopPropagation();
-const floor = data.cellar.floors.find((f) => f.id === btn.dataset.moveFloor);
-const cnt = bottles.filter((b) => b.floor_id === floor.id).length;
-if (cnt === 0) { this._showToast("warning", "Cet étage est vide."); return; }
-if (data.cellar.floors.length < 2) { this._showToast("warning", "Il faut au moins 2 étages pour déplacer."); return; }
-this._openModal("movefloor", { floor });
-})
-);
-
-s.querySelectorAll("[data-del-floor]").forEach((btn) =>
-btn.addEventListener("click", async (e) => {
-e.stopPropagation();
-const fid = btn.dataset.delFloor;
-const floor = data.cellar.floors.find((f) => f.id === fid);
-const cnt = bottles.filter((b) => b.floor_id === fid).length;
-const msg = cnt > 0
-? `Supprimer "${floor?.name}" et ses ${cnt} bouteille(s) ?`
-: `Supprimer l'étage "${floor?.name}" ?`;
-if (confirm(msg)) await this._callService("remove_floor", { floor_id: fid });
-})
-);
-}
-
-disconnectedCallback() {
-this._unsubs.forEach((f) => f());
-this._closeModal();
-this._unmount3D();
-}
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._hass       = null;
+    this._data       = null;
+    this._filter     = "all";
+    this._filterEvent= "all";
+    let savedView = "2d";
+    try { savedView = localStorage.getItem("millesime-view") || "2d"; } catch (e) {}
+    this._view       = savedView === "3d" ? "3d" : "2d";   // "2d" | "3d" (mémorisé)
+    this._three      = null;    // contexte WebGL (vue 3D)
+    this._threeModP  = null;    // promesse du module three.js (chargé une fois)
+    this._selected   = null;  // id bouteille sélectionnée
+    this._modal      = null;
+    this._modalStyle = null;
+    this._unsubs     = [];
+  }
+
+  setConfig(config) { this._config = config || {}; this._renderLoading(); }
+
+  set hass(hass) {
+    const first = !this._hass;
+    this._hass = hass;
+    if (first) { this._subscribeUpdates(); this._fetchData(); }
+  }
+
+  getCardSize() { return 8; }
+
+  // ── WebSocket ────────────────────────────────────────────────────────────────
+
+  async _fetchData() {
+    if (!this._hass) return;
+    try {
+      this._data = await this._hass.connection.sendMessagePromise({ type: "millesime/get_data" });
+    } catch (err) {
+      console.error("[Millésime] fetchData:", err);
+      this._data = this._data || DEFAULT_DATA();
+    }
+    if (!this._modal) this._render();
+  }
+
+  _subscribeUpdates() {
+    this._hass.connection
+      .subscribeEvents(() => { if (!this._modal) this._fetchData(); }, `${DOMAIN}_updated`)
+      .then((u) => this._unsubs.push(u));
+  }
+
+  async _callService(service, data) {
+    try {
+      await this._hass.callService(DOMAIN, service, data);
+      this._closeModal();
+      setTimeout(() => this._fetchData(), 500);
+      return true;
+    } catch (err) {
+      this._showToast("error", `Erreur : ${err.message || JSON.stringify(err)}`);
+      return false;
+    }
+  }
+
+  // ── Recherche texte ───────────────────────────────────────────────────────────
+
+  async _searchWine(query) {
+    try {
+      return await this._hass.connection.sendMessagePromise({
+        type: "millesime/search_wine",
+        query,
+      });
+    } catch (err) {
+      console.error("[Millésime] searchWine:", err);
+      return { results: [], error: "service_unavailable", source: "off" };
+    }
+  }
+
+  // ── Analyse photo ─────────────────────────────────────────────────────────────
+
+  async _analyzePhoto(imageB64, mimeType) {
+    try {
+      return await this._hass.connection.sendMessagePromise({
+        type:      "millesime/analyze_photo",
+        image_b64: imageB64,
+        mime_type: mimeType,
+      });
+    } catch (err) {
+      console.error("[Millésime] analyzePhoto:", err);
+      return { results: [], error: "service_unavailable", source: "gemini" };
+    }
+  }
+
+  async _estimatePrice(query) {
+    try {
+      return await this._hass.connection.sendMessagePromise({
+        type:  "millesime/estimate_price",
+        query,
+      });
+    } catch (err) {
+      return { price: 0, error: "service_unavailable" };
+    }
+  }
+
+  // ── Toast notifications ───────────────────────────────────────────────────────
+
+  _showToast(type, message) {
+    const existing = document.querySelector(".mm-toast");
+    if (existing) existing.remove();
+
+    const toast = document.createElement("div");
+    toast.className = `mm-toast mm-toast--${type}`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+
+    // Injection CSS toast si pas déjà là
+    if (!document.querySelector("#mm-toast-css")) {
+      const s = document.createElement("style");
+      s.id = "mm-toast-css";
+      s.textContent = `
+        .mm-toast {
+          position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+          max-width: 420px; width: calc(100% - 32px);
+          padding: 12px 16px; border-radius: 10px;
+          font-family: Inter, sans-serif; font-size: 13px; line-height: 1.5;
+          z-index: 999999; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+          animation: mm-toast-in 0.2s ease;
+        }
+        @keyframes mm-toast-in { from { opacity:0; transform:translateX(-50%) translateY(10px); } }
+        .mm-toast--error   { background:#2A0A0A; color:#ff8f8f; border:1px solid #5A1010; }
+        .mm-toast--warning { background:#2A1E00; color:#ffc85a; border:1px solid #5A3F00; }
+        .mm-toast--info    { background:#0A1A2A; color:#7db8f7; border:1px solid #1A4070; }
+        .mm-toast--success { background:#0A2A15; color:#6ee098; border:1px solid #1A5030; }
+      `;
+      document.head.appendChild(s);
+    }
+
+    setTimeout(() => toast.remove(), type === "error" ? 8000 : 5000);
+  }
+
+  // ── Gestion des erreurs de recherche ─────────────────────────────────────────
+
+  _handleSearchError(error, source, resultsEl) {
+    if (!error) return;
+    const msg = ERROR_MESSAGES[error];
+    if (!msg) return;
+
+    // Quota dépassé = warning visible (mais résultats OFF disponibles)
+    const level = error === "quota_exceeded" || error === "service_unavailable"
+      ? "warning" : "error";
+
+    // Afficher sous la barre de recherche si des résultats OFF existent
+    const banner = document.createElement("div");
+    banner.className = `mm-search-banner mm-search-banner--${level}`;
+    banner.textContent = msg;
+    if (resultsEl && resultsEl.parentNode) {
+      resultsEl.parentNode.insertBefore(banner, resultsEl);
+    }
+
+    // Toast si c'est une erreur critique (pas de résultats)
+    if (error === "invalid_key" || error === "parse_error") {
+      this._showToast(level, msg);
+    }
+  }
+
+  // ── Modal ─────────────────────────────────────────────────────────────────────
+
+  _openModal(type, opts = {}) {
+    this._closeModal();
+    const style = document.createElement("style");
+    style.textContent = MODAL_CSS;
+    document.head.appendChild(style);
+    this._modalStyle = style;
+
+    const overlay = document.createElement("div");
+    overlay.className = "mm-overlay";
+    const box = document.createElement("div");
+    box.className = "mm-box";
+
+    if (type === "floor")     box.innerHTML = this._floorFormHTML(opts.floor);
+    if (type === "bottle")    box.innerHTML = this._bottleFormHTML(opts.bottle, opts.slot);
+    if (type === "detail")    box.innerHTML = this._detailHTML(opts.bottle);
+    if (type === "duplicate") box.innerHTML = this._duplicateFormHTML(opts.bottle);
+    if (type === "history")   box.innerHTML = this._historyHTML();
+    if (type === "search")    box.innerHTML = this._searchModalHTML();
+    if (type === "movefloor") box.innerHTML = this._moveFloorHTML(opts.floor);
+    if (type === "drink")     box.innerHTML = this._drinkFormHTML(opts.bottle);
+    if (type === "journal")   box.innerHTML = this._journalHTML();
+
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    this._modal = overlay;
+
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) this._closeModal(); });
+    box.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", () => this._closeModal()));
+
+    if (type === "floor")     this._bindFloorForm(box, opts.floor);
+    if (type === "bottle")    this._bindBottleForm(box, opts.bottle, opts.slot);
+    if (type === "detail")    this._bindDetailButtons(box, opts.bottle);
+    if (type === "duplicate") this._bindDuplicateForm(box, opts.bottle);
+    if (type === "search")    this._bindSearchModal(box);
+    if (type === "movefloor") this._bindMoveFloor(box, opts.floor);
+    if (type === "drink")     this._bindDrinkForm(box, opts.bottle);
+    if (type === "journal")   this._bindJournal(box);
+    if (type === "history") {
+      this._bindHistory(box);
+    }
+  }
+
+  _closeModal() {
+    this._modal?.remove();     this._modal      = null;
+    this._modalStyle?.remove(); this._modalStyle = null;
+  }
+
+  // ── HTML formulaire étage ──────────────────────────────────────────────────────
+
+  _floorFormHTML(floor) {
+    const next  = (this._data?.cellar?.floors?.length || 0) + 1;
+    const isEdit = !!floor;
+    return `
+      <div class="mm-header">
+        <span class="mm-title">${isEdit ? "Modifier l'étage" : "Nouvel étage"}</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        <div class="mm-field">
+          <label class="mm-label">Nom</label>
+          <input class="mm-input" id="fl-name" type="text"
+            value="${floor?.name || "Étage " + next}" placeholder="Bordeaux, Bourgogne...">
+        </div>
+        <div class="mm-row">
+          <div class="mm-field">
+            <label class="mm-label">Colonnes</label>
+            <input class="mm-input" id="fl-cols" type="number" value="${floor?.columns || 8}" min="1" max="20">
+          </div>
+          <div class="mm-field">
+            <label class="mm-label">Rangées</label>
+            <input class="mm-input" id="fl-rows" type="number" value="${floor?.rows || 2}" min="1" max="10">
+          </div>
+        </div>
+        <div class="mm-field">
+          <label class="mm-label">Disposition</label>
+          <select class="mm-input" id="fl-layout">
+            <option value="side_by_side" ${(floor?.layout || "side_by_side") === "side_by_side" ? "selected" : ""}>Côte à côte</option>
+            <option value="alternating" ${floor?.layout === "alternating" ? "selected" : ""}>Tête bêche</option>
+            <option value="semi_lying" ${floor?.layout === "semi_lying" ? "selected" : ""}>Semi-couché</option>
+          </select>
+        </div>
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
+        <button class="mm-btn mm-btn-primary" id="fl-submit">${isEdit ? "Enregistrer" : "Créer l'étage"}</button>
+      </div>`;
+  }
+
+  _bindFloorForm(box, floor) {
+    box.querySelector("#fl-submit").addEventListener("click", async () => {
+      const name   = box.querySelector("#fl-name").value.trim() || "Nouvel étage";
+      const cols   = parseInt(box.querySelector("#fl-cols").value) || 8;
+      const rows   = parseInt(box.querySelector("#fl-rows").value) || 2;
+      const layout = box.querySelector("#fl-layout").value;
+      if (floor) {
+        await this._callService("update_floor", { floor_id: floor.id, name, columns: cols, rows, layout });
+      } else {
+        await this._callService("add_floor", { name, columns: cols, rows, layout, slots: cols * rows });
+      }
+    });
+  }
+
+  // ── HTML formulaire bouteille ──────────────────────────────────────────────────
+
+  _bottleFormHTML(bottle, pendingSlot) {
+    const floors = this._data?.cellar?.floors || [];
+    const isEdit = !!bottle;
+    const b = bottle || {};
+    return `
+      <div class="mm-header">
+        <span class="mm-title">${isEdit ? "Modifier le vin" : "Ajouter un vin"}</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+
+        <!-- Bloc recherche / photo -->
+        <div class="mm-search-block">
+          <div class="mm-search-row">
+            <div class="mm-search-wrap">
+              <span class="mm-search-icon">🔍</span>
+              <input class="mm-input mm-search-input" id="viv-query"
+                placeholder="Rechercher : château, domaine, appellation..."
+                value="${b.name || ""}">
+            </div>
+            <button class="mm-btn-photo" id="btn-photo" title="Scanner l'étiquette">📷</button>
+            <input type="file" id="photo-input" accept="image/*" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;overflow:hidden">
+          </div>
+          <div id="search-banner"></div>
+          <div id="viv-results" class="mm-viv-results"></div>
+        </div>
+
+        <!-- Aperçu image -->
+        <div id="viv-img-preview"></div>
+
+        <!-- Champs principaux -->
+        <div class="mm-row">
+          <div class="mm-field">
+            <label class="mm-label">Nom du vin *</label>
+            <input class="mm-input" id="bt-name" value="${b.name || ""}" placeholder="Château Pétrus">
+          </div>
+          <div class="mm-field">
+            <label class="mm-label">Millésime</label>
+            <input class="mm-input" id="bt-vintage" value="${b.vintage || ""}" placeholder="2019" maxlength="4">
+          </div>
+        </div>
+        <div class="mm-row">
+          <div class="mm-field">
+            <label class="mm-label">Type</label>
+            <select class="mm-input" id="bt-type">
+              ${Object.entries(WINE_TYPES).map(([v, t]) =>
+                `<option value="${v}" ${(b.type || "red") === v ? "selected" : ""}>${t.emoji} ${t.label}</option>`
+              ).join("")}
+            </select>
+          </div>
+          <div class="mm-field">
+            <label class="mm-label">Prix (€)</label>
+            <input class="mm-input" id="bt-price" type="number" step="0.5" min="0" value="${b.price || ""}">
+          </div>
+        </div>
+        <div class="mm-row">
+          <div class="mm-field">
+            <label class="mm-label">Producteur</label>
+            <input class="mm-input" id="bt-producer" value="${b.producer || ""}" placeholder="Domaine...">
+          </div>
+          <div class="mm-field">
+            <label class="mm-label">Appellation</label>
+            <input class="mm-input" id="bt-appellation" value="${b.appellation || ""}" placeholder="Pomerol, Chablis...">
+          </div>
+        </div>
+        <div class="mm-row">
+          <div class="mm-field">
+            <label class="mm-label">À boire à partir de</label>
+            <input class="mm-input" id="bt-from" value="${b.drink_from || ""}" placeholder="2025">
+          </div>
+          <div class="mm-field">
+            <label class="mm-label">À boire avant</label>
+            <input class="mm-input" id="bt-until" value="${b.drink_until || ""}" placeholder="2035">
+          </div>
+        </div>
+        <div class="mm-field">
+          <label class="mm-label">Note /5</label>
+          <input class="mm-input" id="bt-vrating" type="number" step="0.1" min="0" max="5" value="${b.vivino_rating || ""}">
+        </div>
+
+        ${!isEdit ? `
+        <div class="mm-row">
+          <div class="mm-field">
+            <label class="mm-label">Étage *</label>
+            <select class="mm-input" id="bt-floor">
+              ${floors.map((f) =>
+                `<option value="${f.id}" ${pendingSlot?.floor_id === f.id ? "selected" : ""}>${f.name}</option>`
+              ).join("")}
+            </select>
+          </div>
+          <div class="mm-field">
+            <label class="mm-label">Emplacement n°</label>
+            <input class="mm-input" id="bt-slot" type="number" min="0" value="${pendingSlot?.slot ?? 0}">
+          </div>
+        </div>` : ""}
+
+        <div class="mm-row">
+          <div class="mm-field" style="grid-column:1/-1">
+            <label class="mm-label">Événement</label>
+            <select class="mm-input" id="bt-event">
+              ${EVENT_TYPES.map(e =>
+                `<option value="${e.v}" ${(b.event || "") === e.v ? "selected" : ""}>${e.emoji ? e.emoji + " " : ""}${e.l}</option>`
+              ).join("")}
+            </select>
+          </div>
+        </div>
+
+        <div class="mm-field">
+          <label class="mm-label">Notes personnelles</label>
+          <textarea class="mm-input mm-textarea" id="bt-notes"
+            placeholder="Impressions, occasion...">${b.notes || ""}</textarea>
+        </div>
+
+        <!-- Champs cachés remplis par Gemini -->
+        <input type="hidden" id="bt-image_url"   value="${b.image_url    || ""}">
+        <input type="hidden" id="bt-vivino_url"  value="${b.vivino_url   || ""}">
+        <input type="hidden" id="bt-region"      value="${b.region       || ""}">
+        <input type="hidden" id="bt-country"     value="${b.country      || ""}">
+        <input type="hidden" id="bt-tasting"     value="${b.tasting_notes|| ""}">
+        <input type="hidden" id="bt-pairing"     value="${b.food_pairing || ""}">
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
+        <button class="mm-btn mm-btn-primary" id="bt-submit">
+          ${isEdit ? "Enregistrer" : "Ajouter à la cave"}
+        </button>
+      </div>`;
+  }
+
+  _bindBottleForm(box, bottle, pendingSlot) {
+    let searchTimer;
+    const qInput   = box.querySelector("#viv-query");
+    const results  = box.querySelector("#viv-results");
+    const imgWrap  = box.querySelector("#viv-img-preview");
+    const banner   = box.querySelector("#search-banner");
+    const btnPhoto = box.querySelector("#btn-photo");
+    const fileInput= box.querySelector("#photo-input");
+
+    // ── Auto-remplissage depuis un résultat ──────────────────────────────────
+    const fillFrom = (wine) => {
+      const set = (id, val) => {
+        const el = box.querySelector(`#${id}`);
+        if (el && val != null && val !== "" && val !== 0) el.value = val;
+      };
+      set("bt-name",        wine.name);
+      set("bt-vintage",     wine.vintage);
+      set("bt-producer",    wine.producer);
+      set("bt-appellation", wine.appellation);
+      set("bt-from",        wine.drink_from  || "");
+      set("bt-until",       wine.drink_until || "");
+      set("bt-vrating",     wine.vivino_rating || "");
+      if (wine.price > 0) { const el = box.querySelector("#bt-price"); if (el) el.value = wine.price; }
+      set("bt-image_url",   wine.image_url   || "");
+      set("bt-vivino_url",  wine.vivino_url  || "");
+      set("bt-region",      wine.region      || "");
+      set("bt-country",     wine.country     || "");
+      set("bt-tasting",     wine.tasting_notes || "");
+      set("bt-pairing",     wine.food_pairing  || "");
+      const typeEl = box.querySelector("#bt-type");
+      if (typeEl && wine.type) typeEl.value = wine.type;
+      results.innerHTML = "";
+      results.style.display = "none";
+      if (wine.image_url) {
+        imgWrap.innerHTML = `<img src="${wine.image_url}"
+          style="width:56px;display:block;margin:0 auto 10px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.5)">`;
+      }
+    };
+
+    // ── Affichage des résultats ───────────────────────────────────────────────
+    const showResults = (response) => {
+      // Nettoyer les anciens banners
+      banner.innerHTML = "";
+      const { results: wines = [], error, source } = response;
+
+      // Afficher le banner d'erreur si besoin
+      if (error) {
+        const msg = ERROR_MESSAGES[error] || error;
+        const level = (error === "quota_exceeded" || error === "service_unavailable") ? "warning" : "error";
+        banner.innerHTML = `<div class="mm-search-banner mm-search-banner--${level}">${msg}</div>`;
+      } else if (source === "off" && box.querySelector("#viv-query").value.trim().length >= 3) {
+        // Info discrète : résultats OFF sans erreur (pas de clé Gemini)
+        // On ne l'affiche que si la recherche a produit des résultats
+        if (wines.length > 0) {
+          banner.innerHTML = `<div class="mm-search-banner mm-search-banner--info">
+            ℹ️ Résultats Open Food Facts — ajoutez une clé Gemini pour les notes de dégustation.
+          </div>`;
+        }
+      }
+
+      if (!wines.length) {
+        results.innerHTML = `<div class="mm-viv-loading">Aucun résultat — remplissez manuellement</div>`;
+        results.style.display = "block";
+        return;
+      }
+
+      results.style.display = "block";
+      results.innerHTML = wines.map((w, i) => `
+        <div class="mm-viv-item" data-idx="${i}">
+          ${w.image_url
+            ? `<img src="${w.image_url}" style="width:28px;border-radius:4px;flex-shrink:0">`
+            : `<span style="font-size:18px;flex-shrink:0">${WINE_TYPES[w.type]?.emoji || "🍷"}</span>`}
+          <div style="flex:1;min-width:0">
+            <div class="mm-viv-name">${w.name}${w.vintage ? " " + w.vintage : ""}</div>
+            <div class="mm-viv-sub">${[w.appellation, w.region, w.vivino_rating ? "⭐ " + w.vivino_rating : ""].filter(Boolean).join(" · ")}</div>
+            ${w.tasting_notes ? `<div class="mm-viv-notes">${w.tasting_notes}</div>` : ""}
+          </div>
+        </div>`).join("");
+
+      results.querySelectorAll(".mm-viv-item").forEach((el) =>
+        el.addEventListener("click", () => fillFrom(wines[parseInt(el.dataset.idx)]))
+      );
+    };
+
+    // ── Recherche texte avec debounce 600ms ───────────────────────────────────
+    qInput?.addEventListener("input", () => {
+      clearTimeout(searchTimer);
+      const q = qInput.value.trim();
+      if (q.length < 3) {
+        results.innerHTML = "";
+        results.style.display = "none";
+        banner.innerHTML = "";
+        return;
+      }
+      results.style.display = "block";
+      results.innerHTML = `<div class="mm-viv-loading">
+        <span class="mm-spinner"></span> Recherche en cours...
+      </div>`;
+      searchTimer = setTimeout(async () => {
+        const response = await this._searchWine(q);
+        showResults(response);
+      }, 600);
+    });
+
+    // ── Scan photo de l'étiquette ─────────────────────────────────────────────
+    btnPhoto?.addEventListener("click", () => fileInput?.click());
+
+    fileInput?.addEventListener("change", async () => {
+      const file = fileInput.files?.[0];
+      if (!file) { return; }
+
+      // Aperçu immédiat
+      const url = URL.createObjectURL(file);
+      imgWrap.innerHTML = `<div class="mm-photo-loading">
+        <img src="${url}" style="width:80px;border-radius:8px;opacity:0.6;display:block;margin:0 auto 6px">
+        <div style="text-align:center;font-size:11px;color:#888">
+          <span class="mm-spinner"></span> Analyse de l'étiquette...
+        </div>
+      </div>`;
+      results.innerHTML = "";
+      results.style.display = "none";
+      banner.innerHTML = "";
+
+      // Encoder en base64 (robuste Android/iOS)
+      let b64;
+      try {
+        b64 = await new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => {
+            const result = r.result || "";
+            const comma = String(result).indexOf(",");
+            res(comma >= 0 ? String(result).slice(comma + 1) : "");
+          };
+          r.onerror = () => rej(new Error("Lecture fichier impossible"));
+          r.readAsDataURL(file);
+        });
+      } catch (e) {
+        imgWrap.innerHTML = `<div class="mm-photo-error">Impossible de lire l'image. Réessayez.</div>`;
+        return;
+      }
+      if (!b64) {
+        imgWrap.innerHTML = `<div class="mm-photo-error">Image vide ou format non supporté.</div>`;
+        return;
+      }
+
+      const mimeType = file.type || "image/jpeg";
+      const response = await this._analyzePhoto(b64, mimeType);
+      URL.revokeObjectURL(url);
+
+      const { results: wines = [], error } = response;
+
+      // Nettoyer l'aperçu loading
+      imgWrap.innerHTML = "";
+
+      if (error === "invalid_key" || error === "no_key") {
+        imgWrap.innerHTML = `<div class="mm-photo-error">${ERROR_MESSAGES.invalid_key}</div>`;
+        return;
+      }
+      if (!wines.length) {
+        imgWrap.innerHTML = `<div class="mm-photo-error">${ERROR_MESSAGES.no_wine_found}</div>`;
+        return;
+      }
+      if (error) {
+        banner.innerHTML = `<div class="mm-search-banner mm-search-banner--warning">${ERROR_MESSAGES[error] || error}</div>`;
+      }
+
+      if (wines.length === 1) {
+        // Un seul vin identifié → remplissage direct
+        fillFrom(wines[0]);
+        this._showToast("success", `✅ Étiquette reconnue : ${wines[0].name}`);
+      } else {
+        // Plusieurs vins possibles → afficher les suggestions
+        showResults({ results: wines, error: null, source: "gemini" });
+        this._showToast("info", "📷 Plusieurs vins possibles — sélectionnez le bon");
+      }
+    });
+
+    // ── Soumission du formulaire ──────────────────────────────────────────────
+    box.querySelector("#bt-submit")?.addEventListener("click", async () => {
+      const txt = (id) => box.querySelector(`#${id}`)?.value?.trim() || "";
+      const num = (id) => parseFloat(box.querySelector(`#${id}`)?.value)  || 0;
+      const int = (id) => parseInt(box.querySelector(`#${id}`)?.value)    || 0;
+
+      const name = txt("bt-name");
+      if (!name) { this._showToast("error", "Le nom du vin est requis."); return; }
+
+      const payload = {
+        name,
+        vintage:       txt("bt-vintage"),
+        type:          box.querySelector("#bt-type")?.value || "red",
+        producer:      txt("bt-producer"),
+        appellation:   txt("bt-appellation"),
+        region:        txt("bt-region"),
+        country:       txt("bt-country"),
+        price:         num("bt-price"),
+        quantity:      1,
+        drink_from:    txt("bt-from"),
+        drink_until:   txt("bt-until"),
+        notes:         txt("bt-notes"),
+        tasting_notes: txt("bt-tasting"),
+        food_pairing:  txt("bt-pairing"),
+        vivino_rating: num("bt-vrating"),
+        event:         box.querySelector("#bt-event")?.value || "",
+        image_url:     txt("bt-image_url"),
+        vivino_url:    txt("bt-vivino_url"),
+      };
+
+      if (bottle) {
+        await this._callService("update_bottle", { bottle_id: bottle.id, ...payload });
+      } else {
+        payload.floor_id = box.querySelector("#bt-floor")?.value || "";
+        payload.slot     = int("bt-slot");
+        // Anti-doublon : vérifier que l'emplacement est libre
+        const occupied = (this._data?.bottles || []).find(
+          (x) => x.floor_id === payload.floor_id && x.slot === payload.slot
+        );
+        if (occupied) {
+          this._showToast("error",
+            `Emplacement n°${payload.slot} déjà occupé par « ${occupied.name} ». Choisissez un autre emplacement.`);
+          return;
+        }
+        await this._callService("add_bottle", payload);
+      }
+    });
+  }
+
+  // ── Fiche détail bouteille ─────────────────────────────────────────────────────
+
+  _detailHTML(b) {
+    const t  = WINE_TYPES[b.type] || WINE_TYPES.red;
+    const vr = parseFloat(b.vivino_rating) || 0;
+    const stars = vr > 0
+      ? "★".repeat(Math.round(vr)) + "☆".repeat(5 - Math.round(vr)) : "";
+    return `
+      <div class="mm-header" style="background:linear-gradient(135deg,${t.color}18,transparent)">
+        <button class="mm-close" data-close style="order:-1;font-size:20px">←</button>
+        <span class="mm-title">${b.name}</span>
+        <span style="color:${t.color};font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px">${t.label}</span>
+      </div>
+      <div class="mm-body">
+        ${b.image_url ? `<img src="${b.image_url}" style="width:64px;display:block;margin:0 auto 16px;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,0.6)">` : ""}
+        <div class="mm-detail-hero">
+          <div class="mm-detail-name">${b.name}</div>
+          <div class="mm-detail-sub">${[b.producer, b.appellation].filter(Boolean).join(" · ")}</div>
+          ${vr > 0 ? `
+            <div style="color:${t.color};font-size:20px;margin-top:10px;letter-spacing:2px">${stars}</div>
+            <div style="color:#555;font-size:11px;margin-top:2px">${vr.toFixed(1)} / 5</div>` : ""}
+          ${b.vivino_url ? `<a href="${b.vivino_url}" target="_blank" class="mm-vivino-link">Voir sur Vivino →</a>` : ""}
+        </div>
+        <div class="mm-detail-grid">
+          ${_drow("Millésime",  b.vintage)}
+          ${_drow("Région",     [b.region, b.country].filter(Boolean).join(", "))}
+          ${b.price ? `<div class="mm-drow"><span class="mm-drow-label">Prix</span><span class="mm-drow-value det-price-display">${b.price} €</span></div>` : ""}
+          ${_drow("Quantité",   (b.quantity || 1) > 1 ? b.quantity + " bouteilles" : "")}
+          ${_drow("À boire",    (b.drink_from || b.drink_until)
+                                ? (b.drink_from || "?") + " — " + (b.drink_until || "?") : "")}
+          ${_drow("Ajouté le",  b.added_date || "")}
+          ${b.event && EVENT_LABEL[b.event]?.l ? _drow("Événement", EVENT_LABEL[b.event].emoji + " " + EVENT_LABEL[b.event].l) : ""}
+        </div>
+        ${b.tasting_notes ? `<div class="mm-notes mm-tasting">🍷 ${b.tasting_notes}</div>` : ""}
+        ${b.food_pairing  ? `<div class="mm-notes mm-pairing">🍽️ ${b.food_pairing}</div>`  : ""}
+        ${b.notes         ? `<div class="mm-notes">"${b.notes}"</div>`                     : ""}
+      </div>
+      <div class="mm-footer mm-footer-wrap">
+        <button class="mm-btn mm-btn-drink"  id="det-drink">🍷 J'ai bu cette bouteille</button>
+        <div class="mm-footer-row">
+          <button class="mm-btn mm-btn-danger" id="det-remove">🗑</button>
+          <button class="mm-btn mm-btn-ghost"  id="det-price">💰 Prix</button>
+          <button class="mm-btn mm-btn-ghost"  id="det-dup">⎘ Dupliquer</button>
+          <button class="mm-btn mm-btn-ghost"  id="det-edit">✏️ Modifier</button>
+        </div>
+      </div>`;
+  }
+
+  // ── Formulaire duplication ──────────────────────────────────────────────────
+
+  _duplicateFormHTML(b) {
+    const floors = this._data?.cellar?.floors || [];
+    return `
+      <div class="mm-header">
+        <span class="mm-title">⎘ Dupliquer</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        <div class="mm-notes mm-tasting" style="margin-bottom:14px">
+          Copie de <strong>${b.name}${b.vintage ? " " + b.vintage : ""}</strong>
+        </div>
+        <div class="mm-row">
+          <div class="mm-field">
+            <label class="mm-label">Étage *</label>
+            <select class="mm-input" id="dup-floor">
+              ${floors.map(f => `<option value="${f.id}">${f.name}</option>`).join("")}
+            </select>
+          </div>
+          <div class="mm-field">
+            <label class="mm-label">Emplacement n°</label>
+            <input class="mm-input" id="dup-slot" type="number" min="0" value="0">
+          </div>
+        </div>
+        <div class="mm-field">
+          <label class="mm-label">Quantité à dupliquer</label>
+          <input class="mm-input" id="dup-qty" type="number" min="1" max="24" value="1">
+        </div>
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
+        <button class="mm-btn mm-btn-primary" id="dup-submit">Dupliquer</button>
+      </div>`;
+  }
+
+  _bindDuplicateForm(box, bottle) {
+    box.querySelector("#dup-submit")?.addEventListener("click", async () => {
+      const btn     = box.querySelector("#dup-submit");
+      const floorId = box.querySelector("#dup-floor")?.value;
+      const slot    = parseInt(box.querySelector("#dup-slot")?.value) || 0;
+      const qty     = parseInt(box.querySelector("#dup-qty")?.value) || 1;
+      if (!floorId) { this._showToast("warning", "Sélectionnez un étage."); return; }
+      btn.textContent = "⏳ Copie en cours...";
+      btn.disabled = true;
+      try {
+        for (let i = 0; i < qty; i++) {
+          await this._hass.callService(DOMAIN, "duplicate_bottle", {
+            bottle_id: bottle.id,
+            floor_id:  floorId,
+            slot:      slot + i,
+          });
+        }
+        this._closeModal();
+        setTimeout(() => this._fetchData(), 600);
+        this._showToast("success", `${qty} bouteille(s) dupliquée(s) ✓`);
+      } catch(err) {
+        btn.textContent = "Dupliquer";
+        btn.disabled = false;
+        this._showToast("error", "Erreur lors de la duplication : " + (err.message || err));
+      }
+    });
+  }
+
+  // ── Historique valeur cave ──────────────────────────────────────────────────
+
+  _historyHTML() {
+    const history = this._data?.cellar?.value_history || [];
+    const last    = history[history.length - 1];
+    return `
+      <div class="mm-header">
+        <span class="mm-title">📈 Valeur de la cave</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        ${history.length === 0 ? `
+          <div style="text-align:center;padding:30px 0;color:#555">
+            <div style="font-size:32px;margin-bottom:10px">📊</div>
+            <div>Aucun historique enregistré.</div>
+            <div style="font-size:11px;margin-top:6px">Utilisez "Enregistrer la valeur" pour commencer.</div>
+          </div>` : `
+          <div class="hist-summary">
+            <div class="hist-stat">
+              <span class="hist-val">${last?.value ?? 0} €</span>
+              <span class="hist-lbl">Valeur actuelle</span>
+            </div>
+            <div class="hist-stat">
+              <span class="hist-val">${last?.bottles ?? 0}</span>
+              <span class="hist-lbl">Bouteilles</span>
+            </div>
+            <div class="hist-stat">
+              <span class="hist-val">${history.length}</span>
+              <span class="hist-lbl">Relevés</span>
+            </div>
+          </div>
+          <div id="hist-chart-wrap" style="width:100%;height:180px;margin-top:12px;background:#0D0D0D;border-radius:8px;border:1px solid #222"></div>
+          <div class="hist-table">
+            ${[...history].reverse().slice(0, 12).map(h => `
+              <div class="hist-row">
+                <span class="hist-date">${h.date}</span>
+                <span class="hist-bottles">${h.bottles} 🍾</span>
+                <span class="hist-price">${h.value} €</span>
+              </div>`).join("")}
+          </div>`}
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Fermer</button>
+        <button class="mm-btn mm-btn-primary" id="hist-snapshot">📸 Enregistrer la valeur</button>
+      </div>`;
+  }
+
+  _bindHistory(box) {
+    // Dessiner le graphique immédiatement (DOM pur, pas de timing)
+    const wrap = box.querySelector("#hist-chart-wrap");
+    if (wrap) this._renderChart(wrap, this._data?.cellar?.value_history || []);
+
+    box.querySelector("#hist-snapshot")?.addEventListener("click", async () => {
+      const btn = box.querySelector("#hist-snapshot");
+      btn.textContent = "⏳ Enregistrement...";
+      btn.disabled = true;
+      try {
+        // Appel direct (sans fermer le modal)
+        await this._hass.callService(DOMAIN, "value_snapshot", {});
+        await new Promise(r => setTimeout(r, 600));
+        await this._fetchData();
+        // Rafraîchir le contenu du modal en place
+        box.innerHTML = this._historyHTML();
+        this._bindHistory(box);
+        box.querySelectorAll("[data-close]").forEach(b =>
+          b.addEventListener("click", () => this._closeModal()));
+        this._showToast("success", "Valeur enregistrée ✓");
+        // _bindHistory s'occupe déjà du chart via le wrap
+
+      } catch(err) {
+        btn.textContent = "📸 Enregistrer la valeur";
+        btn.disabled = false;
+        this._showToast("error", "Erreur : " + (err.message || err));
+      }
+    });
+
+  }
+
+
+
+  _renderChart(wrap, history) {
+    wrap.innerHTML = "";
+
+    if (!history || history.length === 0) {
+      wrap.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#444;font-size:12px;font-family:Inter,sans-serif">Aucun relevé</div>';
+      return;
+    }
+
+    if (history.length === 1) {
+      const h = history[0];
+      wrap.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#888;font-size:12px;font-family:Inter,sans-serif;gap:6px">
+        <div style="font-size:22px;font-weight:700;color:#EDE0CC;font-family:Playfair Display,serif">${h.value} €</div>
+        <div>${h.date} · ${h.bottles} bouteilles</div>
+        <div style="color:#555;font-size:11px;margin-top:4px">Ajoutez un 2ᵉ relevé pour voir l'évolution</div>
+      </div>`;
+      return;
+    }
+
+    // ── SVG créé en DOM (pas en innerHTML) ──────────────────
+    const NS  = "http://www.w3.org/2000/svg";
+    const W   = wrap.offsetWidth || wrap.parentElement?.offsetWidth || 340;
+    const H   = 180;
+    const pad = { t: 18, r: 14, b: 30, l: 48 };
+    const cw  = W - pad.l - pad.r;
+    const ch  = H - pad.t - pad.b;
+
+    const vals = history.map(h => h.value);
+    const lo   = Math.min(...vals) - (Math.max(...vals) - Math.min(...vals)) * 0.12 || 0;
+    const hi   = Math.max(...vals) + (Math.max(...vals) - Math.min(...vals)) * 0.12 || 1;
+    const span = hi - lo || 1;
+
+    const px = i => pad.l + (i / (history.length - 1)) * cw;
+    const py = v => pad.t + ch - ((v - lo) / span) * ch;
+
+    const mk = tag => document.createElementNS(NS, tag);
+    const at = (el, attrs) => { Object.entries(attrs).forEach(([k,v]) => el.setAttribute(k,v)); return el; };
+
+    const svg = at(mk("svg"), { width: W, height: H, viewBox: `0 0 ${W} ${H}` });
+    svg.style.cssText = "display:block;width:100%;height:100%";
+
+    // Dégradé
+    const defs = mk("defs");
+    const grad = at(mk("linearGradient"), { id: "cg", x1:"0", y1:"0", x2:"0", y2:"1" });
+    const s1   = at(mk("stop"), { offset:"0%",   "stop-color":"#C0392B", "stop-opacity":"0.4" });
+    const s2   = at(mk("stop"), { offset:"100%", "stop-color":"#C0392B", "stop-opacity":"0.02" });
+    grad.appendChild(s1); grad.appendChild(s2); defs.appendChild(grad); svg.appendChild(defs);
+
+    // Fond
+    svg.appendChild(at(mk("rect"), { x:0, y:0, width:W, height:H, fill:"#0D0D0D" }));
+
+    // Grilles horizontales
+    for (let g = 0; g <= 4; g++) {
+      const v = hi - span * g / 4;
+      const y = (pad.t + ch * g / 4).toFixed(1);
+      svg.appendChild(at(mk("line"), { x1: pad.l, y1: y, x2: W - pad.r, y2: y, stroke:"#222", "stroke-width":"1" }));
+      const txt = at(mk("text"), { x: pad.l - 5, y: (parseFloat(y) + 4).toFixed(1), "text-anchor":"end", fill:"#555", "font-size":"10", "font-family":"Inter,sans-serif" });
+      txt.textContent = Math.round(v) + "€";
+      svg.appendChild(txt);
+    }
+
+    // Axe gauche
+    svg.appendChild(at(mk("line"), { x1: pad.l, y1: pad.t, x2: pad.l, y2: pad.t + ch, stroke:"#333", "stroke-width":"1" }));
+
+    // Aire
+    const pts = history.map((h, i) => `${px(i).toFixed(1)},${py(h.value).toFixed(1)}`).join(" ");
+    const areaD = `M ${px(0).toFixed(1)},${py(vals[0]).toFixed(1)} ` +
+      history.slice(1).map((h,i) => `L ${px(i+1).toFixed(1)},${py(h.value).toFixed(1)}`).join(" ") +
+      ` L ${px(history.length-1).toFixed(1)},${(pad.t+ch).toFixed(1)} L ${px(0).toFixed(1)},${(pad.t+ch).toFixed(1)} Z`;
+    svg.appendChild(at(mk("path"), { d: areaD, fill:"url(#cg)" }));
+
+    // Courbe
+    const line = at(mk("polyline"), { points: pts, fill:"none", stroke:"#C0392B", "stroke-width":"2.5", "stroke-linejoin":"round", "stroke-linecap":"round" });
+    svg.appendChild(line);
+
+    // Points + dates X
+    const step = Math.max(1, Math.floor(history.length / 5));
+    history.forEach((h, i) => {
+      // Point
+      const dot = at(mk("circle"), { cx: px(i).toFixed(1), cy: py(h.value).toFixed(1), r:"3.5", fill:"#E74C3C", stroke:"#0D0D0D", "stroke-width":"1.5" });
+      svg.appendChild(dot);
+      // Label X
+      if (i % step === 0 || i === history.length - 1) {
+        const xt = at(mk("text"), { x: px(i).toFixed(1), y: H - 8, "text-anchor":"middle", fill:"#555", "font-size":"9", "font-family":"Inter,sans-serif" });
+        xt.textContent = h.date.slice(5);
+        svg.appendChild(xt);
+      }
+    });
+
+    // Valeur sur le dernier point
+    const last = history[history.length - 1];
+    const lx = px(history.length - 1);
+    const ly = py(last.value);
+    const balloon = at(mk("rect"), { x: lx - 28, y: ly - 22, width: 56, height: 18, rx: 5, fill:"#C0392B" });
+    svg.appendChild(balloon);
+    const blt = at(mk("text"), { x: lx, y: ly - 9, "text-anchor":"middle", fill:"white", "font-size":"10", "font-weight":"700", "font-family":"Inter,sans-serif" });
+    blt.textContent = last.value + " €";
+    svg.appendChild(blt);
+
+    wrap.appendChild(svg);
+  }
+
+
+  // ── Formulaire « J'ai bu cette bouteille » ──────────────────────────────────
+
+  _drinkFormHTML(b) {
+    const t = WINE_TYPES[b.type] || WINE_TYPES.red;
+    const today = new Date().toISOString().slice(0, 10);
+    return `
+      <div class="mm-header" style="background:linear-gradient(135deg,${t.color}18,transparent)">
+        <span class="mm-title">🍷 Dégustation</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        <div class="mm-detail-hero" style="margin-bottom:14px">
+          <div class="mm-detail-name">${b.name}${b.vintage ? " " + b.vintage : ""}</div>
+          <div class="mm-detail-sub">${[b.producer, b.appellation].filter(Boolean).join(" · ")}</div>
+        </div>
+
+        <div class="mm-field">
+          <label class="mm-label">Ma note</label>
+          <div class="mm-stars" id="drink-stars">
+            ${[1,2,3,4,5].map(n => `<span class="mm-star" data-star="${n}">☆</span>`).join("")}
+          </div>
+          <input type="hidden" id="drink-rating" value="0">
+        </div>
+
+        <div class="mm-field">
+          <label class="mm-label">Date de dégustation</label>
+          <input class="mm-input" id="drink-date" type="date" value="${today}">
+        </div>
+
+        <div class="mm-field">
+          <label class="mm-label">Commentaire de dégustation</label>
+          <textarea class="mm-input mm-textarea" id="drink-comment"
+            placeholder="Vos impressions : arômes, accord, contexte..."></textarea>
+        </div>
+
+        <div class="mm-notes" style="border-left-color:${t.color}">
+          La bouteille sera retirée de la cave et conservée dans votre journal de dégustation.
+        </div>
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
+        <button class="mm-btn mm-btn-drink" id="drink-submit">🍷 Valider la dégustation</button>
+      </div>`;
+  }
+
+  _bindDrinkForm(box, bottle) {
+    // Sélecteur d'étoiles
+    const stars  = box.querySelectorAll(".mm-star");
+    const hidden = box.querySelector("#drink-rating");
+    const paint = (val) => stars.forEach((s) => {
+      s.textContent = parseInt(s.dataset.star) <= val ? "★" : "☆";
+      s.classList.toggle("mm-star--on", parseInt(s.dataset.star) <= val);
+    });
+    stars.forEach((s) => {
+      s.addEventListener("click", () => {
+        const v = parseInt(s.dataset.star);
+        hidden.value = v;
+        paint(v);
+      });
+    });
+
+    box.querySelector("#drink-submit")?.addEventListener("click", async () => {
+      const btn = box.querySelector("#drink-submit");
+      const rating  = parseFloat(hidden.value) || 0;
+      const comment = box.querySelector("#drink-comment")?.value?.trim() || "";
+      const drunk   = box.querySelector("#drink-date")?.value || "";
+      btn.textContent = "⏳ Enregistrement...";
+      btn.disabled = true;
+      try {
+        await this._hass.callService(DOMAIN, "drink_bottle", {
+          bottle_id:  bottle.id,
+          rating,
+          comment,
+          drunk_date: drunk,
+        });
+        this._closeModal();
+        setTimeout(() => this._fetchData(), 600);
+        this._showToast("success", `Dégustation enregistrée 🍷`);
+      } catch (err) {
+        btn.textContent = "🍷 Valider la dégustation";
+        btn.disabled = false;
+        this._showToast("error", "Erreur : " + (err.message || err));
+      }
+    });
+  }
+
+  // ── Journal de dégustation (vue tableau) ─────────────────────────────────────
+
+  _journalHTML() {
+    const log = (this._data?.cellar?.tasting_log || []).slice().reverse();
+    const totalSpent = log.reduce((s, e) => s + (parseFloat(e.price) || 0), 0);
+    const rated = log.filter(e => (e.my_rating || 0) > 0);
+    const avg = rated.length ? (rated.reduce((s, e) => s + e.my_rating, 0) / rated.length) : 0;
+
+    return `
+      <div class="mm-header">
+        <span class="mm-title">📓 Journal de dégustation</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        ${log.length === 0 ? `
+          <div style="text-align:center;padding:30px 0;color:#555">
+            <div style="font-size:32px;margin-bottom:10px">🍷</div>
+            <div>Aucune bouteille dégustée pour l'instant.</div>
+            <div style="font-size:11px;margin-top:6px">Cliquez « J'ai bu cette bouteille » sur une fiche.</div>
+          </div>` : `
+          <div class="hist-summary">
+            <div class="hist-stat">
+              <span class="hist-val">${log.length}</span>
+              <span class="hist-lbl">Dégustées</span>
+            </div>
+            <div class="hist-stat">
+              <span class="hist-val">${avg > 0 ? avg.toFixed(1) : "—"}</span>
+              <span class="hist-lbl">Note moy.</span>
+            </div>
+            <div class="hist-stat">
+              <span class="hist-val">${Math.round(totalSpent)}€</span>
+              <span class="hist-lbl">Total</span>
+            </div>
+          </div>
+          <div class="journal-list">
+            ${log.map((e) => {
+              const t = WINE_TYPES[e.type] || WINE_TYPES.red;
+              const r = parseFloat(e.my_rating) || 0;
+              const stars = r > 0 ? "★".repeat(Math.round(r)) + "☆".repeat(5 - Math.round(r)) : "—";
+              return `
+              <div class="journal-row">
+                <div class="journal-main">
+                  <span class="journal-dot" style="background:${t.color}"></span>
+                  <div style="flex:1;min-width:0">
+                    <div class="journal-name">${e.name}${e.vintage ? " " + e.vintage : ""}</div>
+                    <div class="journal-sub">${[e.producer, e.appellation].filter(Boolean).join(" · ")}</div>
+                    ${e.my_comment ? `<div class="journal-comment">« ${e.my_comment} »</div>` : ""}
+                  </div>
+                  <button class="journal-del" data-del-tasting="${e.id}" title="Supprimer">✕</button>
+                </div>
+                <div class="journal-meta">
+                  <span class="journal-stars" style="color:${t.color}">${stars}</span>
+                  <span class="journal-date">📅 ${e.drunk_date || "?"}</span>
+                  ${e.price ? `<span class="journal-price">${e.price}€</span>` : ""}
+                </div>
+              </div>`;
+            }).join("")}
+          </div>`}
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Fermer</button>
+      </div>`;
+  }
+
+  _bindJournal(box) {
+    box.querySelectorAll("[data-del-tasting]").forEach((btn) =>
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (!confirm("Supprimer cette dégustation du journal ?")) return;
+        try {
+          await this._hass.callService(DOMAIN, "delete_tasting", { tasting_id: btn.dataset.delTasting });
+          await new Promise(r => setTimeout(r, 500));
+          await this._fetchData();
+          box.innerHTML = this._journalHTML();
+          this._bindJournal(box);
+          box.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", () => this._closeModal()));
+        } catch (err) {
+          this._showToast("error", "Erreur : " + (err.message || err));
+        }
+      })
+    );
+  }
+
+  // ── Déplacer le contenu d'un étage vers un autre ────────────────────────────
+
+  _moveFloorHTML(floor) {
+    const floors = (this._data?.cellar?.floors || []).filter(f => f.id !== floor.id);
+    const cnt = (this._data?.bottles || []).filter(b => b.floor_id === floor.id).length;
+    return `
+      <div class="mm-header">
+        <span class="mm-title">📦 Déplacer l'étage</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        <div class="mm-notes mm-tasting" style="margin-bottom:14px">
+          Déplacer les <strong>${cnt} bouteille(s)</strong> de « ${floor.name} » vers un autre étage.
+          Les bouteilles seront placées dans les premiers emplacements libres.
+        </div>
+        <div class="mm-field">
+          <label class="mm-label">Étage de destination *</label>
+          <select class="mm-input" id="mv-dest">
+            ${floors.map(f => `<option value="${f.id}">${f.name}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
+        <button class="mm-btn mm-btn-primary" id="mv-submit">Déplacer</button>
+      </div>`;
+  }
+
+  _bindMoveFloor(box, floor) {
+    box.querySelector("#mv-submit")?.addEventListener("click", async () => {
+      const btn  = box.querySelector("#mv-submit");
+      const dest = box.querySelector("#mv-dest")?.value;
+      if (!dest) { this._showToast("warning", "Sélectionnez une destination."); return; }
+
+      const destFloor = (this._data?.cellar?.floors || []).find(f => f.id === dest);
+      const destTotal = destFloor.slots || (destFloor.columns || 8) * (destFloor.rows || 2);
+      const toMove    = (this._data?.bottles || []).filter(b => b.floor_id === floor.id);
+
+      // Emplacements déjà occupés dans la destination
+      const occupied = new Set(
+        (this._data?.bottles || []).filter(b => b.floor_id === dest).map(b => b.slot)
+      );
+      // Calculer les slots libres dans l'ordre
+      const freeSlots = [];
+      for (let i = 0; i < destTotal; i++) if (!occupied.has(i)) freeSlots.push(i);
+
+      if (freeSlots.length < toMove.length) {
+        this._showToast("error",
+          `Pas assez de place : ${freeSlots.length} emplacement(s) libre(s) pour ${toMove.length} bouteille(s).`);
+        return;
+      }
+
+      btn.textContent = "⏳ Déplacement...";
+      btn.disabled = true;
+      try {
+        for (let i = 0; i < toMove.length; i++) {
+          await this._hass.callService(DOMAIN, "update_bottle", {
+            bottle_id: toMove[i].id,
+            floor_id:  dest,
+            slot:      freeSlots[i],
+          });
+        }
+        this._closeModal();
+        setTimeout(() => this._fetchData(), 600);
+        this._showToast("success", `${toMove.length} bouteille(s) déplacée(s) vers ${destFloor.name} ✓`);
+      } catch (err) {
+        btn.textContent = "Déplacer";
+        btn.disabled = false;
+        this._showToast("error", "Erreur lors du déplacement : " + (err.message || err));
+      }
+    });
+  }
+
+  // ── Recherche par nom dans toute la cave ─────────────────────────────────────
+
+  _searchModalHTML() {
+    return `
+      <div class="mm-header">
+        <span class="mm-title">🔍 Rechercher une bouteille</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        <div class="mm-search-wrap" style="margin-bottom:12px">
+          <span class="mm-search-icon">🔍</span>
+          <input class="mm-input mm-search-input" id="gsearch-query"
+            placeholder="Nom, producteur, appellation..." autocomplete="off">
+        </div>
+        <div id="gsearch-results"></div>
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Fermer</button>
+      </div>`;
+  }
+
+  _bindSearchModal(box) {
+    const input   = box.querySelector("#gsearch-query");
+    const results = box.querySelector("#gsearch-results");
+    const floors  = this._data?.cellar?.floors || [];
+    const floorName = (fid) => floors.find(f => f.id === fid)?.name || "?";
+
+    const render = (q) => {
+      const query = q.trim().toLowerCase();
+      if (!query) {
+        results.innerHTML = `<div class="mm-viv-loading">Tapez pour rechercher dans votre cave…</div>`;
+        return;
+      }
+      const matches = (this._data?.bottles || []).filter((b) =>
+        [b.name, b.producer, b.appellation, b.region, b.vintage]
+          .filter(Boolean).join(" ").toLowerCase().includes(query)
+      );
+      if (!matches.length) {
+        results.innerHTML = `<div class="mm-viv-loading">Aucune bouteille trouvée pour « ${q} »</div>`;
+        return;
+      }
+      results.innerHTML = matches.map((b) => {
+        const t = WINE_TYPES[b.type] || WINE_TYPES.red;
+        return `
+        <div class="mm-viv-item gsearch-item" data-id="${b.id}">
+          <span style="font-size:18px;flex-shrink:0">${t.emoji}</span>
+          <div style="flex:1;min-width:0">
+            <div class="mm-viv-name">${b.name}${b.vintage ? " " + b.vintage : ""}</div>
+            <div class="mm-viv-sub">${[b.appellation, b.producer].filter(Boolean).join(" · ")}</div>
+            <div class="mm-viv-sub" style="color:${t.color}">📍 ${floorName(b.floor_id)} · emplacement n°${b.slot}</div>
+          </div>
+          ${b.price ? `<span style="color:#EDE0CC;font-weight:600;font-size:12px;flex-shrink:0">${b.price}€</span>` : ""}
+        </div>`;
+      }).join("");
+
+      results.querySelectorAll(".gsearch-item").forEach((el) =>
+        el.addEventListener("click", () => {
+          const bottle = (this._data?.bottles || []).find((x) => x.id === el.dataset.id);
+          if (bottle) {
+            this._closeModal();
+            this._openModal("detail", { bottle });
+          }
+        })
+      );
+    };
+
+    render("");
+    input?.addEventListener("input", () => render(input.value));
+    setTimeout(() => input?.focus(), 150);
+  }
+
+  _bindDetailButtons(box, bottle) {
+
+    // Retirer
+    box.querySelector("#det-remove")?.addEventListener("click", async () => {
+      if (confirm("Retirer cette bouteille de la cave ?")) {
+        this._selected = null;
+        await this._callService("remove_bottle", { bottle_id: bottle.id });
+      }
+    });
+
+    // Modifier
+    box.querySelector("#det-edit")?.addEventListener("click", () => {
+      this._closeModal();
+      this._openModal("bottle", { bottle });
+    });
+
+    // Dupliquer
+    box.querySelector("#det-dup")?.addEventListener("click", () => {
+      this._closeModal();
+      this._openModal("duplicate", { bottle });
+    });
+
+    // J'ai bu cette bouteille
+    box.querySelector("#det-drink")?.addEventListener("click", () => {
+      this._closeModal();
+      this._openModal("drink", { bottle });
+    });
+
+    // Estimer le prix
+    box.querySelector("#det-price")?.addEventListener("click", async () => {
+      const btn   = box.querySelector("#det-price");
+      const query = [bottle.name, bottle.vintage, bottle.appellation].filter(Boolean).join(" ");
+      if (!query) { this._showToast("warning", "Nom du vin manquant."); return; }
+
+      btn.textContent = "⏳ Recherche...";
+      btn.disabled    = true;
+
+      const resp = await this._estimatePrice(query);
+
+      if (resp.error || !resp.price) {
+        btn.textContent = "💰 Prix";
+        btn.disabled    = false;
+        this._showToast("warning",
+          resp.error === "invalid_key"
+            ? "🔑 Clé Gemini requise pour estimer le prix."
+            : resp.price === 0
+              ? "Prix introuvable pour ce vin."
+              : "Estimation impossible, réessayez."
+        );
+        return;
+      }
+
+      btn.textContent = `✅ ${resp.price} €`;
+
+      // Mettre à jour la fiche prix affiché
+      const priceEl = box.querySelector(".det-price-display");
+      if (priceEl) priceEl.textContent = resp.price + " €";
+
+      // Enregistrer après 1.5s
+      setTimeout(async () => {
+        await this._callService("update_bottle", { bottle_id: bottle.id, price: resp.price });
+        btn.textContent = "💰 Prix";
+        btn.disabled    = false;
+        this._showToast("success", `Prix mis à jour : ${resp.price} €`);
+      }, 1500);
+    });
+  }
+
+  // ── Rendu principal ───────────────────────────────────────────────────────────
+
+  _renderLoading() {
+    this.shadowRoot.innerHTML = CARD_CSS + `
+      <div class="card">
+        <div class="loading-state"><div class="loading-glass">${GLASS_SVG}</div></div>
+      </div>`;
+  }
+
+  _render() {
+    const data    = this._data || DEFAULT_DATA();
+    const floors  = data.cellar?.floors || [];
+    const bottles = data.bottles || [];
+    this.shadowRoot.innerHTML = CARD_CSS + `
+      <div class="card">
+        ${this._renderHeader(data, bottles)}
+        ${this._renderFilters()}
+        <div class="cellar">
+          ${floors.length === 0
+            ? this._renderEmpty()
+            : (this._view === "3d"
+                ? `<div class="view3d-stage" id="view3d-stage"></div>`
+                : floors.map((f, i) => this._renderFloor(f, bottles, i)).join(""))}
+        </div>
+      </div>`;
+    this._bindCardListeners(data, bottles);
+    if (this._view === "3d") this._mount3D(); else this._unmount3D();
+  }
+
+  _renderHeader(data, bottles) {
+    const total  = bottles.reduce((s, b) => s + (b.quantity || 1), 0);
+    const value  = bottles.reduce((s, b) => s + (b.price || 0) * (b.quantity || 1), 0);
+    const nFloor = data.cellar?.floors?.length || 0;
+    return `
+      <div class="header">
+        <div class="header-left">
+          <div class="header-glass" id="btn-history" title="Historique de valeur" style="cursor:pointer">${GLASS_SVG}</div>
+          <div class="header-meta">
+            <div class="header-name">${data.cellar?.name || "Millésime"}</div>
+            <div class="header-tagline">Cave à vin</div>
+          </div>
+        </div>
+        <div class="header-right">
+          <div class="header-stats">
+            <div class="stat"><span class="stat-value">${total}</span><span class="stat-label">Bouteilles</span></div>
+            <div class="stat"><span class="stat-value">${nFloor}</span><span class="stat-label">Étages</span></div>
+            <div class="stat"><span class="stat-value">${value > 0 ? Math.round(value) + "€" : "—"}</span><span class="stat-label">Valeur</span></div>
+          </div>
+          <div class="header-actions">
+            <div class="ha-icons">
+              <button class="btn-icon" id="btn-view" title="Vue 2D / 3D">${this._view === "3d" ? "▦" : "🧊"}</button>
+              <button class="btn-icon" id="btn-search" title="Rechercher une bouteille">🔍</button>
+              <button class="btn-icon" id="btn-journal" title="Journal de dégustation">📓</button>
+            </div>
+            <button class="btn-secondary" id="btn-add-floor">+ Étage</button>
+            <button class="btn-primary"   id="btn-add-bottle">+ Vin</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  _renderFilters() {
+    return `
+      <div class="filters">
+        <div class="filter-group">
+          <span class="filter-label">Type</span>
+          <select class="filter-select" id="sel-type">
+            <option value="all" ${this._filter === "all" ? "selected" : ""}>Tous les vins</option>
+            ${Object.entries(WINE_TYPES).map(([v, t]) =>
+              `<option value="${v}" ${this._filter === v ? "selected" : ""}>${t.emoji} ${t.label}</option>`
+            ).join("")}
+          </select>
+        </div>
+        <div class="filter-group">
+          <span class="filter-label">Événement</span>
+          <select class="filter-select" id="sel-event">
+            <option value="all" ${this._filterEvent === "all" ? "selected" : ""}>Tous</option>
+            ${EVENT_TYPES.filter(e => e.v).map(e =>
+              `<option value="${e.v}" ${this._filterEvent === e.v ? "selected" : ""}>${e.emoji} ${e.l}</option>`
+            ).join("")}
+          </select>
+        </div>
+      </div>`;
+  }
+
+  _renderEmpty() {
+    return `
+      <div class="empty-state">
+        <div class="empty-glass">${GLASS_SVG}</div>
+        <div class="empty-title">Cave vide</div>
+        <div class="empty-sub">Cliquez sur "+ Étage" pour commencer</div>
+      </div>`;
+  }
+
+  // ── Vue 3D isométrique ────────────────────────────────────────────────────────
+
+  // ════════════════════════════════════════════════════════════════════
+  //  VUE 3D — moteur Three.js (WebGL) : éclairage studio, ombres douces
+  // ════════════════════════════════════════════════════════════════════
+
+  _loadThree() {
+    if (!this._threeModP) {
+      this._threeModP = import("https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js");
+    }
+    return this._threeModP;
+  }
+
+  _unmount3D() {
+    const t = this._three;
+    if (!t) return;
+    try {
+      t.ro?.disconnect();
+      t.renderer.domElement.removeEventListener("click", t.onPick);
+      t.scene.traverse((o) => {
+        o.geometry?.dispose?.();
+        if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { m.map?.dispose?.(); m.dispose(); });
+      });
+      t.renderer.dispose();
+      t.renderer.domElement.remove();
+    } catch (e) { /* noop */ }
+    this._three = null;
+  }
+
+  // Profil de révolution d'une bouteille bordelaise (r, y) — punt inclus
+  _bottleProfile(THREE) {
+    const pts = [
+      [0.00, 0.42],   // apex du punt (creux)
+      [0.30, 0.10],
+      [0.44, 0.04],
+      [0.47, 0.22],   // talon
+      [0.47, 2.55],   // fût
+      [0.43, 2.78],
+      [0.30, 3.00],   // épaule
+      [0.155, 3.18],
+      [0.145, 3.62],  // goulot
+      [0.175, 3.66],  // bague
+      [0.175, 3.74],
+      [0.00, 3.74],   // dessus
+    ];
+    return pts.map(([x, y]) => new THREE.Vector2(x, y));
+  }
+
+  async _mount3D() {
+    this._unmount3D();
+    const stage = this.shadowRoot.getElementById("view3d-stage");
+    if (!stage) return;
+    // Conserver la hauteur précédente pendant le remontage (évite le saut de scroll)
+    const prevH = this._three?.lastH || 0;
+    if (prevH > 60) stage.style.height = prevH + "px";
+    stage.innerHTML = `<div class="three-loading"><span class="mm-spinner"></span> Vue 3D…</div>`;
+
+    let THREE;
+    try {
+      THREE = await this._loadThree();
+    } catch (e) {
+      this._showToast("warning", "Vue 3D indisponible (chargement WebGL). Retour à la vue 2D.");
+      this._view = "2d";
+      this._render();
+      return;
+    }
+    // Le rendu a pu changer pendant le chargement
+    if (this._view !== "3d" || !this.shadowRoot.getElementById("view3d-stage")) return;
+
+    const data    = this._data || DEFAULT_DATA();
+    const floors  = data.cellar?.floors || [];
+    const bottles = data.bottles || [];
+    if (!floors.length) { stage.innerHTML = ""; return; }
+
+    // ── Dimensions ──
+    const width  = stage.clientWidth || 360;
+
+    // ── Scène ──
+    const scene = new THREE.Scene();
+
+    // ── Lumières (studio doux) ──
+    scene.add(new THREE.AmbientLight(0xfff4e0, 0.55));
+    const key = new THREE.DirectionalLight(0xffffff, 1.35);
+    key.position.set(5, 12, 9);
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0xc9d4ff, 0.35);
+    fill.position.set(-6, 4, 5);
+    scene.add(fill);
+    const rim = new THREE.DirectionalLight(0xffe2c0, 0.3);
+    rim.position.set(0, 6, -8);
+    scene.add(rim);
+
+    // ── Géométries partagées ──
+    const bottleGeo = new THREE.LatheGeometry(this._bottleProfile(THREE), 48);
+    bottleGeo.rotateX(-Math.PI / 2);          // axe le long de Z — PIQÛRE (culot) vers +Z = spectateur
+    bottleGeo.translate(0, 0.47, 1.87);       // posée sur le dos, centrée en Z (goulot vers -Z)
+
+    const capGeo = new THREE.CylinderGeometry(0.165, 0.165, 0.55, 24);
+    capGeo.rotateX(Math.PI / 2);
+
+    const emptyGeo = new THREE.CircleGeometry(0.42, 32);
+    emptyGeo.rotateX(-Math.PI / 2);
+
+    // Ombre de contact (douce, limitée à la clayette de la bouteille)
+    const shCanvas = document.createElement("canvas");
+    shCanvas.width = shCanvas.height = 128;
+    const sctx = shCanvas.getContext("2d");
+    const sgrd = sctx.createRadialGradient(64, 64, 6, 64, 64, 62);
+    sgrd.addColorStop(0, "rgba(0,0,0,0.40)");
+    sgrd.addColorStop(0.62, "rgba(0,0,0,0.16)");
+    sgrd.addColorStop(1, "rgba(0,0,0,0)");
+    sctx.fillStyle = sgrd; sctx.fillRect(0, 0, 128, 128);
+    const shadowTex = new THREE.CanvasTexture(shCanvas);
+    const shadowMat = new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false });
+    const shadowGeo = new THREE.PlaneGeometry(1.05, 3.55);
+    shadowGeo.rotateX(-Math.PI / 2);
+    const ringGeo = new THREE.RingGeometry(0.40, 0.46, 32);
+    ringGeo.rotateX(-Math.PI / 2);
+
+    // ── Matériaux par type de vin ──
+    const mats = {}, capMats = {}, fadedMats = {};
+    for (const [k, t] of Object.entries(WINE_TYPES)) {
+      mats[k] = new THREE.MeshPhysicalMaterial({
+        color: t.color, roughness: 0.32, metalness: 0.05,
+        clearcoat: 0.55, clearcoatRoughness: 0.35,
+      });
+      fadedMats[k] = mats[k].clone();
+      fadedMats[k].transparent = true;
+      fadedMats[k].opacity = 0.13;
+      capMats[k] = new THREE.MeshStandardMaterial({
+        color: this._shade(t.color, 18), roughness: 0.25, metalness: 0.75,
+      });
+    }
+    const woodTop = new THREE.MeshStandardMaterial({ color: 0xE6C896, roughness: 0.72, metalness: 0 });
+    const woodSide = new THREE.MeshStandardMaterial({ color: 0xB8905C, roughness: 0.8, metalness: 0 });
+    const emptyMat = new THREE.MeshBasicMaterial({ color: 0x141414, transparent: true, opacity: 0.85 });
+    const ringMat  = new THREE.MeshBasicMaterial({ color: 0x3a3a3a, transparent: true, opacity: 0.9 });
+    const goldMat  = new THREE.MeshBasicMaterial({ color: 0xC9A84C });
+
+    // ── Construction des étages ──
+    const SPACING = 1.06;                      // entre bouteilles (unités monde)
+    const FLOOR_DY = 3.85;                     // espace entre étages (badge + respiration)
+    const TILT_A = 0.56;                       // ~32° (semi-couché)
+    const TILT_LIFT = 1.87 * Math.sin(TILT_A) + 0.01;   // culot posé sur la clayette
+    const TILT_EXTRA = 1.45;                   // hauteur en plus d'un étage semi-couché
+    const pickables = [];
+    const floorAnchors = [];                   // pour les overlays HTML
+    let maxHalfW = 1;
+    let yCursor = 0;
+
+    floors.forEach((floor, fi) => {
+      const total = floor.slots || (floor.columns || 8) * (floor.rows || 2);
+      const isAlt = floor.layout === "alternating";
+      const tilt  = floor.layout === "semi_lying";
+      const fb    = bottles.filter((b) => b.floor_id === floor.id);
+      // Même espace visuel entre clayettes quelle que soit la disposition :
+      // un étage semi-couché (bouteilles plus hautes) réclame plus de place au-dessus
+      if (fi > 0) yCursor -= FLOOR_DY + (tilt ? TILT_EXTRA : 0);
+      const yBase = yCursor;
+      const halfW = (total * SPACING) / 2;
+      maxHalfW = Math.max(maxHalfW, halfW + 0.8);
+
+      // Étagère
+      const shelf = new THREE.Mesh(
+        new THREE.BoxGeometry(total * SPACING + 1.1, 0.22, 4.0),
+        [woodSide, woodSide, woodTop, woodSide, woodSide, woodSide]
+      );
+      shelf.position.set(0, yBase - 0.11, 0);
+      scene.add(shelf);
+
+      floorAnchors.push({ floor, fi, yBase, halfW });
+
+      for (let i = 0; i < total; i++) {
+        const bt = fb.find((b) => b.slot === i);
+        const x  = -halfW + SPACING / 2 + i * SPACING;
+        const stag = 0;  // toutes alignées (bouteilles et emplacements vides)
+
+        if (!bt) {
+          const disc = new THREE.Mesh(emptyGeo, emptyMat);
+          disc.position.set(x, yBase + 0.012, stag);
+          const ring = new THREE.Mesh(ringGeo, ringMat);
+          ring.position.set(x, yBase + 0.013, stag);
+          disc.userData = { empty: true, slot: i, floorId: floor.id };
+          pickables.push(disc);
+          scene.add(disc, ring);
+          continue;
+        }
+
+        const tp = WINE_TYPES[bt.type] ? bt.type : "red";
+        const filtered =
+          (this._filter !== "all" && bt.type !== this._filter) ||
+          (this._filterEvent !== "all" && (bt.event || "") !== this._filterEvent);
+
+        if (!filtered) {
+          const shp = new THREE.Mesh(shadowGeo, shadowMat);
+          shp.position.set(x, yBase + 0.011, 0);
+          if (tilt) shp.scale.set(1, 1, 0.88);
+          scene.add(shp);
+        }
+
+        const g = new THREE.Group();
+        const body = new THREE.Mesh(bottleGeo, filtered ? fadedMats[tp] : mats[tp]);
+        const cap = new THREE.Mesh(capGeo, capMats[tp]);
+        cap.position.set(0, 0.47, -1.62);
+        cap.visible = !filtered;
+        g.add(body, cap);
+
+        const neckFront = isAlt && i % 2 === 1;   // tête-bêche : goulot vers le spectateur (slot 0 = piqûre, comme en 2D)
+        if (neckFront) g.rotation.y = Math.PI;
+        if (tilt) g.rotation.x = TILT_A;          // semi-couché : goulot relevé vers le fond
+        g.position.set(x, yBase + (tilt ? TILT_LIFT : 0), stag);
+        g.userData = { bottleId: bt.id, slot: i, floorId: floor.id };
+
+        if (bt.id === this._selected) {
+          const halo = new THREE.Mesh(new THREE.RingGeometry(0.52, 0.60, 40), goldMat);
+          halo.rotateX(-Math.PI / 2);
+          halo.position.y = 0.015;
+          g.add(halo);
+        }
+        body.userData = g.userData;
+        cap.userData = g.userData;
+        pickables.push(body);
+        scene.add(g);
+      }
+    });
+
+    // ── Cadrage au plus juste : pleine largeur, hauteur exacte ──
+    const bbox = new THREE.Box3().setFromObject(scene);
+    const c3 = bbox.getCenter(new THREE.Vector3());
+    const s3 = bbox.getSize(new THREE.Vector3());
+    const MARGIN_X = 1.03;
+    const PAD_TOP = 0.45, PAD_BOT = 0.95;     // marges monde (bas = place du badge)
+
+    // Ombres : couvrir toute la scène
+    key.target.position.copy(c3);
+    scene.add(key.target);
+    key.position.set(c3.x + 5, c3.y + s3.y / 2 + 8, c3.z + 9);
+
+    const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
+
+    // ── Renderer HD ──
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.12;
+
+    stage.innerHTML = "";
+    stage.appendChild(renderer.domElement);
+    renderer.domElement.style.cssText = "display:block;width:100%;height:100%;border-radius:12px;touch-action:pan-y";
+
+    const draw = () => renderer.render(scene, cam);
+
+    // ── Overlays : badge sous chaque clayette + rail vertical à droite ──
+    const placeOverlays = (w, h) => {
+      stage.querySelectorAll(".t3-badge,.t3-rail").forEach((el) => el.remove());
+      const toPx = (x, y, z) => {
+        const p = new THREE.Vector3(x, y, z).project(cam);
+        return { x: (p.x * 0.5 + 0.5) * w, y: (-p.y * 0.5 + 0.5) * h };
+      };
+      floorAnchors.forEach(({ floor, fi, yBase, halfW }) => {
+        const fb  = bottles.filter((b) => b.floor_id === floor.id);
+        const tot = floor.slots || (floor.columns || 8) * (floor.rows || 2);
+        const pct = Math.round((fb.length / tot) * 100);
+
+        // Badge centré sous le bord avant de la clayette
+        const pb = toPx(0, yBase - 0.30, 2.15);
+        const badge = document.createElement("div");
+        badge.className = "t3-badge";
+        badge.style.left = pb.x + "px";
+        badge.style.top  = pb.y + "px";
+        badge.innerHTML = `<b>${fi + 1}</b> ${floor.name} <span>${pct}%</span>`;
+        stage.appendChild(badge);
+
+        // Rail vertical aligné sur l'étage
+        const pr = toPx(halfW, yBase + 0.7, 0);
+        const rail = document.createElement("div");
+        rail.className = "t3-rail";
+        rail.style.top = Math.max(4, pr.y - 50) + "px";
+        rail.innerHTML = `
+          <button class="icon-btn" data-move-floor="${floor.id}" title="Déplacer">📦</button>
+          <button class="icon-btn" data-edit-floor="${floor.id}" title="Modifier">⚙</button>
+          <button class="icon-btn" data-del-floor="${floor.id}" title="Supprimer">✕</button>`;
+        stage.appendChild(rail);
+      });
+      this._bind3DOverlays(stage, data, bottles);
+    };
+
+    // ── Layout : la largeur dicte l'échelle, la hauteur suit le contenu ──
+    let curW = 0;
+    const RAIL_PX = 48;                        // zone réservée au rail d'actions
+    const layout = (w) => {
+      curW = w;
+      const usable = Math.max(120, w - RAIL_PX);
+      const pxPerUnit = usable / (s3.x * MARGIN_X);
+      const h = Math.max(150, Math.round((s3.y + PAD_TOP + PAD_BOT) * pxPerUnit));
+      const hW = (s3.x * MARGIN_X) / 2;
+      const extra = RAIL_PX / pxPerUnit;       // unités monde à droite (hors clayettes)
+      const hH = h / (2 * pxPerUnit);
+      const cy = c3.y - (PAD_BOT - PAD_TOP) / 2;
+      cam.left = -hW; cam.right = hW + extra; cam.top = hH; cam.bottom = -hH;
+      cam.position.set(c3.x + 4.2, cy + 8.0, c3.z + 28);
+      cam.lookAt(new THREE.Vector3(c3.x, cy, c3.z));
+      cam.updateProjectionMatrix();
+      stage.style.height = h + "px";
+      if (this._three) this._three.lastH = h;
+      renderer.setSize(w, h);
+      draw();
+      placeOverlays(w, h);
+    };
+    layout(width);
+
+    // ── Picking au tap : "click" est synthétisé par iOS après un vrai tap
+    //    et jamais après un scroll → fiable sur iPhone ──
+    const ray = new THREE.Raycaster();
+    const ptr = new THREE.Vector2();
+    const onPick = (e) => {
+      const r = renderer.domElement.getBoundingClientRect();
+      ptr.x = ((e.clientX - r.left) / r.width) * 2 - 1;
+      ptr.y = -((e.clientY - r.top) / r.height) * 2 + 1;
+      ray.setFromCamera(ptr, cam);
+      const hit = ray.intersectObjects(pickables, false)[0];
+      if (!hit) return;
+      const u = hit.object.userData;
+      if (u.empty) {
+        this._openModal("bottle", { slot: { floor_id: u.floorId, slot: u.slot } });
+      } else {
+        const bt = bottles.find((b) => b.id === u.bottleId);
+        if (!bt) return;
+        this._selected = bt.id;                 // mémorisé pour la vue 2D
+        this._openModal("detail", { bottle: bt }); // ouverture directe, sans re-render
+      }
+    };
+    renderer.domElement.addEventListener("click", onPick);
+
+    // ── Redimensionnement (largeur uniquement) ──
+    const ro = new ResizeObserver(() => {
+      const w = stage.clientWidth || curW;
+      if (Math.abs(w - curW) > 1) layout(w);
+    });
+    ro.observe(stage);
+
+    this._three = { renderer, scene, cam, ro, onPick, lastH: stage.offsetHeight };
+  }
+
+  _bind3DOverlays(stage, data, bottles) {
+    stage.querySelectorAll("[data-edit-floor]").forEach((btn) =>
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const floor = data.cellar.floors.find((f) => f.id === btn.dataset.editFloor);
+        this._openModal("floor", { floor });
+      })
+    );
+    stage.querySelectorAll("[data-move-floor]").forEach((btn) =>
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const floor = data.cellar.floors.find((f) => f.id === btn.dataset.moveFloor);
+        const cnt = bottles.filter((b) => b.floor_id === floor.id).length;
+        if (cnt === 0) { this._showToast("warning", "Cet étage est vide."); return; }
+        if (data.cellar.floors.length < 2) { this._showToast("warning", "Il faut au moins 2 étages."); return; }
+        this._openModal("movefloor", { floor });
+      })
+    );
+    stage.querySelectorAll("[data-del-floor]").forEach((btn) =>
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const fid = btn.dataset.delFloor;
+        const floor = data.cellar.floors.find((f) => f.id === fid);
+        const cnt = bottles.filter((b) => b.floor_id === fid).length;
+        const msg = cnt > 0
+          ? `Supprimer "${floor?.name}" et ses ${cnt} bouteille(s) ?`
+          : `Supprimer l'étage "${floor?.name}" ?`;
+        if (confirm(msg)) await this._callService("remove_floor", { floor_id: fid });
+      })
+    );
+  }
+
+  _shade(hex, pct) {
+    // Éclaircit (pct>0) ou assombrit (pct<0) une couleur hex
+    const n = parseInt(hex.slice(1), 16);
+    const r = Math.min(255, Math.max(0, (n >> 16) + Math.round(2.55 * pct)));
+    const g = Math.min(255, Math.max(0, ((n >> 8) & 255) + Math.round(2.55 * pct)));
+    const b = Math.min(255, Math.max(0, (n & 255) + Math.round(2.55 * pct)));
+    return "#" + ((r << 16) | (g << 8) | b).toString(16).padStart(6, "0");
+  }
+
+  _renderFloor(floor, allBottles, index) {
+    const fb    = allBottles.filter((b) => b.floor_id === floor.id);
+    const cols  = floor.columns || 8;
+    const total = floor.slots || cols * (floor.rows || 2);
+    const isAlt = floor.layout === "alternating";
+    const pct   = Math.round((fb.length / total) * 100);
+
+    const byType = {};
+    fb.forEach((b) => { byType[b.type] = (byType[b.type] || 0) + (b.quantity || 1); });
+    const counters = Object.entries(byType)
+      .map(([t, n]) => `<span class="type-count" style="color:${WINE_TYPES[t]?.color || "#C0392B"}">${n}x</span>`)
+      .join("");
+
+    let dots = "";
+    for (let i = 0; i < total; i++) {
+      const bt  = fb.find((b) => b.slot === i);
+      const filteredType  = this._filter !== "all" && bt && bt.type !== this._filter;
+      const filteredEvent = this._filterEvent !== "all" && bt && (bt.event || "") !== this._filterEvent;
+      const filtered = filteredType || filteredEvent;
+      const wt  = bt ? WINE_TYPES[bt.type] || WINE_TYPES.red : null;
+      const sel = bt && bt.id === this._selected;
+      const alt = isAlt && i % 2 === 1;
+      dots += `<div
+        class="dot ${bt ? "dot--filled" : "dot--empty"} ${sel ? "dot--selected" : ""} ${alt ? "dot--alt" : ""}"
+        data-slot="${i}" data-floor-id="${floor.id}"
+        style="${bt ? `--dot-color:${wt.color};--dot-glow:${wt.glow};opacity:${filtered ? 0.15 : 1}` : ""}"
+        title="${bt ? bt.name + (bt.vintage ? " " + bt.vintage : "") : "Vide — cliquer pour ajouter"}"
+      ></div>`;
+    }
+
+    return `
+      <div class="floor" style="animation-delay:${index * 0.06}s">
+        <div class="floor-rack">
+          <div class="floor-counters">${counters}</div>
+          <div class="floor-dots" style="grid-template-columns:repeat(${cols},1fr)">${dots}</div>
+          <div class="floor-actions">
+            <button class="icon-btn" data-move-floor="${floor.id}" title="Déplacer le contenu">📦</button>
+            <button class="icon-btn" data-edit-floor="${floor.id}" title="Modifier">⚙</button>
+            <button class="icon-btn" data-del-floor="${floor.id}"  title="Supprimer">✕</button>
+          </div>
+        </div>
+        <div class="floor-label">
+          <span>${floor.name}</span><span class="floor-pct">${pct}%</span>
+        </div>
+      </div>`;
+  }
+
+  // ── Listeners carte ────────────────────────────────────────────────────────────
+
+  _bindCardListeners(data, bottles) {
+    const s = this.shadowRoot;
+
+    // Filtres par type et événement (selects)
+    s.getElementById("sel-type")?.addEventListener("change", (e) => {
+      this._filter = e.target.value;
+      this._render();
+    });
+    s.getElementById("sel-event")?.addEventListener("change", (e) => {
+      this._filterEvent = e.target.value;
+      this._render();
+    });
+
+    s.getElementById("btn-history")?.addEventListener("click", () => this._openModal("history"));
+    s.getElementById("btn-view")?.addEventListener("click", () => {
+      this._view = this._view === "3d" ? "2d" : "3d";
+      try { localStorage.setItem("millesime-view", this._view); } catch (e) {}
+      this._render();
+    });
+    s.getElementById("btn-search")?.addEventListener("click", () => this._openModal("search"));
+    s.getElementById("btn-journal")?.addEventListener("click", () => this._openModal("journal"));
+    s.getElementById("btn-add-floor")?.addEventListener("click",   () => this._openModal("floor"));
+
+    s.getElementById("btn-add-bottle")?.addEventListener("click", () => {
+      if (!data.cellar.floors.length) {
+        this._showToast("error", "Créez d'abord un étage !");
+        return;
+      }
+      this._openModal("bottle");
+    });
+
+    s.querySelectorAll(".dot").forEach((dot) =>
+      dot.addEventListener("click", () => {
+        const slot    = parseInt(dot.dataset.slot);
+        const floorId = dot.dataset.floorId;
+        const bt      = bottles.find((b) => b.floor_id === floorId && b.slot === slot);
+        if (bt) {
+          if (this._selected === bt.id) {
+            this._selected = null;
+            this._openModal("detail", { bottle: bt });
+          } else {
+            this._selected = bt.id;
+            this._render();
+          }
+        } else {
+          this._openModal("bottle", { slot: { floor_id: floorId, slot } });
+        }
+      })
+    );
+
+    s.querySelectorAll("[data-edit-floor]").forEach((btn) =>
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const floor = data.cellar.floors.find((f) => f.id === btn.dataset.editFloor);
+        this._openModal("floor", { floor });
+      })
+    );
+
+    s.querySelectorAll("[data-move-floor]").forEach((btn) =>
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const floor = data.cellar.floors.find((f) => f.id === btn.dataset.moveFloor);
+        const cnt = bottles.filter((b) => b.floor_id === floor.id).length;
+        if (cnt === 0) { this._showToast("warning", "Cet étage est vide."); return; }
+        if (data.cellar.floors.length < 2) { this._showToast("warning", "Il faut au moins 2 étages pour déplacer."); return; }
+        this._openModal("movefloor", { floor });
+      })
+    );
+
+    s.querySelectorAll("[data-del-floor]").forEach((btn) =>
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const fid   = btn.dataset.delFloor;
+        const floor = data.cellar.floors.find((f) => f.id === fid);
+        const cnt   = bottles.filter((b) => b.floor_id === fid).length;
+        const msg   = cnt > 0
+          ? `Supprimer "${floor?.name}" et ses ${cnt} bouteille(s) ?`
+          : `Supprimer l'étage "${floor?.name}" ?`;
+        if (confirm(msg)) await this._callService("remove_floor", { floor_id: fid });
+      })
+    );
+  }
+
+  disconnectedCallback() {
+    this._unsubs.forEach((f) => f());
+    this._closeModal();
+    this._unmount3D();
+  }
 }
 
 // ── Utilitaires ────────────────────────────────────────────────────────────────
@@ -1970,11 +1970,11 @@ this._unmount3D();
 const DEFAULT_DATA = () => ({ cellar: { name: "Millésime", floors: [] }, bottles: [] });
 
 function _drow(label, value) {
-if (!value) return "";
-return `<div class="mm-drow">
-<span class="mm-drow-label">${label}</span>
-<span class="mm-drow-value">${value}</span>
-</div>`;
+  if (!value) return "";
+  return `<div class="mm-drow">
+    <span class="mm-drow-label">${label}</span>
+    <span class="mm-drow-value">${value}</span>
+  </div>`;
 }
 
 // ── CSS de la carte ────────────────────────────────────────────────────────────
@@ -1983,11 +1983,11 @@ const CARD_CSS = `<style>
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Inter:wght@300;400;500;600&display=swap');
 
 :host {
-display: block; font-family: 'Inter', sans-serif;
---red:#C0392B; --red-h:#E74C3C; --gold:#C9A84C;
---bg-0:#080808; --bg-1:#111; --bg-2:#181818; --bg-3:#222; --bg-4:#2A2A2A;
---cream:#EDE0CC; --muted:#5A5A5A; --border:#222;
---wood-dk:#1C1208; --wood-md:#2A1A08; --wood-lt:#4A2A08;
+  display: block; font-family: 'Inter', sans-serif;
+  --red:#C0392B; --red-h:#E74C3C; --gold:#C9A84C;
+  --bg-0:#080808; --bg-1:#111; --bg-2:#181818; --bg-3:#222; --bg-4:#2A2A2A;
+  --cream:#EDE0CC; --muted:#5A5A5A; --border:#222;
+  --wood-dk:#1C1208; --wood-md:#2A1A08; --wood-lt:#4A2A08;
 }
 * { box-sizing:border-box; margin:0; padding:0; }
 
@@ -1998,21 +1998,21 @@ display: block; font-family: 'Inter', sans-serif;
 @keyframes pulse-anim { 0%,100%{opacity:0.3} 50%{opacity:0.8} }
 
 .header {
-display:flex; align-items:flex-start; gap:10px;
-padding:12px 14px 10px;
-background:linear-gradient(160deg,#180808 0%,#111 100%);
-border-bottom:1px solid var(--border); position:relative;
+  display:flex; align-items:flex-start; gap:10px;
+  padding:12px 14px 10px;
+  background:linear-gradient(160deg,#180808 0%,#111 100%);
+  border-bottom:1px solid var(--border); position:relative;
 }
 .header::after {
-content:''; position:absolute; bottom:0; left:14px; right:14px; height:1px;
-background:linear-gradient(90deg,transparent,var(--red)44,transparent);
+  content:''; position:absolute; bottom:0; left:14px; right:14px; height:1px;
+  background:linear-gradient(90deg,transparent,var(--red)44,transparent);
 }
 /* Logo + nom empilés à gauche */
 .header-left { display:flex; flex-direction:column; align-items:center; gap:4px; flex-shrink:0; padding-top:2px; }
 .header-glass {
-width:28px;
-filter:drop-shadow(0 0 8px rgba(192,57,43,0.7));
-animation:float-anim 3s ease-in-out infinite;
+  width:28px;
+  filter:drop-shadow(0 0 8px rgba(192,57,43,0.7));
+  animation:float-anim 3s ease-in-out infinite;
 }
 @keyframes float-anim { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
 .header-meta { text-align:center; }
@@ -2028,15 +2028,15 @@ animation:float-anim 3s ease-in-out infinite;
 .ha-icons { display:flex; gap:5px; }
 .ha-icons .btn-icon { flex:1; width:auto; }
 .btn-icon {
-flex-shrink:0; width:36px; padding:0; border-radius:8px;
-border:1px solid var(--border); background:var(--bg-2);
-color:var(--cream); font-size:15px; cursor:pointer; transition:all 0.15s;
+  flex-shrink:0; width:36px; padding:0; border-radius:8px;
+  border:1px solid var(--border); background:var(--bg-2);
+  color:var(--cream); font-size:15px; cursor:pointer; transition:all 0.15s;
 }
 .btn-icon:hover { background:var(--bg-3); }
 .btn-primary, .btn-secondary {
-padding:7px 12px; border-radius:8px; border:none;
-font-family:'Inter',sans-serif; font-size:11px; font-weight:600;
-cursor:pointer; transition:all 0.15s; white-space:nowrap;
+  padding:7px 12px; border-radius:8px; border:none;
+  font-family:'Inter',sans-serif; font-size:11px; font-weight:600;
+  cursor:pointer; transition:all 0.15s; white-space:nowrap;
 }
 .btn-primary { background:var(--red); color:#fff; }
 .btn-primary:hover { background:var(--red-h); transform:translateY(-1px); }
@@ -2044,22 +2044,22 @@ cursor:pointer; transition:all 0.15s; white-space:nowrap;
 .btn-secondary:hover { background:var(--bg-4); }
 
 .filters {
-display:flex; gap:10px; padding:8px 14px;
-background:var(--bg-1); border-bottom:1px solid var(--border);
+  display:flex; gap:10px; padding:8px 14px;
+  background:var(--bg-1); border-bottom:1px solid var(--border);
 }
 .filter-group { display:flex; flex-direction:column; gap:4px; flex:1; }
 .filter-label {
-font-size:9px; color:var(--muted); text-transform:uppercase;
-letter-spacing:1.5px; text-align:center;
+  font-size:9px; color:var(--muted); text-transform:uppercase;
+  letter-spacing:1.5px; text-align:center;
 }
 .filter-select {
-width:100%; padding:6px 28px 6px 10px; border-radius:8px;
-border:1px solid var(--border); background:var(--bg-2);
-color:var(--cream); font-family:'Inter',sans-serif; font-size:12px;
-cursor:pointer; outline:none; -webkit-appearance:none; appearance:none;
-background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%235A5A5A'/%3E%3C/svg%3E");
-background-repeat:no-repeat; background-position:right 10px center;
-min-height:36px;
+  width:100%; padding:6px 28px 6px 10px; border-radius:8px;
+  border:1px solid var(--border); background:var(--bg-2);
+  color:var(--cream); font-family:'Inter',sans-serif; font-size:12px;
+  cursor:pointer; outline:none; -webkit-appearance:none; appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%235A5A5A'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 10px center;
+  min-height:36px;
 }
 .filter-select:focus { border-color:var(--red); }
 .filter-select option { background:var(--bg-1); color:var(--cream); }
@@ -2074,9 +2074,9 @@ min-height:36px;
 @keyframes slide-in { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
 
 .floor-rack {
-display:flex; align-items:center; gap:6px;
-background:var(--bg-1); border:1px solid var(--border); border-bottom:none;
-border-radius:10px 10px 0 0; padding:8px 9px; min-height:0;
+  display:flex; align-items:center; gap:6px;
+  background:var(--bg-1); border:1px solid var(--border); border-bottom:none;
+  border-radius:10px 10px 0 0; padding:8px 9px; min-height:0;
 }
 .floor-counters { display:flex; flex-direction:column; align-items:flex-end; gap:1px; min-width:24px; }
 .type-count { font-size:9px; font-weight:700; display:block; }
@@ -2096,10 +2096,10 @@ border-radius:10px 10px 0 0; padding:8px 9px; min-height:0;
 .dot--alt.dot--selected { transform:translateY(6px) scale(0.82); }
 
 .floor-label {
-background:linear-gradient(90deg,var(--wood-dk),var(--wood-md),var(--wood-lt),var(--wood-md),var(--wood-dk));
-border:1px solid var(--wood-lt); border-top:none; border-radius:0 0 10px 10px;
-display:flex; align-items:center; justify-content:center; gap:8px; padding:4px 12px;
-font-size:9px; font-weight:600; color:var(--gold); letter-spacing:2px; text-transform:uppercase;
+  background:linear-gradient(90deg,var(--wood-dk),var(--wood-md),var(--wood-lt),var(--wood-md),var(--wood-dk));
+  border:1px solid var(--wood-lt); border-top:none; border-radius:0 0 10px 10px;
+  display:flex; align-items:center; justify-content:center; gap:8px; padding:4px 12px;
+  font-size:9px; font-weight:600; color:var(--gold); letter-spacing:2px; text-transform:uppercase;
 }
 .floor-pct { color:var(--wood-lt); font-size:8px; }
 
@@ -2109,26 +2109,26 @@ font-size:9px; font-weight:600; color:var(--gold); letter-spacing:2px; text-tran
 .floor3d-actions { position:absolute; top:8px; right:8px; flex-direction:row; gap:6px; }
 /* ─── Scène 3D (Three.js) ─── */
 .view3d-stage {
-position:relative; background:linear-gradient(180deg,#15100C 0%,#0C0A08 100%);
-border:1px solid var(--border); border-radius:12px; overflow:hidden;
+  position:relative; background:linear-gradient(180deg,#15100C 0%,#0C0A08 100%);
+  border:1px solid var(--border); border-radius:12px; overflow:hidden;
 }
 .three-loading {
-display:flex; align-items:center; justify-content:center; gap:8px;
-height:170px; color:#777; font-size:12px;
+  display:flex; align-items:center; justify-content:center; gap:8px;
+  height:170px; color:#777; font-size:12px;
 }
 .t3-badge {
-position:absolute; transform:translateX(-50%); display:flex; align-items:center; gap:6px;
-background:rgba(14,12,10,0.82); border:1px solid #2E2620;
-border-radius:8px; padding:3px 10px; font-size:10px; color:var(--cream);
-letter-spacing:0.5px; pointer-events:none; backdrop-filter:blur(3px);
-white-space:nowrap;
+  position:absolute; transform:translateX(-50%); display:flex; align-items:center; gap:6px;
+  background:rgba(14,12,10,0.82); border:1px solid #2E2620;
+  border-radius:8px; padding:3px 10px; font-size:10px; color:var(--cream);
+  letter-spacing:0.5px; pointer-events:none; backdrop-filter:blur(3px);
+  white-space:nowrap;
 }
 .t3-badge b { color:var(--red); font-family:'Playfair Display',serif; font-size:12px; }
 .t3-badge span { color:var(--wood-lt); font-size:9px; }
 .t3-rail {
-position:absolute; right:6px; display:flex; flex-direction:column; gap:10px;
-background:rgba(14,12,10,0.82); border:1px solid #2E2620;
-border-radius:9px; padding:7px 5px; backdrop-filter:blur(3px);
+  position:absolute; right:6px; display:flex; flex-direction:column; gap:10px;
+  background:rgba(14,12,10,0.82); border:1px solid #2E2620;
+  border-radius:9px; padding:7px 5px; backdrop-filter:blur(3px);
 }
 .t3-rail .icon-btn { opacity:0.6; font-size:13px; }
 .t3-rail .icon-btn:hover { opacity:1; }
@@ -2141,12 +2141,12 @@ border-radius:9px; padding:7px 5px; backdrop-filter:blur(3px);
 /* ─── Historique valeur ─── */
 .hist-summary { display:flex; gap:8px; margin-bottom:8px; }
 .hist-stat { flex:1; display:flex; flex-direction:column; align-items:center;
-padding:8px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border); }
+  padding:8px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border); }
 .hist-val { font-size:16px; font-weight:700; color:var(--cream); font-family:'Playfair Display',serif; }
 .hist-lbl { font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-top:2px; }
 .hist-table { margin-top:12px; display:flex; flex-direction:column; gap:4px; }
 .hist-row { display:flex; align-items:center; padding:5px 8px; background:var(--bg-2);
-border-radius:6px; border:1px solid var(--border); font-size:11px; }
+  border-radius:6px; border:1px solid var(--border); font-size:11px; }
 .hist-date { color:var(--muted); flex:1; }
 .hist-bottles { color:var(--muted); margin-right:12px; }
 .hist-price { color:var(--cream); font-weight:600; font-family:'Playfair Display',serif; }
@@ -2157,44 +2157,44 @@ border-radius:6px; border:1px solid var(--border); font-size:11px; }
 const MODAL_CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Inter:wght@300;400;500;600&display=swap');
 
-@keyframes mm-fade { from{opacity:0} to{opacity:1} }
+@keyframes mm-fade  { from{opacity:0} to{opacity:1} }
 @keyframes mm-slide { from{opacity:0;transform:translateY(-18px)} to{opacity:1;transform:translateY(0)} }
-@keyframes mm-spin { to{transform:rotate(360deg)} }
+@keyframes mm-spin  { to{transform:rotate(360deg)} }
 
 .mm-overlay {
-position:fixed; inset:0; background:rgba(0,0,0,0.88); z-index:99999;
-display:flex; align-items:flex-start; justify-content:center; padding-top:12px;
-animation:mm-fade 0.15s ease; font-family:'Inter',sans-serif;
+  position:fixed; inset:0; background:rgba(0,0,0,0.88); z-index:99999;
+  display:flex; align-items:flex-start; justify-content:center; padding-top:12px;
+  animation:mm-fade 0.15s ease; font-family:'Inter',sans-serif;
 }
 .mm-box {
-background:#111; border:1px solid #222; border-top:none;
-border-radius:0 0 20px 20px;
-width:100%; max-width:520px; max-height:92vh;
-display:flex; flex-direction:column;
-animation:mm-slide 0.22s ease-out; color:#EDE0CC;
-overflow:hidden;
+  background:#111; border:1px solid #222; border-top:none;
+  border-radius:0 0 20px 20px;
+  width:100%; max-width:520px; max-height:92vh;
+  display:flex; flex-direction:column;
+  animation:mm-slide 0.22s ease-out; color:#EDE0CC;
+  overflow:hidden;
 }
 .mm-header {
-display:flex; align-items:center; justify-content:space-between;
-padding:16px 20px 12px; border-bottom:1px solid #222;
-flex-shrink:0; background:#111; z-index:2;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:16px 20px 12px; border-bottom:1px solid #222;
+  flex-shrink:0; background:#111; z-index:2;
 }
 .mm-title { font-family:'Playfair Display',serif; font-size:16px; color:#EDE0CC; }
 .mm-close { background:none; border:none; color:#555; cursor:pointer; font-size:18px; padding:0 4px; transition:color 0.15s; }
 .mm-close:hover { color:#EDE0CC; }
-.mm-body { padding:16px 20px; flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+.mm-body  { padding:16px 20px; flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; }
 .mm-footer {
-padding:12px 20px; border-top:1px solid #222;
-display:flex; gap:8px; justify-content:flex-end;
-flex-shrink:0; background:#111;
+  padding:12px 20px; border-top:1px solid #222;
+  display:flex; gap:8px; justify-content:flex-end;
+  flex-shrink:0; background:#111;
 }
-.mm-field { margin-bottom:12px; }
-.mm-label { display:block; font-size:10px; text-transform:uppercase; letter-spacing:1px; color:#C0392B; margin-bottom:4px; }
-.mm-input {
-width:100%; padding:9px 11px;
-background:#080808; border:1px solid #222; border-radius:8px;
-color:#EDE0CC; font-family:'Inter',sans-serif; font-size:13px;
-outline:none; transition:border-color 0.15s; box-sizing:border-box;
+.mm-field  { margin-bottom:12px; }
+.mm-label  { display:block; font-size:10px; text-transform:uppercase; letter-spacing:1px; color:#C0392B; margin-bottom:4px; }
+.mm-input  {
+  width:100%; padding:9px 11px;
+  background:#080808; border:1px solid #222; border-radius:8px;
+  color:#EDE0CC; font-family:'Inter',sans-serif; font-size:13px;
+  outline:none; transition:border-color 0.15s; box-sizing:border-box;
 }
 .mm-input:focus { border-color:#C0392B; box-shadow:0 0 0 2px rgba(192,57,43,0.1); }
 .mm-input option { background:#111; }
@@ -2211,83 +2211,83 @@ outline:none; transition:border-color 0.15s; box-sizing:border-box;
 
 /* Bloc recherche */
 .mm-search-block { margin-bottom:14px; }
-.mm-search-row { display:flex; gap:8px; align-items:center; }
-.mm-search-wrap { position:relative; display:flex; align-items:center; flex:1; }
-.mm-search-icon { position:absolute; left:11px; font-size:13px; pointer-events:none; }
+.mm-search-row   { display:flex; gap:8px; align-items:center; }
+.mm-search-wrap  { position:relative; display:flex; align-items:center; flex:1; }
+.mm-search-icon  { position:absolute; left:11px; font-size:13px; pointer-events:none; }
 .mm-search-input { padding-left:32px !important; }
 
 /* Bouton photo */
 .mm-btn-photo {
-flex-shrink:0; width:40px; height:40px; border-radius:8px;
-background:#1A1A1A; border:1px solid #333; cursor:pointer;
-font-size:18px; display:flex; align-items:center; justify-content:center;
-transition:all 0.15s;
+  flex-shrink:0; width:40px; height:40px; border-radius:8px;
+  background:#1A1A1A; border:1px solid #333; cursor:pointer;
+  font-size:18px; display:flex; align-items:center; justify-content:center;
+  transition:all 0.15s;
 }
 .mm-btn-photo:hover { background:#2A2A2A; border-color:#C0392B44; }
 
 /* Spinner */
 .mm-spinner {
-display:inline-block; width:12px; height:12px;
-border:2px solid #333; border-top-color:#C0392B;
-border-radius:50%; animation:mm-spin 0.7s linear infinite;
-vertical-align:middle; margin-right:6px;
+  display:inline-block; width:12px; height:12px;
+  border:2px solid #333; border-top-color:#C0392B;
+  border-radius:50%; animation:mm-spin 0.7s linear infinite;
+  vertical-align:middle; margin-right:6px;
 }
 
 /* Résultats */
 .mm-viv-results {
-background:#080808; border:1px solid #222; border-top:none;
-border-radius:0 0 8px 8px;
-display:none; max-height:220px; overflow-y:auto;
+  background:#080808; border:1px solid #222; border-top:none;
+  border-radius:0 0 8px 8px;
+  display:none; max-height:220px; overflow-y:auto;
 }
 .mm-viv-item {
-display:flex; align-items:flex-start; gap:9px;
-padding:10px 12px; cursor:pointer;
-border-bottom:1px solid #181818; transition:background 0.12s;
+  display:flex; align-items:flex-start; gap:9px;
+  padding:10px 12px; cursor:pointer;
+  border-bottom:1px solid #181818; transition:background 0.12s;
 }
 .mm-viv-item:hover { background:#141414; }
 .mm-viv-item:last-child { border-bottom:none; }
 .mm-viv-name { font-size:13px; color:#EDE0CC; font-weight:500; }
-.mm-viv-sub { font-size:10px; color:#555; margin-top:2px; }
+.mm-viv-sub  { font-size:10px; color:#555; margin-top:2px; }
 .mm-viv-notes { font-size:10px; color:#888; margin-top:3px; font-style:italic; line-height:1.4; }
 .mm-viv-loading { padding:12px; font-size:12px; color:#555; text-align:center; display:flex; align-items:center; justify-content:center; gap:6px; }
 
 /* Bannière erreur/info sous la recherche */
 .mm-search-banner {
-font-size:11px; line-height:1.5; border-radius:6px;
-padding:8px 10px; margin-top:6px;
+  font-size:11px; line-height:1.5; border-radius:6px;
+  padding:8px 10px; margin-top:6px;
 }
-.mm-search-banner--error { background:#200808; color:#ff9090; border:1px solid #401010; }
+.mm-search-banner--error   { background:#200808; color:#ff9090; border:1px solid #401010; }
 .mm-search-banner--warning { background:#1E1400; color:#ffcc70; border:1px solid #402800; }
-.mm-search-banner--info { background:#080E18; color:#80b4e8; border:1px solid #102030; }
+.mm-search-banner--info    { background:#080E18; color:#80b4e8; border:1px solid #102030; }
 
 /* Photo */
 .mm-photo-loading { text-align:center; padding:10px 0; }
 .mm-photo-error {
-font-size:12px; color:#ff9090; background:#200808;
-border:1px solid #401010; border-radius:8px;
-padding:10px 12px; margin-bottom:10px; text-align:center;
+  font-size:12px; color:#ff9090; background:#200808;
+  border:1px solid #401010; border-radius:8px;
+  padding:10px 12px; margin-bottom:10px; text-align:center;
 }
 
 /* Détail */
-.mm-detail-hero { text-align:center; margin-bottom:18px; }
-.mm-detail-name { font-family:'Playfair Display',serif; font-size:20px; color:#EDE0CC; margin-bottom:4px; }
-.mm-detail-sub { font-size:12px; color:#666; }
-.mm-vivino-link { display:inline-block; margin-top:8px; color:#C0392B; font-size:11px; text-decoration:none; border:1px solid rgba(192,57,43,0.3); padding:3px 10px; border-radius:20px; }
-.mm-detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-bottom:10px; }
-.mm-drow { background:#181818; border-radius:8px; padding:9px 11px; border:1px solid #222; }
-.mm-drow-label { display:block; font-size:9px; text-transform:uppercase; letter-spacing:1px; color:#555; margin-bottom:2px; }
-.mm-drow-value { font-size:13px; color:#EDE0CC; font-weight:500; }
-.mm-notes { font-size:12px; color:#888; background:#181818; padding:10px 12px; border-radius:8px; border-left:2px solid #C0392B; line-height:1.55; margin-bottom:6px; }
-.mm-tasting { border-left-color:#C0392B; font-style:italic; }
-.mm-pairing { border-left-color:#27AE8F; font-style:normal; }
+.mm-detail-hero  { text-align:center; margin-bottom:18px; }
+.mm-detail-name  { font-family:'Playfair Display',serif; font-size:20px; color:#EDE0CC; margin-bottom:4px; }
+.mm-detail-sub   { font-size:12px; color:#666; }
+.mm-vivino-link  { display:inline-block; margin-top:8px; color:#C0392B; font-size:11px; text-decoration:none; border:1px solid rgba(192,57,43,0.3); padding:3px 10px; border-radius:20px; }
+.mm-detail-grid  { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-bottom:10px; }
+.mm-drow         { background:#181818; border-radius:8px; padding:9px 11px; border:1px solid #222; }
+.mm-drow-label   { display:block; font-size:9px; text-transform:uppercase; letter-spacing:1px; color:#555; margin-bottom:2px; }
+.mm-drow-value   { font-size:13px; color:#EDE0CC; font-weight:500; }
+.mm-notes        { font-size:12px; color:#888; background:#181818; padding:10px 12px; border-radius:8px; border-left:2px solid #C0392B; line-height:1.55; margin-bottom:6px; }
+.mm-tasting      { border-left-color:#C0392B; font-style:italic; }
+.mm-pairing      { border-left-color:#27AE8F; font-style:normal; }
 
 /* ── Footer fiche détail : bouton "J'ai bu" pleine largeur + ligne d'actions ── */
 .mm-footer-wrap { flex-direction:column; gap:8px; }
 .mm-footer-row { display:flex; gap:6px; width:100%; }
 .mm-footer-row .mm-btn { flex:1; min-width:0; font-size:11px; padding:8px 6px; }
 .mm-btn-drink {
-width:100%; background:linear-gradient(135deg,#7B1D2E,#A02838); color:#F4D5D5;
-border:1px solid #C0394A; font-size:13px; padding:11px;
+  width:100%; background:linear-gradient(135deg,#7B1D2E,#A02838); color:#F4D5D5;
+  border:1px solid #C0394A; font-size:13px; padding:11px;
 }
 .mm-btn-drink:hover { background:linear-gradient(135deg,#8B2030,#B83042); transform:translateY(-1px); }
 
@@ -2300,8 +2300,8 @@ border:1px solid #C0394A; font-size:13px; padding:11px;
 /* ── Journal de dégustation ── */
 .journal-list { display:flex; flex-direction:column; gap:8px; }
 .journal-row {
-background:var(--bg-2); border:1px solid var(--border); border-radius:10px;
-padding:10px 12px;
+  background:var(--bg-2); border:1px solid var(--border); border-radius:10px;
+  padding:10px 12px;
 }
 .journal-main { display:flex; align-items:flex-start; gap:9px; }
 .journal-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; margin-top:5px; }
@@ -2309,13 +2309,13 @@ padding:10px 12px;
 .journal-sub { font-size:10px; color:var(--muted); margin-top:2px; }
 .journal-comment { font-size:11px; color:#9a9a9a; font-style:italic; margin-top:5px; line-height:1.45; }
 .journal-del {
-background:none; border:none; color:#555; cursor:pointer; font-size:13px;
-padding:2px 4px; flex-shrink:0; transition:color 0.15s;
+  background:none; border:none; color:#555; cursor:pointer; font-size:13px;
+  padding:2px 4px; flex-shrink:0; transition:color 0.15s;
 }
 .journal-del:hover { color:#ff6b6b; }
 .journal-meta {
-display:flex; align-items:center; gap:12px; margin-top:8px;
-padding-top:8px; border-top:1px solid var(--border);
+  display:flex; align-items:center; gap:12px; margin-top:8px;
+  padding-top:8px; border-top:1px solid var(--border);
 }
 .journal-stars { font-size:14px; letter-spacing:1px; }
 .journal-date { font-size:10px; color:var(--muted); }
@@ -2325,17 +2325,17 @@ padding-top:8px; border-top:1px solid var(--border);
 // ── Enregistrement ─────────────────────────────────────────────────────────────
 
 console.info(
-"%c 🍷 MILLESIME-CARD %c v" + MILLESIME_CARD_VERSION + " ",
-"background:#7B1D2E;color:#F4D5D5;font-weight:700;border-radius:4px 0 0 4px;padding:2px 6px",
-"background:#222;color:#EDE0CC;border-radius:0 4px 4px 0;padding:2px 6px"
+  "%c 🍷 MILLESIME-CARD %c v" + MILLESIME_CARD_VERSION + " ",
+  "background:#7B1D2E;color:#F4D5D5;font-weight:700;border-radius:4px 0 0 4px;padding:2px 6px",
+  "background:#222;color:#EDE0CC;border-radius:0 4px 4px 0;padding:2px 6px"
 );
 
 customElements.define("millesime-card", MillesimeCard);
 
 window.customCards = window.customCards || [];
 window.customCards.push({
-type: "millesime-card",
-name: "Millésime — Cave à Vin",
-description: "Cave à vin — Vinotag, Gemini AI, journal de dégustation (v" + MILLESIME_CARD_VERSION + ")",
-preview: true,
+  type:        "millesime-card",
+  name:        "Millésime — Cave à Vin",
+  description: "Cave à vin — Vinotag, Gemini AI, journal de dégustation (v" + MILLESIME_CARD_VERSION + ")",
+  preview:     true,
 });
