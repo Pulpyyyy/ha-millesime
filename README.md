@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-5.0.0-8B1A2A?style=flat-square"/>
+  <img src="https://img.shields.io/badge/version-5.4.0-8B1A2A?style=flat-square"/>
   <img src="https://img.shields.io/badge/Home%20Assistant-2024%2B-41BDF5?style=flat-square"/>
   <img src="https://img.shields.io/badge/HACS-custom-orange?style=flat-square"/>
   <img src="https://img.shields.io/badge/licence-MIT-green?style=flat-square"/>
