@@ -1,280 +1,152 @@
-# 🍷 Millésime — Cave à Vin pour Home Assistant
+# 🍷 Millésime — Cave à vin pour Home Assistant
 
-<p align="center">
-  <img src="custom_components/millesime/icon.png" width="140" alt="Millésime logo"/>
-</p>
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/hacs/integration)
+[![version](https://img.shields.io/badge/version-6.0.0-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
+[![Offrir un verre de vin](https://img.shields.io/badge/🍷_Offrir_un_verre_de_vin-PayPal-C0392B.svg?style=flat-square)](https://paypal.me/Redsklns)
 
-<p align="center">
-  <img src="https://img.shields.io/badge/version-5.4.0-8B1A2A?style=flat-square"/>
-  <img src="https://img.shields.io/badge/Home%20Assistant-2024%2B-41BDF5?style=flat-square"/>
-  <img src="https://img.shields.io/badge/HACS-custom-orange?style=flat-square"/>
-  <img src="https://img.shields.io/badge/licence-MIT-green?style=flat-square"/>
-</p>
+**Millésime** transforme Home Assistant en gestionnaire de cave à vin complet : visualisez vos bouteilles dans une scène **3D réaliste**, scannez les étiquettes par **photo**, suivez la valeur de votre collection et tenez un **journal de dégustation**.
 
-<p align="center">
-  <a href="https://www.paypal.com/donate/?business=MWJCVFGTNC4T4&no_recurring=1&currency_code=EUR" target="_blank">
-    <img src="https://img.shields.io/badge/Offrir%20un%20verre%20de%20vin-🍷-8B1A2A?style=flat-square&labelColor=555555" alt="Offrir un verre de vin"/>
-  </a>
-</p>
-
----
-
-> **Gérez votre cave à vin directement dans Home Assistant.**
-> Visualisation style Vinotag, intelligence artificielle Gemini, scan d'étiquettes, suivi de valeur — tout ce qu'il faut pour un amateur de vin exigeant.
-
----
-
-## 🌟 Pourquoi Millésime ?
-
-La gestion d'une cave à vin mérite mieux qu'un tableur. Millésime transforme Home Assistant en véritable gestionnaire de cave avec une interface pensée pour le mobile, une IA qui remplit les fiches automatiquement, et un suivi de la valeur de votre collection dans le temps.
+Intégration 100 % locale (vos données restent chez vous), pensée **mobile-first** pour un usage quotidien depuis l'application Home Assistant.
 
 ---
 
 ## ✨ Fonctionnalités
 
-### 🏗️ Visualisation de la cave
-- **Style Vinotag** — cercles colorés sur clayettes bois, vue intuitive de votre cave
-- **Multi-étages** — créez autant d'étages que votre cave en contient
-- **Deux dispositions** — côte à côte ou tête-bêche par étage
-- **Compteurs** — nombre de bouteilles par type affiché sur chaque étage
-- **Taux de remplissage** — pourcentage d'occupation visible sur chaque clayette
+### Visualisation
+- **Trois vues** au choix : 🍾 Bouteilles 2D, ⠿ Pastilles, 🧊 **Scène 3D** (WebGL/Three.js)
+- **Rendu 3D réaliste** : bouteilles modelées par forme (bordelaise, bourguignonne, champenoise avec muselet et bouchon champignon, flûte d'Alsace, ligérienne), verre teinté transparent laissant voir la robe du vin, étiquette nominative sur chaque bouteille, ombres de contact douces
+- **Casiers configurables** : meuble complet avec étagères internes, 5 essences de bois (chêne, noyer, merisier, grisé, wengé) ou structure en **fer forgé**, montants, pieds, croisillons et toit optionnels
+- **Dispositions** : côte à côte, tête-bêche, semi-couché
+- **Drag & drop** en 3D pour déplacer ou permuter les bouteilles
+- Vue mémorisée d'une session à l'autre, et configurable via YAML (`default_view`)
+- S'adapte au **thème** Home Assistant (clair / sombre)
 
-### 🤖 Intelligence Artificielle (Gemini)
-- **Recherche texte** — tapez 3 lettres, suggestions en temps réel via Gemini 2.5 Flash Lite
-- **Scan d'étiquette** — prenez une photo, Gemini 2.5 Flash identifie le vin et remplit tout
-- **Prix automatique** — estimez le prix marché d'un vin en un clic depuis la fiche détail
-- **Notes de dégustation** — arômes, texture, finale générés automatiquement
-- **Accords mets-vins** — suggestions d'accompagnement pour chaque bouteille
-- **Fenêtre de dégustation** — dates optimales de consommation
-- **Fallback Open Food Facts** — 150 000+ vins accessibles sans clé Gemini
-- **Cascade de modèles** — si Gemini Flash est saturé, bascule automatiquement sur Flash Lite
-- **Retry automatique** — 503/429 gérés avec backoff, aucune erreur silencieuse
+### Gestion des vins
+- **Ajout par photo** 📷 : l'IA lit l'étiquette et remplit automatiquement la fiche
+- **Recherche par nom** : trouvez n'importe quel vin (nom, producteur, appellation, région, millésime)
+- **Estimation de prix** automatique et suivi de la **valeur de la cave** dans le temps (graphique)
+- **Formats** : 75 cl, magnum, demi… chaque bouteille rendue à l'échelle dans son emplacement
+- **Coup de cœur** ⭐, commentaire par bouteille, fenêtre de dégustation (✅ à boire / ⏳ trop tôt / 🔴 passé l'apogée)
+- **Anti-doublon** : impossible de placer deux bouteilles au même emplacement
+- **Déplacement d'un casier entier** 📦 en un clic
+- **Rafraîchissement des fiches** ♻️ : fusion des doublons et complétion automatique des champs vides
 
-### 📋 Gestion des bouteilles
-- **Fiche complète** — nom, millésime, appellation, région, pays, producteur, prix, quantité
-- **Notes personnelles** — impressions, occasion, souvenir
-- **Événement** — 🚫 Ne pas toucher · 📦 À garder · 🎉 Grande occasion · 🥂 Petite Occasion · 🍽️ Vin de table
-- **Duplication** — dupliquer une bouteille sur plusieurs emplacements (idéal pour les caisses)
-- **Modification** — éditez n'importe quel champ à tout moment
+### Journal & import
+- **Journal de dégustation** 📓 : marquez une bouteille comme bue (note ⭐, date, commentaire), elle est archivée avec statistiques (nombre, note moyenne, total dépensé)
+- **Import Vinotag** 📥 : importez votre cave depuis un export CSV
 
-### 🔍 Filtres & Recherche
-- **Filtre par type** — rouge, blanc, rosé, effervescent, liquoreux
-- **Filtre par événement** — filtrez les bouteilles par occasion
-- **Menus déroulants** — optimisés iPhone, aucun scroll horizontal
-
-### 📈 Suivi de valeur
-- **Valeur en temps réel** — calculée automatiquement depuis les prix de vos bouteilles
-- **Historique de valeur** — enregistrez des relevés datés (jusqu'à 365 points)
-- **Graphique SVG** — courbe d'évolution avec aire dégradée, axe des valeurs, labels de dates
-- **Résumé** — valeur actuelle, nombre de bouteilles, nombre de relevés
-
-### 📊 Capteurs Home Assistant
-| Entité | Description |
-|--------|-------------|
-| `sensor.millesime_bouteilles` | Nombre total de bouteilles |
-| `sensor.millesime_valeur` | Valeur estimée de la cave (€) |
-| `sensor.millesime_etages` | Nombre d'étages configurés |
-
-### 📱 Interface Mobile-first
-- **Optimisé iPhone** — modals en haut de l'écran, footer toujours visible
-- **Menus déroulants** — remplacement des boutons de filtre pour faciliter la sélection tactile
-- **Scan photo natif** — accès direct à l'appareil photo iOS
-- **Toasts de notification** — feedback visuel pour chaque action
+### Intelligence artificielle
+- **Google Gemini 3** pour la recherche texte et la lecture de photo (repli automatique sur Gemini 2.5 si indisponible)
+- **Open Food Facts** en secours, sans clé requise — 150 000+ vins référencés
+- Clé Gemini **gratuite** et optionnelle
 
 ---
 
-## 🚀 Installation
+## 📦 Installation
 
-### Pré-requis
-- Home Assistant 2024.1 ou supérieur
-- HACS installé ([guide officiel](https://hacs.xyz/docs/setup/download))
+### Via HACS (recommandé)
+1. HACS → ⋮ → **Dépôts personnalisés**
+2. Ajoutez `https://github.com/Redsklns/ha-millesime` — catégorie **Intégration**
+3. Installez **Millésime**, puis redémarrez Home Assistant
+4. **Paramètres → Appareils et services → Ajouter une intégration → Millésime**
 
-### Étape 1 — Ajouter le dépôt dans HACS
+### Manuelle
+1. Copiez `custom_components/millesime/` dans le dossier `config/` de Home Assistant
+2. Copiez `www/millesime/millesime-card.js` dans `config/www/millesime/`
+3. Redémarrez Home Assistant et ajoutez l'intégration
 
-1. Ouvrez **HACS** dans la barre latérale
-2. Cliquez sur **Intégrations**
-3. Cliquez sur les **⋮** en haut à droite → **Dépôts personnalisés**
-4. Collez l'URL : `https://github.com/Redsklns/ha-millesime`
-5. Catégorie : **Intégration** → **Ajouter**
-6. Recherchez **Millésime** et cliquez **Télécharger**
-7. **Redémarrez Home Assistant**
-
-### Étape 2 — Enregistrer la ressource Lovelace
-
-1. Allez dans **Paramètres → Tableaux de bord → Ressources**
-2. Cliquez **+ Ajouter une ressource**
-3. Renseignez :
-   ```
-   URL  : /local/millesime/millesime-card.js
-   Type : Module JavaScript
-   ```
-4. Cliquez **Créer**
-
-> 💡 Si le menu Ressources n'est pas visible : activez le **Mode avancé** dans votre profil utilisateur.
-
-### Étape 3 — Ajouter l'intégration
-
-1. Allez dans **Paramètres → Appareils & Services**
-2. Cliquez **+ Ajouter une intégration**
-3. Recherchez **Millésime**
-4. Renseignez le **nom de votre cave**
-5. *(Optionnel)* Collez votre **clé API Gemini** pour activer l'IA
-
-### Étape 4 — Ajouter la carte Lovelace
-
-1. Ouvrez votre tableau de bord
-2. Passez en mode édition → **+ Ajouter une carte**
-3. Choisissez **Custom: Millésime Cave à Vin**
-
-Ou directement en YAML :
+### Carte Lovelace
+Ajoutez la ressource (**Paramètres → Tableaux de bord → ⋮ → Ressources**) :
+```
+/local/millesime/millesime-card.js
+```
+Puis dans votre tableau de bord :
 ```yaml
 type: custom:millesime-card
+# Options facultatives :
+default_view: 3d          # 2d | dot | 3d
+rack_defaults:
+  material: chene         # chene | noyer | merisier | grise | wenge | fer
+racks:
+  Cave principale:
+    material: fer
+    accent: "#C0392B"
 ```
 
 ---
 
-## 🔑 Clé API Gemini (optionnelle mais recommandée)
+## 🔑 Configuration de la clé Gemini (optionnelle)
 
-La clé Gemini est **gratuite** et débloque toutes les fonctionnalités IA.
+1. Créez une clé gratuite sur [aistudio.google.com](https://aistudio.google.com)
+2. Renseignez-la à la configuration de l'intégration (ou plus tard via ⚙️)
 
-### Obtenir une clé en 30 secondes
-
-1. Allez sur **[aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)**
-2. Connectez-vous avec votre compte Google
-3. Cliquez **Create API Key**
-4. Copiez la clé (commence par `AI...`)
-
-### Configurer la clé
-
-**Paramètres → Appareils & Services → Millésime → ⚙️ Configurer**
-
-La clé peut être ajoutée ou modifiée à tout moment, sans réinstaller.
-
-### Quotas gratuits
-
-| Modèle | Usage | Limite gratuite |
-|--------|-------|-----------------|
-| `gemini-2.5-flash-lite` | Recherche texte | 1 000 req/jour |
-| `gemini-2.5-flash` | Scan photo | 500 req/jour |
-
-Chaque utilisateur utilise **sa propre clé** — vous ne payez rien pour les autres.
-
-Sans clé → Open Food Facts (150 000+ vins, gratuit, sans notes de dégustation).
+Sans clé, Millésime fonctionne avec Open Food Facts (recherche par nom et code-barres, sans notes de dégustation IA).
 
 ---
 
-## 🖥️ Guide d'utilisation
+## 🛠️ Services disponibles
 
-### Créer un étage
-Cliquez **+ Étage** → donnez un nom, définissez colonnes × rangées et la disposition.
+Gestion des vins (`add_wine`, `update_wine`, `remove_wine`), des emplacements (`add_slot`, `update_slot`, `move_slot`, `remove_slot`), des casiers (`add_rack`, `update_rack`, `remove_rack`), dégustation (`drink_bottle`, `delete_tasting`), maintenance (`refresh_wines`, `value_snapshot`, `rename_cellar`) et import (`import_vinotag`).
 
-### Ajouter une bouteille
-- Cliquez sur un **emplacement vide** ou sur **+ Vin**
-- Tapez le nom → sélectionnez dans les suggestions → la fiche se remplit automatiquement
-- Ou cliquez 📷 pour **scanner l'étiquette** avec votre téléphone
-
-### Consulter une bouteille
-- **1er clic** → sélection (contour doré)
-- **2e clic** → fiche détail complète
-
-### Depuis la fiche détail
-- **💰 Prix** — Gemini estime le prix marché et met à jour la fiche
-- **⎘ Dupliquer** — copiez la bouteille sur un ou plusieurs emplacements
-- **✏️ Modifier** — éditez tous les champs
-- **🗑 Retirer** — supprime la bouteille de la cave
-
-### Suivi de valeur
-Cliquez sur le **logo verre** en haut à gauche → historique de valeur avec graphique.
-Cliquez **📸 Enregistrer la valeur** pour ajouter un point à l'historique.
+> Les anciens services (`add_bottle`, `add_floor`…) restent acceptés comme alias pour la compatibilité des automatisations existantes.
 
 ---
 
-## 📁 Structure du projet
+## 🤖 Un projet développé avec l'IA
 
-```
-ha-millesime/
-├── custom_components/millesime/
-│   ├── __init__.py           ← Backend Python (WebSocket, Gemini, OFF, services)
-│   ├── config_flow.py        ← Configuration UI (nom cave + clé Gemini)
-│   ├── sensor.py             ← 3 capteurs HA
-│   ├── manifest.json         ← version 5.0.0
-│   ├── services.yaml         ← Déclaration des services
-│   ├── strings.json          ← Textes UI avec lien clé Gemini
-│   ├── icon.png              ← Icône 512×512
-│   ├── brand/
-│   │   └── icon.png          ← Icône pour HA 2026.3+ et HACS
-│   └── translations/
-│       └── fr.json
-├── www/millesime/
-│   └── millesime-card.js     ← Carte Lovelace custom
-├── assets/
-│   └── donate.svg
-├── icon.png                  ← Icône racine (HACS store)
-├── hacs.json
-└── README.md
-```
-
-Les données sont persistées dans `/homeassistant/millesime_data.json`.
+L'intégralité de Millésime a été conçue et développée en collaboration avec **Claude** (Anthropic), de l'architecture backend Python à la carte Lovelace 3D — une expérience grandeur nature des capacités de l'IA sur un vrai projet logiciel.
 
 ---
 
-## ⚙️ Architecture technique
+## 📝 Changelog
 
-| Composant | Technologie |
-|-----------|-------------|
-| Backend | Python, Home Assistant integration framework |
-| Communication | WebSocket HA natif (authentifié, zéro token) |
-| Frontend | JavaScript ES2020, Lovelace custom card |
-| IA texte | Gemini 2.5 Flash Lite (`gemini-2.5-flash-lite`) |
-| IA vision | Gemini 2.5 Flash (`gemini-2.5-flash`) |
-| Fallback | Open Food Facts REST API v1 |
-| Stockage | JSON local (`millesime_data.json`) |
-| Cache | In-memory 5 min (économise les quotas Gemini) |
-| Graphiques | SVG inline DOM (`createElementNS`) |
+### [6.0.0] — 2026-06
+Version majeure développée en collaboration avec **[@Pulpyyyy](https://github.com/Pulpyyyy)** 🤝
+
+- **Nouveau modèle de données** : une fiche vin → plusieurs emplacements (`wines[]` + `slots[]`), casiers avec étagères internes (`racks[]`) ; migration automatique des données existantes
+- **Vue 3D entièrement repensée** : profils de bouteilles réalistes par type (champenoise avec muselet, bouchon champignon, collerette), verre transparent teinté laissant voir le vin, meubles complets (5 essences de bois ou fer forgé, montants, pieds, croisillons, toit), plaque nominative par étagère
+- **Drag & drop** en 3D : déplacer ou permuter les bouteilles directement dans la scène
+- **Trois vues** (Bouteilles / Pastilles / 3D) avec sélecteur dans l'en-tête, vue mémorisée et configurable (`default_view`)
+- **Import Vinotag** depuis un fichier CSV
+- **Formats de bouteille** (magnum, demi…) rendus à l'échelle
+- **Coup de cœur** ⭐, commentaire par bouteille, fenêtre de dégustation colorée
+- **Rafraîchissement des fiches** ♻️ : fusion des doublons et complétion via IA
+- **Thème clair/sombre** Home Assistant
+- **Gemini 3** (texte et photo) avec repli automatique sur Gemini 2.5
+- Ombres de contact douces, étiquette au nom réel du vin, verre champenois vert bouteille
+
+### [5.4.0] — 2026-06
+- Migration vers **Gemini 3** avec repli automatique sur la génération 2.5
+- Vert bouteille réaliste pour les effervescents, étiquettes nominatives en 3D
+
+### [5.3.0] — 2026-06
+- **Vue 3D isométrique** (Three.js / WebGL) avec éclairage studio et tête-bêche
+- Bascule 2D / 3D, repli automatique en 2D si WebGL indisponible
+
+### [5.1.0] — 2026-05
+- **Journal de dégustation** (note, date, commentaire) avec statistiques
+- **Recherche** par nom dans toute la cave
+- **Déplacement d'un casier** entier, **anti-doublon** d'emplacement
+- Quantité → emplacements physiques distincts, sélecteur d'emplacement visuel
+- Fiche détail enrichie (fenêtre de dégustation, accords mets-vins), thème clair/sombre
+- Correctif scan photo sur Android
+
+### [5.0.0] — 2026-04
+- Lecture d'étiquette par **photo** (Gemini Vision)
+- Estimation de prix et **historique de valeur** de la cave
+- Recherche texte avec suggestions, messages d'erreur détaillés
+
+### Avant 5.0.0
+Versions initiales : visualisation 2D de la cave, ajout manuel de bouteilles et d'étages, recherche de base et premiers réglages de l'intégration.
 
 ---
 
-## 📋 Changelog
+## ❤️ Soutenir le projet
 
-### v5.0.0 *(actuelle)*
-- ✅ Bouton **💰 Estimer le prix** — Gemini calcule le prix marché depuis la fiche détail
-- ✅ **⎘ Duplication** de bouteille vers n'importe quel étage et emplacement
-- ✅ **📈 Historique de valeur** avec graphique SVG (courbe + aire dégradée)
-- ✅ **Événement "Petite Occasion"** remplace "À boire"
-- ✅ Graphique SVG DOM pur — compatible Safari, iPhone, tous navigateurs
-- ✅ Footer modal toujours visible sur iPhone (flex column, pas de sticky)
-- ✅ Modals s'ouvrent en haut de l'écran
-- ✅ Filtres en menus déroulants (optimisé tactile)
-- ✅ Icône dans dossier `brand/` (HA 2026.3+)
-
-### v4.0.2
-- ✅ Deux modèles Gemini séparés — quotas indépendants texte/vision
-- ✅ Retry x3 avec backoff sur 503/429
-- ✅ Cascade de modèles si Flash surchargé → Flash Lite
-- ✅ `maxOutputTokens` photo porté à 2048 + détection troncature
-- ✅ Prix auto-rempli depuis Gemini (prompt + parser)
-
-### v4.0.0
-- ✅ Migration `gemini-2.5-flash-lite` + `gemini-2.5-flash`
-- ✅ Champ Événement + filtre dédié
-- ✅ Filtres menus déroulants
-- ✅ Header redesigné, boutons sous les stats
-- ✅ Taille des cercles ajustable, mode tête-bêche amélioré
-- ✅ `services.yaml` créé
-- ✅ Icône 512×512 pour HACS
-
-### v3.x
-- Intégration Gemini 1.5 Flash + Open Food Facts
-- Scan d'étiquette par photo
-- WebSocket HA natif
-- Design Vinotag
+Millésime est gratuit et open source. Si l'intégration vous plaît, vous pouvez [**offrir un verre de vin** 🍷](https://paypal.me/Redsklns).
 
 ---
 
 ## 📄 Licence
 
-MIT — libre d'utilisation, modification et distribution.
-
----
-
-<p align="center">Fait avec ❤️ et 🍷 pour la communauté Home Assistant</p>
+Projet open source — voir le fichier [LICENSE](LICENSE).
