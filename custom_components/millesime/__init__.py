@@ -1,4 +1,4 @@
-"""Millésime v6.0.0 — Cave à Vin pour Home Assistant.
+"""Millésime v6.1.0 — Cave à Vin pour Home Assistant.
 
 Recherche texte : gemini-3.1-flash-lite (tier gratuit)
 Lecture photo   : gemini-3-flash (tier gratuit)
@@ -34,7 +34,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN    = "millesime"
 PLATFORMS = ["sensor"]
 DATA_FILE = "millesime_data.json"
-VERSION   = "6.0.0"
+VERSION   = "6.1.0"
 
 OFF_UA       = f"Millesime-HA/{VERSION} (github.com/Redsklns/ha-millesime)"
 # Deux modèles séparés = deux pools de quota indépendants (free tier)
@@ -1388,7 +1388,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await _persist(d)
 
     hass.services.async_register(DOMAIN, "add_rack",         svc_add_rack)
-    hass.services.async_register(DOMAIN, "update_rack",      svc_update_rack)https://github.com/Redsklns/ha-millesime/blob/main/custom_components/millesime/__init__.py
+    hass.services.async_register(DOMAIN, "update_rack",      svc_update_rack)
     hass.services.async_register(DOMAIN, "remove_rack",      svc_remove_rack)
     hass.services.async_register(DOMAIN, "add_wine",          svc_add_wine)
     hass.services.async_register(DOMAIN, "update_wine",       svc_update_wine)
