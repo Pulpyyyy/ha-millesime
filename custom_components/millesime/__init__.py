@@ -711,58 +711,84 @@ async def _search_wines(
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 
+_CARD_URL_PATH = "/millesime/millesime-card.js"
+
+
 async def _async_register_card(hass: HomeAssistant) -> None:
-    """Sert millesime-card.js depuis l'intégration et l'ajoute aux ressources Lovelace."""
+    """Sert millesime-card.js depuis l'intégration et l'ajoute aux ressources Lovelace.
+
+    Robuste multi-versions HA : vue HTTP dédiée (fiable même sous Python 3.14),
+    repli sur les chemins statiques ; ressource Lovelace en mode storage ou YAML.
+    """
     card_path = os.path.join(os.path.dirname(__file__), "millesime-card.js")
     if not os.path.exists(card_path):
-        _LOGGER.warning("Millésime : millesime-card.js introuvable dans l'intégration")
+        _LOGGER.error("Millésime : millesime-card.js INTROUVABLE (%s)", card_path)
         return
 
-    url = f"/millesime/millesime-card.js?v={VERSION}"
+    url = f"{_CARD_URL_PATH}?v={VERSION}"
 
-    # 1. Exposer le fichier en HTTP (chemin stable, sans le query string)
-    try:
-        from homeassistant.components.http import StaticPathConfig
-        await hass.http.async_register_static_paths(
-            [StaticPathConfig("/millesime/millesime-card.js", card_path, cache_headers=False)]
-        )
-    except Exception as exc:  # API plus ancienne
+    # ── 1. Servir le fichier en HTTP ──────────────────────────────────────────
+    served = hass.data[DOMAIN].get("_card_http_done")
+    if not served:
+        ok = False
+        # 1a. Vue HTTP dédiée (méthode la plus fiable, toutes versions)
         try:
-            hass.http.register_static_path("/millesime/millesime-card.js", card_path, cache_headers=False)
-        except Exception:
-            _LOGGER.warning("Millésime : impossible d'exposer la carte (%s)", exc)
-            return
+            from homeassistant.components.http import HomeAssistantView
+            from aiohttp import web
 
-    # 2. L'ajouter aux ressources Lovelace (mode storage), ou via extra_js en mode YAML
+            class _MillesimeCardView(HomeAssistantView):
+                url = _CARD_URL_PATH
+                name = "millesime:card"
+                requires_auth = False
+
+                async def get(self, request):
+                    return web.FileResponse(card_path)
+
+            hass.http.register_view(_MillesimeCardView())
+            ok = True
+            _LOGGER.warning("Millésime : carte servie via vue HTTP sur %s", _CARD_URL_PATH)
+        except Exception as exc:
+            _LOGGER.warning("Millésime : vue HTTP impossible (%s), essai chemin statique", exc)
+            # 1b. Repli : chemins statiques (API récente)
+            try:
+                from homeassistant.components.http import StaticPathConfig
+                await hass.http.async_register_static_paths(
+                    [StaticPathConfig(_CARD_URL_PATH, card_path, False)]
+                )
+                ok = True
+                _LOGGER.warning("Millésime : carte servie via chemin statique")
+            except Exception as exc2:
+                _LOGGER.error("Millésime : impossible de servir la carte (%s)", exc2)
+
+        if ok:
+            hass.data[DOMAIN]["_card_http_done"] = True
+
+    # ── 2. Inscrire la ressource Lovelace ─────────────────────────────────────
     try:
         lovelace = hass.data.get("lovelace")
         resources = getattr(lovelace, "resources", None) if lovelace else None
 
         if resources is None:
-            # Lovelace en mode YAML : injection directe du module
             from homeassistant.components.frontend import add_extra_js_url
             add_extra_js_url(hass, url)
-            _LOGGER.info("Millésime : carte injectée (mode YAML) %s", url)
+            _LOGGER.warning("Millésime : carte injectée (Lovelace mode YAML) → %s", url)
             return
 
         if not resources.loaded:
             await resources.async_load()
 
-        base = "/millesime/millesime-card.js"
-        existing = [r for r in resources.async_items() if base in r.get("url", "")]
-
+        existing = [r for r in resources.async_items() if _CARD_URL_PATH in (r.get("url") or "")]
         if existing:
-            # Mettre à jour l'URL (nouveau cache-buster) si la version a changé
             for r in existing:
                 if r.get("url") != url:
                     await resources.async_update_item(r["id"], {"res_type": "module", "url": url})
-                    _LOGGER.info("Millésime : ressource carte mise à jour → %s", url)
+                    _LOGGER.warning("Millésime : ressource mise à jour → %s", url)
         else:
             await resources.async_create_item({"res_type": "module", "url": url})
-            _LOGGER.info("Millésime : ressource carte enregistrée → %s", url)
+            _LOGGER.warning("Millésime : ressource créée → %s", url)
     except Exception as exc:
-        _LOGGER.warning("Millésime : enregistrement de la ressource impossible (%s) — "
-                        "ajoutez %s manuellement dans les ressources Lovelace", exc, url)
+        _LOGGER.error("Millésime : ressource Lovelace impossible (%s) — ajoutez %s à la main",
+                      exc, url)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -1362,7 +1388,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await _persist(d)
 
     hass.services.async_register(DOMAIN, "add_rack",         svc_add_rack)
-    hass.services.async_register(DOMAIN, "update_rack",      svc_update_rack)
+    hass.services.async_register(DOMAIN, "update_rack",      svc_update_rack)https://github.com/Redsklns/ha-millesime/blob/main/custom_components/millesime/__init__.py
     hass.services.async_register(DOMAIN, "remove_rack",      svc_remove_rack)
     hass.services.async_register(DOMAIN, "add_wine",          svc_add_wine)
     hass.services.async_register(DOMAIN, "update_wine",       svc_update_wine)
