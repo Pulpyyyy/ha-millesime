@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.1.0
+ * Millésime Card v6.1.1
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.1.0";
+const MILLESIME_CARD_VERSION = "6.1.1";
 
 const DOMAIN = "millesime";
 
@@ -2139,8 +2139,8 @@ class MillesimeCard extends HTMLElement {
       </select>`;
     // Menu déroulant des repères 3D (étiquette de planche / bulle / les deux)
     const labelSel = `
-      <select class="opt-select" id="sel-labelmode" title="Repères des étagères en 3D">
-        ${[["plate", "🏷️ Étiquettes"], ["bubble", "🔵 Bulles"], ["both", "🏷️+🔵 Les deux"]]
+      <select class="opt-select opt-select-compact" id="sel-labelmode" title="Repères des étagères en 3D">
+        ${[["plate", "🏷️ Étiquette"], ["bubble", "🔵 Bulle"], ["both", "Les deux"]]
           .map(([v, lbl]) => `<option value="${v}" ${this._labelMode === v ? "selected" : ""}>${lbl}</option>`)
           .join("")}
       </select>`;
@@ -2148,7 +2148,7 @@ class MillesimeCard extends HTMLElement {
     return `
       <div class="header">
         <div class="header-left">
-          <div class="header-glass" id="btn-options" title="Options" style="cursor:pointer">${GLASS_SVG}</div>
+          <div class="header-glass">${GLASS_SVG}</div>
           <div class="header-meta">
             <div class="header-name">${esc(data.cellar?.name || "Millésime")}</div>
             <div class="header-tagline">Cave à vin</div>
@@ -2167,14 +2167,15 @@ class MillesimeCard extends HTMLElement {
               ${viewSel}
               <button class="btn-icon" id="btn-search"  title="Rechercher une bouteille">🔍</button>
               <button class="btn-icon" id="btn-journal" title="Journal de dégustation">📓</button>
+              <button class="btn-icon" id="btn-options" title="Options" aria-label="Options">⚙️</button>
             </div>
-            <button class="btn-secondary" id="btn-add-rack">+ Casier</button>
-            <button class="btn-primary"   id="btn-add-bottle">+ Vin</button>
+            <button class="btn-primary" id="btn-add-bottle">+ Vin</button>
           </div>
         </div>
       </div>
       <div class="header-options ${this._optionsOpen ? "open" : ""}" id="header-options">
         <div class="opt-row">
+          <button class="opt-btn opt-btn-accent" id="btn-add-rack" title="Ajouter un casier">➕ Ajouter un casier</button>
           <button class="opt-btn" id="btn-import"  title="Importer millesime_import_vinotag.csv">📥 Importer des données</button>
           <button class="opt-btn" id="btn-refresh" title="Compléter les fiches via Gemini + fusionner les doublons">♻️ Compléter les fiches</button>
           <div class="opt-field">
@@ -3160,7 +3161,12 @@ class MillesimeCard extends HTMLElement {
 
       rackAnchors.push({ rack, fi, yTop, yBot, halfW, occ, total });
       // Casier suivant : sous la dernière étagère, avec un écart visuel
-      yCursor = yBot - SHELF_DY - RACK_GAP;
+      // Espace réservé sous le casier pour ses repères (plaque/bulle) → espacement
+      // visuel uniforme quel que soit le mode d'affichage des repères 3D.
+      const plateReserve  = (this._labelMode === "plate" || this._labelMode === "both") ? 0.55 : 0;
+      const bubbleReserve = (this._labelMode === "bubble" || this._labelMode === "both") ? 0.80 : 0;
+      const markReserve = Math.max(plateReserve, bubbleReserve);
+      yCursor = yBot - SHELF_DY - RACK_GAP - markReserve;
     });
 
     // Marqueur de dépôt (drag & drop)
@@ -3206,9 +3212,11 @@ class MillesimeCard extends HTMLElement {
       rackAnchors.forEach(({ rack, fi, yTop, yBot, halfW, occ, total }) => {
         const pct = Math.round((occ / total) * 100);
 
-        // Badge centré sous le bord avant de la dernière étagère du casier
-        const pb = toPx(0, yBot - 0.65, 2.15);
         if (this._labelMode === "bubble" || this._labelMode === "both") {
+          // Bulle rattachée à SON casier : sous le bord avant de sa dernière étagère.
+          // En mode "both", on la descend un peu plus pour passer sous la plaque.
+          const bubbleY = yBot - (this._labelMode === "both" ? 0.62 : 0.40);
+          const pb = toPx(0, bubbleY, 2.06);
           const badge = document.createElement("div");
           badge.className = "t3-badge";
           badge.style.left = pb.x + "px";
@@ -3748,7 +3756,7 @@ const CARD_CSS = `<style>
 .header-right { display:flex; flex-direction:column; gap:7px; flex:1; min-width:0; }
 /* Stats et actions partagent la MÊME grille 3 colonnes → alignement parfait */
 .header-stats   { display:grid; grid-template-columns:1fr 1fr 1fr; gap:5px; align-items:stretch; }
-.header-actions { display:grid; grid-template-columns:1fr 1fr 1fr; gap:5px; align-items:stretch; }
+.header-actions { display:grid; grid-template-columns:2fr 1fr; gap:5px; align-items:stretch; }
 .stat { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:5px 6px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border); }
 .stat-value { font-size:1.08em; font-weight:700; color:var(--cream); font-family:var(--font-serif); line-height:1; }
 .stat-label { font-size:0.54em; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-top:2px; }
@@ -3778,6 +3786,9 @@ const CARD_CSS = `<style>
   cursor:pointer; transition:all 0.15s; white-space:nowrap; flex:1; min-width:140px;
 }
 .opt-btn:hover { background:var(--bg-3); border-color:var(--header-accent,var(--red)); }
+.opt-btn-accent { background:color-mix(in srgb,var(--accent) 22%,var(--bg-2) 78%); border-color:var(--accent); }
+.opt-btn-accent:hover { background:color-mix(in srgb,var(--accent) 34%,var(--bg-2) 66%); }
+.opt-select-compact { max-width:150px; flex:0 1 150px; }
 .opt-field { display:flex; align-items:center; gap:7px; flex:1; min-width:160px; }
 .opt-field-label { font-size:0.6em; color:var(--muted); text-transform:uppercase; letter-spacing:1px; white-space:nowrap; }
 .opt-select {
