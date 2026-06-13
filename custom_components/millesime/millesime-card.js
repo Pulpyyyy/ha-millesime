@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.0.0
+ * Millésime Card v6.1.0
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.0.0";
+const MILLESIME_CARD_VERSION = "6.1.0";
 
 const DOMAIN = "millesime";
 
@@ -324,8 +324,12 @@ class MillesimeCard extends HTMLElement {
     this._modalStyle = null;
     this._unsubs        = [];
     this._pendingRender = false;
-    this._view       = "2d";  // "2d" | "3d"
+    this._view       = "2d";  // "2d" | "dot" | "3d"
     this._viewTouched = false; // l'utilisateur a basculé manuellement (prime sur default_view)
+    this._optionsOpen = false; // ligne d'options repliable (sous le verre du logo)
+    let lblMode = "both";
+    try { lblMode = localStorage.getItem("millesime-labelmode") || "both"; } catch (e) {}
+    this._labelMode = ["plate", "bubble", "both"].includes(lblMode) ? lblMode : "both"; // repères 3D
     this._three      = null;  // contexte WebGL (vue 3D)
     this._threeModP  = null;  // promesse du module three.js (chargé une fois)
   }
@@ -2133,10 +2137,18 @@ class MillesimeCard extends HTMLElement {
           .map(([v, lbl]) => `<option value="${v}" ${this._view === v ? "selected" : ""}>${lbl}</option>`)
           .join("")}
       </select>`;
+    // Menu déroulant des repères 3D (étiquette de planche / bulle / les deux)
+    const labelSel = `
+      <select class="opt-select" id="sel-labelmode" title="Repères des étagères en 3D">
+        ${[["plate", "🏷️ Étiquettes"], ["bubble", "🔵 Bulles"], ["both", "🏷️+🔵 Les deux"]]
+          .map(([v, lbl]) => `<option value="${v}" ${this._labelMode === v ? "selected" : ""}>${lbl}</option>`)
+          .join("")}
+      </select>`;
+
     return `
       <div class="header">
         <div class="header-left">
-          <div class="header-glass" id="btn-history" title="Historique de valeur" style="cursor:pointer">${GLASS_SVG}</div>
+          <div class="header-glass" id="btn-options" title="Options" style="cursor:pointer">${GLASS_SVG}</div>
           <div class="header-meta">
             <div class="header-name">${esc(data.cellar?.name || "Millésime")}</div>
             <div class="header-tagline">Cave à vin</div>
@@ -2146,18 +2158,28 @@ class MillesimeCard extends HTMLElement {
           <div class="header-stats">
             <div class="stat"><span class="stat-value">${total}</span><span class="stat-label">Bouteilles</span></div>
             <div class="stat"><span class="stat-value">${nRack}</span><span class="stat-label">Casiers</span></div>
-            <div class="stat"><span class="stat-value">${value > 0 ? Math.round(value) + "€" : "—"}</span><span class="stat-label">Valeur</span></div>
+            <div class="stat stat-clickable" id="btn-history" title="Évolution de la valeur de la cave">
+              <span class="stat-value">${value > 0 ? Math.round(value) + "€" : "—"}</span><span class="stat-label">Valeur</span>
+            </div>
           </div>
           <div class="header-actions">
             <div class="ha-icons">
               ${viewSel}
               <button class="btn-icon" id="btn-search"  title="Rechercher une bouteille">🔍</button>
               <button class="btn-icon" id="btn-journal" title="Journal de dégustation">📓</button>
-              <button class="btn-icon" id="btn-import"  title="Importer millesime_import_vinotag.csv">📥</button>
-              <button class="btn-icon" id="btn-refresh" title="Compléter les fiches via Gemini + fusionner les doublons">♻️</button>
             </div>
             <button class="btn-secondary" id="btn-add-rack">+ Casier</button>
             <button class="btn-primary"   id="btn-add-bottle">+ Vin</button>
+          </div>
+        </div>
+      </div>
+      <div class="header-options ${this._optionsOpen ? "open" : ""}" id="header-options">
+        <div class="opt-row">
+          <button class="opt-btn" id="btn-import"  title="Importer millesime_import_vinotag.csv">📥 Importer des données</button>
+          <button class="opt-btn" id="btn-refresh" title="Compléter les fiches via Gemini + fusionner les doublons">♻️ Compléter les fiches</button>
+          <div class="opt-field">
+            <span class="opt-field-label">Repères 3D</span>
+            ${labelSel}
           </div>
         </div>
       </div>`;
@@ -2909,6 +2931,7 @@ class MillesimeCard extends HTMLElement {
       let occ = 0;
       const plankW = cols * SPACING + 1.1;
       const rackName = rack.name || `Casier ${fi + 1}`;
+      const showPlate = this._labelMode === "plate" || this._labelMode === "both";
       const st = this._rackLook(rack, fi);         // essence + accent + cadre du casier
       const isIron = st.iron;                      // fer forgé : pas de bois du tout
       const wm = woodOf(st.wood);
@@ -2936,17 +2959,19 @@ class MillesimeCard extends HTMLElement {
 
         // Plaque-étiquette accrochée au chant avant : nom du casier + position de
         // l'étagère (si plusieurs) — taille indépendante de l'épaisseur de la planche
-        const lblTxt = shelves > 1 ? `${rackName} · ${r + 1}` : rackName;
-        const pw = Math.min(plankW - 0.6, Math.max(1.4, lblTxt.length * 0.17 + 0.5));
-        const ph = 0.42;
-        const plaque = new THREE.Mesh(
-          new THREE.BoxGeometry(pw, ph, 0.035),
-          [plaqueEdge, plaqueEdge, plaqueEdge, plaqueEdge,
-           new THREE.MeshStandardMaterial({ map: mkPlaqueTex(lblTxt, st.accent, pw, ph), roughness: 0.6, metalness: 0 }),
-           plaqueEdge]
-        );
-        plaque.position.set(0, shelfY - 0.245, 2.02);
-        scene.add(plaque);
+        if (showPlate) {
+          const lblTxt = shelves > 1 ? `${rackName} · ${r + 1}` : rackName;
+          const pw = Math.min(plankW - 0.6, Math.max(1.4, lblTxt.length * 0.17 + 0.5));
+          const ph = 0.42;
+          const plaque = new THREE.Mesh(
+            new THREE.BoxGeometry(pw, ph, 0.035),
+            [plaqueEdge, plaqueEdge, plaqueEdge, plaqueEdge,
+             new THREE.MeshStandardMaterial({ map: mkPlaqueTex(lblTxt, st.accent, pw, ph), roughness: 0.6, metalness: 0 }),
+             plaqueEdge]
+          );
+          plaque.position.set(0, shelfY - 0.245, 2.02);
+          scene.add(plaque);
+        }
 
         for (let c = 0; c < cols; c++) {
           const i = r * cols + c;
@@ -3183,12 +3208,14 @@ class MillesimeCard extends HTMLElement {
 
         // Badge centré sous le bord avant de la dernière étagère du casier
         const pb = toPx(0, yBot - 0.65, 2.15);
-        const badge = document.createElement("div");
-        badge.className = "t3-badge";
-        badge.style.left = pb.x + "px";
-        badge.style.top  = pb.y + "px";
-        badge.innerHTML = `<b>${fi + 1}</b> ${esc(rack.name)} <span>${pct}%</span>`;
-        stage.appendChild(badge);
+        if (this._labelMode === "bubble" || this._labelMode === "both") {
+          const badge = document.createElement("div");
+          badge.className = "t3-badge";
+          badge.style.left = pb.x + "px";
+          badge.style.top  = pb.y + "px";
+          badge.innerHTML = `<b>${fi + 1}</b> ${esc(rack.name)} <span>${pct}%</span>`;
+          stage.appendChild(badge);
+        }
 
         // Rail vertical aligné sur le haut du casier
         const pr = toPx(halfW, yTop + 0.7, 0);
@@ -3478,6 +3505,18 @@ class MillesimeCard extends HTMLElement {
       try { localStorage.setItem("millesime-view", this._view); } catch (err) {}
       this._render();
     });
+    s.getElementById("btn-options")?.addEventListener("click", () => {
+      this._optionsOpen = !this._optionsOpen;
+      const el = this.shadowRoot.getElementById("header-options");
+      const logo = this.shadowRoot.getElementById("btn-options");
+      if (el) el.classList.toggle("open", this._optionsOpen);
+      if (logo) logo.classList.toggle("active", this._optionsOpen);
+    });
+    s.getElementById("sel-labelmode")?.addEventListener("change", (e) => {
+      this._labelMode = e.target.value;
+      try { localStorage.setItem("millesime-labelmode", this._labelMode); } catch (err) {}
+      if (this._view === "3d") this._render();   // re-rendu pour appliquer aux repères 3D
+    });
     s.getElementById("btn-search")?.addEventListener("click",  () => this._openModal("search"));
     s.getElementById("btn-journal")?.addEventListener("click", () => this._openModal("journal"));
     s.getElementById("btn-import")?.addEventListener("click", async () => {
@@ -3707,12 +3746,45 @@ const CARD_CSS = `<style>
 .header-tagline { font-size:0.54em; color:var(--red); text-transform:uppercase; letter-spacing:1.5px; margin-top:1px; }
 /* Colonne droite : stats en haut, boutons en dessous */
 .header-right { display:flex; flex-direction:column; gap:7px; flex:1; min-width:0; }
-.header-stats { display:flex; gap:5px; align-items:stretch; }
-.stat { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:5px 6px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border); flex:1; }
+/* Stats et actions partagent la MÊME grille 3 colonnes → alignement parfait */
+.header-stats   { display:grid; grid-template-columns:1fr 1fr 1fr; gap:5px; align-items:stretch; }
+.header-actions { display:grid; grid-template-columns:1fr 1fr 1fr; gap:5px; align-items:stretch; }
+.stat { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:5px 6px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border); }
 .stat-value { font-size:1.08em; font-weight:700; color:var(--cream); font-family:var(--font-serif); line-height:1; }
 .stat-label { font-size:0.54em; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-top:2px; }
-.header-actions { display:flex; gap:6px; }
-.header-actions button { flex:1; }
+.stat-clickable { cursor:pointer; transition:all 0.15s; }
+.stat-clickable:hover { background:var(--bg-3); border-color:var(--header-accent,var(--red)); }
+.stat-clickable:active { transform:scale(0.97); }
+/* La rangée d'icônes (vue + 🔍 + 📓) occupe la colonne "Bouteilles" */
+.ha-icons { display:flex; gap:5px; }
+.ha-icons .btn-icon, .ha-icons .view-select { flex:1; min-width:0; }
+.header-actions > .btn-secondary,
+.header-actions > .btn-primary { width:100%; }
+
+/* ── Ligne d'options repliable (sous le verre du logo) ── */
+.header-options {
+  max-height:0; overflow:hidden; opacity:0;
+  transition:max-height 0.28s ease, opacity 0.22s ease, padding 0.28s ease;
+  background:var(--bg-1); border-bottom:1px solid transparent; padding:0 14px;
+}
+.header-options.open {
+  max-height:140px; opacity:1; padding:10px 14px;
+  border-bottom:1px solid var(--border);
+}
+.opt-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.opt-btn {
+  padding:7px 12px; border-radius:8px; border:1px solid var(--border);
+  background:var(--bg-2); color:var(--cream); font-size:0.78em; font-weight:600;
+  cursor:pointer; transition:all 0.15s; white-space:nowrap; flex:1; min-width:140px;
+}
+.opt-btn:hover { background:var(--bg-3); border-color:var(--header-accent,var(--red)); }
+.opt-field { display:flex; align-items:center; gap:7px; flex:1; min-width:160px; }
+.opt-field-label { font-size:0.6em; color:var(--muted); text-transform:uppercase; letter-spacing:1px; white-space:nowrap; }
+.opt-select {
+  flex:1; padding:7px 9px; border-radius:8px; border:1px solid var(--border);
+  background:var(--bg-2); color:var(--cream); font-size:0.78em; cursor:pointer;
+}
+.header-glass.active { filter:drop-shadow(0 0 11px rgba(192,57,43,1)); transform:scale(1.08); }
 .btn-primary, .btn-secondary {
   padding:7px 12px; border-radius:8px; border:none;
   font-family:var(--font-sans); font-size:0.85em; font-weight:600;
@@ -3722,8 +3794,7 @@ const CARD_CSS = `<style>
 .btn-primary:hover { background:var(--accent-h); transform:translateY(-1px); }
 .btn-secondary { background:var(--bg-3); color:var(--cream); border:1px solid var(--border); }
 .btn-secondary:hover { background:var(--bg-4); }
-.ha-icons { display:flex; gap:5px; flex:1; }
-.ha-icons .btn-icon { flex:1; }
+
 .btn-icon {
   padding:0; min-width:32px; border-radius:8px;
   border:1px solid var(--border); background:var(--bg-2);
