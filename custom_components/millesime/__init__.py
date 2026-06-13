@@ -711,6 +711,60 @@ async def _search_wines(
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 
+async def _async_register_card(hass: HomeAssistant) -> None:
+    """Sert millesime-card.js depuis l'intégration et l'ajoute aux ressources Lovelace."""
+    card_path = os.path.join(os.path.dirname(__file__), "millesime-card.js")
+    if not os.path.exists(card_path):
+        _LOGGER.warning("Millésime : millesime-card.js introuvable dans l'intégration")
+        return
+
+    url = f"/millesime/millesime-card.js?v={VERSION}"
+
+    # 1. Exposer le fichier en HTTP (chemin stable, sans le query string)
+    try:
+        from homeassistant.components.http import StaticPathConfig
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig("/millesime/millesime-card.js", card_path, cache_headers=False)]
+        )
+    except Exception as exc:  # API plus ancienne
+        try:
+            hass.http.register_static_path("/millesime/millesime-card.js", card_path, cache_headers=False)
+        except Exception:
+            _LOGGER.warning("Millésime : impossible d'exposer la carte (%s)", exc)
+            return
+
+    # 2. L'ajouter aux ressources Lovelace (mode storage), ou via extra_js en mode YAML
+    try:
+        lovelace = hass.data.get("lovelace")
+        resources = getattr(lovelace, "resources", None) if lovelace else None
+
+        if resources is None:
+            # Lovelace en mode YAML : injection directe du module
+            from homeassistant.components.frontend import add_extra_js_url
+            add_extra_js_url(hass, url)
+            _LOGGER.info("Millésime : carte injectée (mode YAML) %s", url)
+            return
+
+        if not resources.loaded:
+            await resources.async_load()
+
+        base = "/millesime/millesime-card.js"
+        existing = [r for r in resources.async_items() if base in r.get("url", "")]
+
+        if existing:
+            # Mettre à jour l'URL (nouveau cache-buster) si la version a changé
+            for r in existing:
+                if r.get("url") != url:
+                    await resources.async_update_item(r["id"], {"res_type": "module", "url": url})
+                    _LOGGER.info("Millésime : ressource carte mise à jour → %s", url)
+        else:
+            await resources.async_create_item({"res_type": "module", "url": url})
+            _LOGGER.info("Millésime : ressource carte enregistrée → %s", url)
+    except Exception as exc:
+        _LOGGER.warning("Millésime : enregistrement de la ressource impossible (%s) — "
+                        "ajoutez %s manuellement dans les ressources Lovelace", exc, url)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Initialise Millésime."""
     hass.data.setdefault(DOMAIN, {})
@@ -729,6 +783,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+
+    # ── Auto-service de la carte Lovelace ─────────────────────────────────────
+    # La carte est servie depuis le dossier de l'intégration (mis à jour par HACS)
+    # et enregistrée comme ressource avec un cache-buster = version → mise à jour
+    # automatique à chaque nouvelle version, sans copie manuelle dans www/.
+    await _async_register_card(hass)
 
     # ── WebSocket : get_data ──────────────────────────────────────────────────
 
