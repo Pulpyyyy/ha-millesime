@@ -1,14 +1,18 @@
-"""Millésime v5.4.0 — Cave à Vin pour Home Assistant.
+"""Millésime v6.0.0 — Cave à Vin pour Home Assistant.
 
 Recherche texte : gemini-3.1-flash-lite (tier gratuit)
 Lecture photo   : gemini-3-flash (tier gratuit)
 Repli           : génération 2.5 si modèle 3 indisponible (404)
 Sans clé        : Open Food Facts (illimité)
+
+Modèle de données : wines[] + slots[] + racks[] (étagères internes).
+Fonctions issues d'une contribution communautaire (fork v5.5.1) fusionnées.
 """
 from __future__ import annotations
 
 import asyncio
 import base64
+import csv
 import json
 import logging
 import os
@@ -22,6 +26,7 @@ import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 _LOGGER = logging.getLogger(__name__)
@@ -29,13 +34,13 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN    = "millesime"
 PLATFORMS = ["sensor"]
 DATA_FILE = "millesime_data.json"
-VERSION   = "5.4.0"
+VERSION   = "6.0.0"
 
 OFF_UA       = f"Millesime-HA/{VERSION} (github.com/Redsklns/ha-millesime)"
 # Deux modèles séparés = deux pools de quota indépendants (free tier)
 # Texte  : gemini-3.1-flash-lite — léger, rapide (tier gratuit)
 # Photo  : gemini-3-flash        — meilleur en vision (tier gratuit)
-# Repli automatique sur la génération 2.5 si le modèle 3 est indisponible.
+# Repli automatique sur la génération 2.5 si le modèle 3 est indisponible (404).
 GEMINI_TEXT_MODEL      = "gemini-3.1-flash-lite"
 GEMINI_VISION_MODEL    = "gemini-3-flash"
 GEMINI_TEXT_FALLBACK   = "gemini-2.5-flash-lite"
@@ -58,8 +63,8 @@ ERR_UNAVAILABLE    = "service_unavailable"  # HTTP 5xx / timeout
 ERR_PARSE_ERROR    = "parse_error"      # JSON invalide dans la réponse
 
 DEFAULT_DATA: dict = {
-    "cellar": {"name": "Millésime", "floors": []},
-    "bottles": [],
+    "cellar": {"name": "Millésime", "racks": []},
+    "wines": [],
 }
 
 
@@ -69,12 +74,86 @@ def _path(hass: HomeAssistant) -> str:
     return hass.config.path(DATA_FILE)
 
 
+def _migrate(data: dict) -> dict:
+    """Migre l'ancien format bottles[] vers wines[]+slots[]."""
+    if "bottles" not in data or "wines" in data:
+        return data
+    seen: dict = {}  # (name, vintage, type) -> index dans wines
+    wines: list = []
+    for b in data.get("bottles", []):
+        key = (b.get("name", ""), b.get("vintage", ""), b.get("type", "red"))
+        # L'ancien format bottles[] utilisait la clé floor_id
+        sl  = {"rack_id": b.get("floor_id", b.get("rack_id", "")), "slot": b.get("slot", 0)}
+        if key in seen:
+            wines[seen[key]]["slots"].append(sl)
+        else:
+            seen[key] = len(wines)
+            wines.append({
+                "id":           b.get("id", _uid()),
+                "name":         b.get("name", ""),
+                "vintage":      b.get("vintage", ""),
+                "type":         b.get("type", "red"),
+                "producer":     b.get("producer", ""),
+                "appellation":  b.get("appellation", ""),
+                "region":       b.get("region", ""),
+                "country":      b.get("country", ""),
+                "price":        float(b.get("price", 0)),
+                "drink_from":   b.get("drink_from", ""),
+                "drink_until":  b.get("drink_until", ""),
+                "notes":        b.get("notes", ""),
+                "tasting_notes":b.get("tasting_notes", ""),
+                "food_pairing": b.get("food_pairing", ""),
+                "vivino_rating":float(b.get("vivino_rating", 0)),
+                "image_url":    b.get("image_url", ""),
+                "vivino_url":   b.get("vivino_url", ""),
+                "event":        b.get("event", ""),
+                "added_date":   b.get("added_date", datetime.now().strftime("%Y-%m-%d")),
+                "slots":        [sl],
+            })
+    data["wines"] = wines
+    del data["bottles"]
+    _LOGGER.info("Millésime — migration bottles→wines : %d références", len(wines))
+    return data
+
+
+def _migrate_racks(data: dict) -> bool:
+    """Migre la nomenclature héritée floors/rows/floor_id vers racks/shelves/rack_id.
+
+    Retourne True si les données ont été modifiées."""
+    changed = False
+    cellar = data.setdefault("cellar", {})
+    if "floors" in cellar:
+        cellar["racks"] = cellar.pop("floors")
+        changed = True
+    for r in cellar.get("racks", []):
+        if "rows" in r:
+            r["shelves"] = r.pop("rows")
+            changed = True
+    for w in data.get("wines", []):
+        for s in w.get("slots", []):
+            if "floor_id" in s:
+                s["rack_id"] = s.pop("floor_id")
+                changed = True
+    if changed:
+        _LOGGER.info("Millésime — migration nomenclature floors→racks effectuée")
+    return changed
+
+
 def _load(hass: HomeAssistant) -> dict:
     try:
         p = _path(hass)
         if os.path.exists(p):
             with open(p, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+            changed = False
+            if "bottles" in data:
+                data = _migrate(data)
+                changed = True
+            if _migrate_racks(data):
+                changed = True
+            if changed:
+                _save(hass, data)
+            return data
     except Exception as exc:
         _LOGGER.error("Millésime — erreur lecture : %s", exc)
     return json.loads(json.dumps(DEFAULT_DATA))
@@ -90,6 +169,85 @@ def _save(hass: HomeAssistant, data: dict) -> None:
 
 def _uid() -> str:
     return str(uuid.uuid4())[:8]
+
+
+def _slot_taken(d: dict, rack_id: str, slot: int,
+                exclude_wine_id: str | None = None,
+                exclude_slot_idx: int | None = None) -> bool:
+    """Retourne True si l'emplacement est déjà occupé dans ce casier."""
+    for w in d.get("wines", []):
+        for i, s in enumerate(w.get("slots", [])):
+            if s["rack_id"] == rack_id and s["slot"] == slot:
+                if w["id"] == exclude_wine_id and exclude_slot_idx is not None and i == exclude_slot_idx:
+                    continue
+                return True
+    return False
+
+
+def _call_rack_id(call: "ServiceCall", default: str = "") -> str:
+    """rack_id depuis l'appel de service ; floor_id accepté en alias déprécié."""
+    v = call.data.get("rack_id", call.data.get("floor_id"))
+    return default if v is None else v
+
+
+def _mk_slot(rack_id: str, slot: int, comment=None, size=None) -> dict:
+    """Construit un emplacement ; commentaire et format optionnels, propres à la bouteille."""
+    s = {"rack_id": rack_id, "slot": slot}
+    if comment:
+        s["comment"] = str(comment)
+    if size:
+        s["size"] = str(size)
+    return s
+
+
+# ── Import Vinotag (fichier millesime_import.csv) ─────────────────────────────
+
+VINOTAG_TYPES = {
+    "wine_red": "red", "wine_white": "white", "wine_rose": "rose",
+    "wine_white_sweet": "dessert", "wine_red_sweet": "dessert",
+    "wine_sparkling": "sparkling", "champagne": "sparkling",
+}
+VINOTAG_COUNTRIES = {
+    "fr": "France", "it": "Italie", "es": "Espagne", "pt": "Portugal",
+    "de": "Allemagne", "ch": "Suisse", "us": "États-Unis", "ar": "Argentine",
+    "cl": "Chili", "au": "Australie", "za": "Afrique du Sud", "nz": "Nouvelle-Zélande",
+}
+VINOTAG_REGIONS = {
+    "vallee_du_rhone": "Vallée du Rhône", "sud_ouest": "Sud-Ouest",
+    "val_de_loire": "Val de Loire", "bourgogne": "Bourgogne", "bordeaux": "Bordeaux",
+    "provence": "Provence", "alsace": "Alsace", "champagne": "Champagne",
+    "languedoc_roussillon": "Languedoc-Roussillon", "beaujolais": "Beaujolais",
+    "jura": "Jura", "savoie": "Savoie", "corse": "Corse",
+}
+_VT_MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+              "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
+
+
+def _vt_year(value) -> str:
+    """Extrait l'année d'une date Vinotag (« Mon Mar 03 2031 » → « 2031 »)."""
+    m = re.findall(r"\d{4}", str(value or ""))
+    return m[-1] if m else ""
+
+
+def _vt_date(value) -> str:
+    """« Fri Jan 12 2024 » → « 2024-01-12 » (sans dépendre de la locale)."""
+    m = re.match(r"^\w{3}\s+(\w{3})\s+(\d{1,2})\s+(\d{4})$", str(value or "").strip())
+    if not m:
+        return ""
+    mo = _VT_MONTHS.get(m.group(1).lower())
+    return f"{m.group(3)}-{mo:02d}-{int(m.group(2)):02d}" if mo else ""
+
+
+def _vt_num(*values) -> float:
+    """Premier nombre valable parmi les valeurs (virgule décimale acceptée)."""
+    for v in values:
+        try:
+            f = float(str(v).replace(",", ".").strip())
+            if f > 0:
+                return f
+        except (TypeError, ValueError):
+            continue
+    return 0.0
 
 
 def _normalize(text: str) -> str:
@@ -119,6 +277,13 @@ Règles :
 - Couvrir différents millésimes si possible
 - Priorité : vins français > européens > mondiaux\
 """
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(str(value).replace(",", ".")) if value else default
+    except (ValueError, TypeError):
+        return default
 
 
 def _parse_gemini_response(raw: str, source: str) -> tuple[list[dict], str | None]:
@@ -159,8 +324,8 @@ def _parse_gemini_response(raw: str, source: str) -> tuple[list[dict], str | Non
             "food_pairing":  str(w.get("food_pairing", "") or ""),
             "drink_from":    str(w.get("drink_from", "") or ""),
             "drink_until":   str(w.get("drink_until", "") or ""),
-            "vivino_rating": round(float(w.get("vivino_rating") or 0), 1),
-            "price":         round(float(w.get("price") or 0), 2),
+            "vivino_rating": round(_safe_float(w.get("vivino_rating")), 1),
+            "price":         round(_safe_float(w.get("price")), 2),
             "image_url":     "",
             "vivino_url":    "",
         })
@@ -200,18 +365,17 @@ async def _gemini_search_text(
     }
     data = None
     last_code = ERR_UNAVAILABLE
-    for model in (GEMINI_TEXT_MODEL, GEMINI_TEXT_FALLBACK):
+    for _model in (GEMINI_TEXT_MODEL, GEMINI_TEXT_FALLBACK):
         try:
             async with session.post(
-                f"{GEMINI_BASE_URL}{model}:generateContent",
+                f"{GEMINI_BASE_URL}{_model}:generateContent",
                 params={"key": api_key},
                 json=body,
                 headers={"Content-Type": "application/json"},
                 timeout=15,
             ) as resp:
                 if resp.status == 404:
-                    # Modèle inconnu/retiré → on tente la génération précédente
-                    _LOGGER.warning("Gemini texte: modèle %s indisponible (404), repli", model)
+                    _LOGGER.warning("Gemini texte: modele %s indisponible (404), repli", _model)
                     continue
                 if resp.status != 200:
                     code = _gemini_error_code(resp.status)
@@ -220,15 +384,11 @@ async def _gemini_search_text(
                 data = await resp.json(content_type=None)
                 break
         except asyncio.TimeoutError:
-            _LOGGER.warning("Gemini texte timeout (%s) pour '%s'", model, query)
-            last_code = ERR_UNAVAILABLE
+            _LOGGER.warning("Gemini texte timeout (%s) pour '%s'", _model, query)
         except Exception as exc:
-            _LOGGER.warning("Gemini texte erreur (%s) pour '%s': %s", model, query, exc)
-            last_code = ERR_UNAVAILABLE
-
+            _LOGGER.warning("Gemini texte erreur (%s): %s", _model, exc)
     if data is None:
         return [], last_code
-
     try:
         raw = (
             data.get("candidates", [{}])[0]
@@ -343,7 +503,11 @@ async def _gemini_analyze_photo(
     raw = raw.strip()
     if raw and not raw.endswith("]"):
         raw = raw.rstrip(",").rstrip() + "}]" if not raw.endswith("}") else raw + "]"
-    results, err = _parse_gemini_response(raw, "photo")
+    try:
+        results, err = _parse_gemini_response(raw, "photo")
+    except Exception as exc:
+        _LOGGER.warning("Gemini photo: erreur parsing reponse: %s", exc)
+        return [], ERR_PARSE_ERROR
     _LOGGER.info("Gemini photo: %d vin(s) identifie(s)", len(results))
     return results, err
 
@@ -672,42 +836,67 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await hass.async_add_executor_job(_save, hass, d)
         hass.bus.async_fire(f"{DOMAIN}_updated", {})
 
-    async def svc_add_floor(call: ServiceCall) -> None:
+    # Apparence du casier (rendu par la carte) : seules les clés connues sont
+    # stockées ; un objet vide ou invalide signifie « retour au style automatique »
+    _STYLE_KEYS = ("material", "posts", "feet", "cross_braces", "roof", "accent")
+
+    def _rack_style(call: ServiceCall) -> dict | None:
+        v = call.data.get("style")
+        return {k: v[k] for k in _STYLE_KEYS if k in v} if isinstance(v, dict) else None
+
+    async def svc_add_rack(call: ServiceCall) -> None:
         d = _get()
         cols = int(call.data.get("columns", 8))
-        rows = int(call.data.get("rows", 2))
-        d["cellar"]["floors"].append({
+        shelves = int(call.data.get("shelves", call.data.get("rows", 2)))
+        rack = {
             "id":      _uid(),
-            "name":    call.data.get("name", f"Étage {len(d['cellar']['floors']) + 1}"),
-            "columns": cols, "rows": rows, "slots": cols * rows,
+            "name":    call.data.get("name", f"Casier {len(d['cellar']['racks']) + 1}"),
+            "columns": cols, "shelves": shelves, "slots": cols * shelves,
             "layout":  call.data.get("layout", "side_by_side"),
-        })
+        }
+        style = _rack_style(call)
+        if style:
+            rack["style"] = style
+        d["cellar"]["racks"].append(rack)
         await _persist(d)
 
-    async def svc_update_floor(call: ServiceCall) -> None:
+    async def svc_update_rack(call: ServiceCall) -> None:
         d = _get()
-        for f in d["cellar"]["floors"]:
-            if f["id"] == call.data["floor_id"]:
-                for k in ["name", "columns", "rows", "layout"]:
+        for f in d["cellar"]["racks"]:
+            if f["id"] == _call_rack_id(call):
+                for k in ["name", "columns", "shelves", "layout"]:
                     if k in call.data:
                         f[k] = call.data[k]
-                f["slots"] = f.get("columns", 8) * f.get("rows", 2)
+                if "rows" in call.data and "shelves" not in call.data:  # alias déprécié
+                    f["shelves"] = call.data["rows"]
+                if "style" in call.data:
+                    style = _rack_style(call)
+                    if style:
+                        f["style"] = style
+                    else:
+                        f.pop("style", None)
+                f["slots"] = f.get("columns", 8) * f.get("shelves", 2)
                 break
         await _persist(d)
 
-    async def svc_remove_floor(call: ServiceCall) -> None:
+    async def svc_remove_rack(call: ServiceCall) -> None:
         d = _get()
-        fid = call.data["floor_id"]
-        d["cellar"]["floors"] = [f for f in d["cellar"]["floors"] if f["id"] != fid]
-        d["bottles"]          = [b for b in d["bottles"] if b.get("floor_id") != fid]
+        fid = _call_rack_id(call)
+        d["cellar"]["racks"] = [f for f in d["cellar"]["racks"] if f["id"] != fid]
+        for w in d["wines"]:
+            w["slots"] = [s for s in w["slots"] if s["rack_id"] != fid]
+        d["wines"] = [w for w in d["wines"] if w["slots"]]
         await _persist(d)
 
-    async def svc_add_bottle(call: ServiceCall) -> None:
+    async def svc_add_wine(call: ServiceCall) -> None:
+        """Crée un nouveau vin avec un premier emplacement."""
         d = _get()
-        d["bottles"].append({
+        rack_id = _call_rack_id(call)
+        slot     = int(call.data.get("slot", 0))
+        if _slot_taken(d, rack_id, slot):
+            raise HomeAssistantError(f"L'emplacement n°{slot + 1} est déjà occupé dans ce casier.")
+        d["wines"].append({
             "id":           _uid(),
-            "floor_id":     call.data.get("floor_id", ""),
-            "slot":         int(call.data.get("slot", 0)),
             "name":         call.data.get("name", ""),
             "vintage":      call.data.get("vintage", ""),
             "type":         call.data.get("type", "red"),
@@ -716,7 +905,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "producer":     call.data.get("producer", ""),
             "country":      call.data.get("country", ""),
             "price":        float(call.data.get("price", 0)),
-            "quantity":     int(call.data.get("quantity", 1)),
             "drink_from":   call.data.get("drink_from", ""),
             "drink_until":  call.data.get("drink_until", ""),
             "notes":        call.data.get("notes", ""),
@@ -725,42 +913,154 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "vivino_rating":float(call.data.get("vivino_rating", 0)),
             "image_url":    call.data.get("image_url", ""),
             "vivino_url":   call.data.get("vivino_url", ""),
-            "added_date":   datetime.now().strftime("%Y-%m-%d"),
+            "event":        call.data.get("event", ""),
+            "size":         call.data.get("size") or "75cl",
+            "favorite":     bool(call.data.get("favorite", False)),
+            "added_date":   call.data.get("added_date") or datetime.now().strftime("%Y-%m-%d"),
+            "slots":        [_mk_slot(rack_id, slot, call.data.get("slot_comment"))],
         })
         await _persist(d)
 
-    async def svc_remove_bottle(call: ServiceCall) -> None:
-        d = _get()
-        d["bottles"] = [b for b in d["bottles"] if b["id"] != call.data["bottle_id"]]
-        await _persist(d)
-
-    async def svc_duplicate_bottle(call: ServiceCall) -> None:
-        d = _get()
-        src = next((b for b in d["bottles"] if b["id"] == call.data["bottle_id"]), None)
-        if not src:
-            return
-        import copy
-        new_b = copy.deepcopy(src)
-        new_b["id"]       = _uid()
-        new_b["floor_id"] = call.data.get("floor_id", src["floor_id"])
-        new_b["slot"]     = int(call.data.get("slot", src["slot"]))
-        new_b["added_date"] = datetime.now().strftime("%Y-%m-%d")
-        d["bottles"].append(new_b)
-        await _persist(d)
-
-    async def svc_update_bottle(call: ServiceCall) -> None:
+    async def svc_update_wine(call: ServiceCall) -> None:
+        """Met à jour les métadonnées d'un vin (s'applique à tous ses emplacements)."""
         d = _get()
         updatable = [
             "name", "vintage", "type", "appellation", "region", "producer",
-            "country", "price", "quantity", "drink_from", "drink_until",
-            "notes", "tasting_notes", "food_pairing", "event",
-            "vivino_rating", "image_url", "vivino_url",
+            "country", "price", "drink_from", "drink_until", "notes",
+            "tasting_notes", "food_pairing", "event", "vivino_rating",
+            "image_url", "vivino_url", "size", "favorite",
         ]
-        for b in d["bottles"]:
-            if b["id"] == call.data["bottle_id"]:
+        for w in d["wines"]:
+            if w["id"] == call.data["wine_id"]:
                 for k in updatable:
                     if k in call.data:
-                        b[k] = call.data[k]
+                        w[k] = call.data[k]
+                break
+        await _persist(d)
+
+    async def svc_add_slot(call: ServiceCall) -> None:
+        """Ajoute un emplacement à un vin existant."""
+        d = _get()
+        wine_id  = call.data["wine_id"]
+        rack_id = _call_rack_id(call)
+        slot     = int(call.data.get("slot", 0))
+        if _slot_taken(d, rack_id, slot):
+            raise HomeAssistantError(f"L'emplacement n°{slot + 1} est déjà occupé dans ce casier.")
+        for w in d["wines"]:
+            if w["id"] == wine_id:
+                w["slots"].append(_mk_slot(rack_id, slot, call.data.get("comment"), call.data.get("size")))
+                break
+        await _persist(d)
+
+    async def svc_update_slot(call: ServiceCall) -> None:
+        """Met à jour les attributs d'une bouteille (format, commentaire) sans la déplacer."""
+        d = _get()
+        wine_id  = call.data["wine_id"]
+        slot_idx = int(call.data.get("slot_idx", 0))
+        for w in d["wines"]:
+            if w["id"] == wine_id:
+                if slot_idx >= len(w["slots"]):
+                    raise HomeAssistantError(f"Index d'emplacement {slot_idx} invalide pour ce vin.")
+                s = w["slots"][slot_idx]
+                for k in ("size", "comment"):
+                    if k in call.data:
+                        v = str(call.data[k]).strip()
+                        if v:
+                            s[k] = v
+                        else:
+                            s.pop(k, None)   # champ vidé → retour à la valeur du vin
+                break
+        await _persist(d)
+
+    async def svc_move_slot(call: ServiceCall) -> None:
+        """Déplace un emplacement d'un vin vers une nouvelle position."""
+        d = _get()
+        wine_id   = call.data["wine_id"]
+        slot_idx  = int(call.data.get("slot_idx", 0))
+        new_rack = _call_rack_id(call)
+        new_slot  = int(call.data.get("slot", 0))
+        if _slot_taken(d, new_rack, new_slot, exclude_wine_id=wine_id, exclude_slot_idx=slot_idx):
+            raise HomeAssistantError(f"L'emplacement n°{new_slot + 1} est déjà occupé dans ce casier.")
+        for w in d["wines"]:
+            if w["id"] == wine_id:
+                if slot_idx >= len(w["slots"]):
+                    raise HomeAssistantError(f"Index d'emplacement {slot_idx} invalide pour ce vin.")
+                # Préserve les clés annexes (commentaire de bouteille…) lors du déplacement
+                w["slots"][slot_idx] = {**w["slots"][slot_idx], "rack_id": new_rack, "slot": new_slot}
+                break
+        await _persist(d)
+
+    async def svc_remove_slot(call: ServiceCall) -> None:
+        """Supprime un emplacement. Supprime le vin si c'était le dernier."""
+        d = _get()
+        wine_id  = call.data["wine_id"]
+        slot_idx = int(call.data.get("slot_idx", 0))
+        for w in d["wines"]:
+            if w["id"] == wine_id:
+                if slot_idx >= len(w["slots"]):
+                    raise HomeAssistantError(f"Index d'emplacement {slot_idx} invalide pour ce vin.")
+                if len(w["slots"]) <= 1:
+                    d["wines"].remove(w)
+                else:
+                    w["slots"].pop(slot_idx)
+                break
+        await _persist(d)
+
+    async def svc_remove_wine(call: ServiceCall) -> None:
+        """Supprime un vin et tous ses emplacements."""
+        d = _get()
+        d["wines"] = [w for w in d["wines"] if w["id"] != call.data["wine_id"]]
+        await _persist(d)
+
+    # ── Services de compatibilité (ancien format bottle_id) ───────────────────
+
+    async def svc_add_bottle(call: ServiceCall) -> None:
+        """Alias de add_wine pour compatibilité."""
+        await svc_add_wine(call)
+
+    async def svc_update_bottle(call: ServiceCall) -> None:
+        """Met à jour les métadonnées et/ou déplace une bouteille (bottle_id = wine_id)."""
+        d = _get()
+        bottle_id = call.data["bottle_id"]
+        updatable = [
+            "name", "vintage", "type", "appellation", "region", "producer",
+            "country", "price", "drink_from", "drink_until", "notes",
+            "tasting_notes", "food_pairing", "event", "vivino_rating",
+            "image_url", "vivino_url", "size", "favorite",
+        ]
+        new_rack = call.data.get("rack_id", call.data.get("floor_id"))
+        new_slot  = call.data.get("slot")
+        for w in d["wines"]:
+            if w["id"] == bottle_id:
+                for k in updatable:
+                    if k in call.data:
+                        w[k] = call.data[k]
+                if new_rack is not None and new_slot is not None:
+                    new_slot_int = int(new_slot)
+                    if _slot_taken(d, new_rack, new_slot_int, exclude_wine_id=bottle_id, exclude_slot_idx=0):
+                        raise HomeAssistantError(f"L'emplacement n°{new_slot_int + 1} est déjà occupé dans ce casier.")
+                    if w["slots"]:
+                        w["slots"][0] = {"rack_id": new_rack, "slot": new_slot_int}
+                break
+        await _persist(d)
+
+    async def svc_remove_bottle(call: ServiceCall) -> None:
+        """Supprime une bouteille par bottle_id (= wine_id). Alias de remove_wine."""
+        d = _get()
+        d["wines"] = [w for w in d["wines"] if w["id"] != call.data["bottle_id"]]
+        await _persist(d)
+
+    async def svc_duplicate_bottle(call: ServiceCall) -> None:
+        """Duplique une bouteille vers un autre emplacement."""
+        d = _get()
+        bottle_id = call.data["bottle_id"]
+        rack_id  = _call_rack_id(call)
+        slot      = int(call.data.get("slot", 0))
+        if _slot_taken(d, rack_id, slot):
+            raise HomeAssistantError(f"L'emplacement n°{slot + 1} est déjà occupé dans ce casier.")
+        for w in d["wines"]:
+            if w["id"] == bottle_id:
+                w["slots"].append({"rack_id": rack_id, "slot": slot})
                 break
         await _persist(d)
 
@@ -772,12 +1072,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def svc_value_snapshot(call: ServiceCall) -> None:
         """Enregistre la valeur actuelle de la cave dans l'historique."""
         d = _get()
-        bottles = d.get("bottles", [])
-        total_value = sum(
-            float(b.get("price", 0)) * int(b.get("quantity", 1))
-            for b in bottles
-        )
-        total_bottles = sum(int(b.get("quantity", 1)) for b in bottles)
+        wines = d.get("wines", [])
+        total_value   = sum(float(w.get("price", 0)) * len(w.get("slots", [])) for w in wines)
+        total_bottles = sum(len(w.get("slots", [])) for w in wines)
         today = datetime.now().strftime("%Y-%m-%d")
         history = d["cellar"].setdefault("value_history", [])
         # Remplacer si même date, sinon ajouter
@@ -792,23 +1089,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await _persist(d)
 
     async def svc_drink_bottle(call: ServiceCall) -> None:
-        """Marque une bouteille comme bue : retire de la cave, ajoute au journal."""
+        """Marque une bouteille comme bue : retire un emplacement, archive au journal.
+
+        wine_id (ou bottle_id) identifie le vin ; slot_idx l'emplacement bu (défaut 0).
+        Si c'était le dernier emplacement, le vin est supprimé de la cave.
+        """
         d = _get()
-        bottle_id = call.data["bottle_id"]
-        src = next((b for b in d["bottles"] if b["id"] == bottle_id), None)
+        wine_id = call.data.get("wine_id") or call.data.get("bottle_id")
+        src = next((w for w in d["wines"] if w["id"] == wine_id), None)
         if not src:
             return
+        slot_idx = int(call.data.get("slot_idx", 0))
+        if slot_idx >= len(src.get("slots", [])):
+            raise HomeAssistantError(f"Index d'emplacement {slot_idx} invalide pour ce vin.")
         rating = call.data.get("rating", 0)
         try:
-            rating = round(float(rating), 1)
+            rating = round(float(str(rating).replace(",", ".")), 1)
         except (TypeError, ValueError):
             rating = 0
-        comment = str(call.data.get("comment", "") or "")
+        comment  = str(call.data.get("comment", "") or "")
         drunk_on = call.data.get("drunk_date") or datetime.now().strftime("%Y-%m-%d")
 
-        entry = {
+        drunk_slot = src["slots"][slot_idx]
+        log = d["cellar"].setdefault("tasting_log", [])
+        log.append({
             "id":            _uid(),
             "name":          src.get("name", ""),
+            "size":          drunk_slot.get("size") or src.get("size", ""),
+            "bottle_comment": drunk_slot.get("comment", ""),
+            "favorite":      bool(src.get("favorite", False)),
             "vintage":       src.get("vintage", ""),
             "type":          src.get("type", "red"),
             "appellation":   src.get("appellation", ""),
@@ -824,14 +1133,165 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "drunk_date":    drunk_on,
             "my_rating":     rating,
             "my_comment":    comment,
-        }
-        log = d["cellar"].setdefault("tasting_log", [])
-        log.append(entry)
+        })
         # Garder les 1000 dernières dégustations
         d["cellar"]["tasting_log"] = log[-1000:]
-        # Retirer la bouteille de la cave
-        d["bottles"] = [b for b in d["bottles"] if b["id"] != bottle_id]
+        # Retirer l'emplacement bu ; supprimer le vin si c'était le dernier
+        if len(src["slots"]) <= 1:
+            d["wines"].remove(src)
+        else:
+            src["slots"].pop(slot_idx)
         await _persist(d)
+
+    async def _import_vinotag_run() -> None:
+        """Importe <config>/millesime_import_vinotag.csv puis efface le fichier."""
+        path = hass.config.path("millesime_import_vinotag.csv")
+        if not os.path.exists(path):
+            raise HomeAssistantError(
+                "Fichier millesime_import_vinotag.csv introuvable dans le dossier de configuration de Home Assistant."
+            )
+
+        def _read() -> list[dict]:
+            with open(path, encoding="utf-8-sig", newline="") as f:
+                return list(csv.DictReader(f))
+
+        rows = await hass.async_add_executor_job(_read)
+        rows = [r for r in rows if (r.get("wine_name") or "").strip()]
+        if not rows:
+            raise HomeAssistantError("millesime_import_vinotag.csv : aucune ligne de vin valide (export Vinotag attendu).")
+
+        d = _get()
+        # Auto-placement : emplacements libres dans l'ordre des casiers
+        occ = {(s["rack_id"], s["slot"]) for w in d["wines"] for s in w.get("slots", [])}
+        free: list[tuple[str, int]] = []
+        for rk in d["cellar"]["racks"]:
+            total = rk.get("slots") or rk.get("columns", 8) * rk.get("shelves", 2)
+            free.extend((rk["id"], i) for i in range(total) if (rk["id"], i) not in occ)
+        need = sum(max(1, int(_vt_num(r.get("bottle_quantity")) or 1)) for r in rows)
+        if len(free) < need:
+            # Capacité insuffisante : casier « Import » créé à la volée
+            cols = 8
+            shelves = max(1, -(-(need - len(free)) // cols))
+            rack = {"id": _uid(), "name": "Import", "columns": cols,
+                    "shelves": shelves, "slots": cols * shelves, "layout": "side_by_side"}
+            d["cellar"]["racks"].append(rack)
+            free.extend((rack["id"], i) for i in range(cols * shelves))
+
+        cursor = 0
+        for r in rows:
+            qty = max(1, int(_vt_num(r.get("bottle_quantity")) or 1))
+            comment = (r.get("bottle_comment") or "").strip()
+            slots = []
+            for _ in range(qty):
+                rid, sl = free[cursor]
+                cursor += 1
+                slots.append(_mk_slot(rid, sl, comment))
+            region = (r.get("wine_region") or "").strip().lower()
+            country = (r.get("wine_country") or "").strip().lower()
+            d["wines"].append({
+                "id":           _uid(),
+                "name":         (r.get("wine_name") or "").strip(),
+                "vintage":      (r.get("millesime_year") or "").strip(),
+                "type":         VINOTAG_TYPES.get((r.get("wine_type") or "").strip(), "red"),
+                "appellation":  "",
+                "region":       VINOTAG_REGIONS.get(region, region.replace("_", " ").title()),
+                "producer":     (r.get("wine_domain") or "").strip(),
+                "country":      VINOTAG_COUNTRIES.get(country, country.upper()),
+                # Prix retenu : valeur actuelle (bottle_real_price), sinon prix d'achat
+                "price":        _vt_num(r.get("bottle_real_price"), r.get("bottle_buying_price")),
+                "drink_from":   _vt_year(r.get("wine_apogee_start")),
+                "drink_until":  _vt_year(r.get("wine_apogee_end")),
+                "notes":        (r.get("wine_comment") or "").strip(),
+                "tasting_notes": "",
+                "food_pairing": "",
+                "vivino_rating": _vt_num(r.get("rating")),
+                "image_url":    "",
+                "vivino_url":   "",
+                "event":        "",
+                "size":         (r.get("bottle_size") or "").strip() or "75cl",
+                "favorite":     (r.get("favorite") or "").strip().lower() == "true",
+                "added_date":   _vt_date(r.get("last_bottle_added")) or datetime.now().strftime("%Y-%m-%d"),
+                "slots":        slots,
+            })
+        await _persist(d)
+        # Effacé uniquement si l'import a réussi
+        await hass.async_add_executor_job(os.remove, path)
+        _LOGGER.info("Millésime — import Vinotag : %d vins (%d bouteilles), fichier effacé", len(rows), need)
+
+    async def svc_import_vinotag(call: ServiceCall) -> None:
+        await _import_vinotag_run()
+
+    async def svc_refresh_wines(call: ServiceCall) -> None:
+        """Dédoublonne la cave puis complète les fiches via Gemini.
+
+        1. Les vins identiques (nom normalisé + millésime + type) sont fusionnés :
+           le premier conserve ses données, récupère les emplacements des doublons
+           et leurs champs non vides manquants.
+        2. Chaque vin est recherché via Gemini (fallback Open Food Facts) ; seuls
+           ses CHAMPS VIDES sont complétés — aucune donnée saisie n'est écrasée.
+        """
+        d = _get()
+
+        # 1) Fusion des doublons
+        merged = 0
+        seen: dict = {}
+        keep: list = []
+        for w in d["wines"]:
+            key = (_normalize(w.get("name", "")), str(w.get("vintage", "")), w.get("type", "red"))
+            if key in seen:
+                tgt = seen[key]
+                tgt.setdefault("slots", []).extend(w.get("slots", []))
+                for k2, v in w.items():
+                    if k2 in ("id", "slots"):
+                        continue
+                    if v and not tgt.get(k2):
+                        tgt[k2] = v
+                merged += 1
+            else:
+                seen[key] = w
+                keep.append(w)
+        d["wines"] = keep
+
+        # 2) Enrichissement Gemini (champs vides uniquement)
+        gemini_key = hass.data[DOMAIN][entry.entry_id].get("gemini_key", "")
+        FIELDS = [
+            "appellation", "region", "producer", "country", "tasting_notes",
+            "food_pairing", "drink_from", "drink_until", "image_url",
+            "vivino_url", "vivino_rating",
+        ]
+        # Option de la popup ♻️ : mise à jour des prix avec le prix moyen
+        # constaté par Gemini — opt-in car elle écrase un prix déjà saisi
+        update_prices = bool(call.data.get("update_prices", False))
+        updated = 0
+        for w in d["wines"]:
+            if not update_prices and not any(not w.get(f) for f in FIELDS):
+                continue                        # fiche déjà complète
+            query = " ".join(filter(None, [w.get("name", ""), str(w.get("vintage", ""))]))
+            if len(query) < 3:
+                continue
+            try:
+                res = await _search_wines(hass, query, gemini_key)
+            except Exception as exc:            # quota, réseau… on continue
+                _LOGGER.warning("Millésime — refresh '%s' ignoré : %s", query, exc)
+                continue
+            best = (res.get("results") or [None])[0]
+            if not best:
+                continue
+            changed = False
+            for f in FIELDS:
+                if not w.get(f) and best.get(f):
+                    w[f] = best[f]
+                    changed = True
+            if update_prices:
+                new_price = round(float(best.get("price") or 0), 2)
+                if new_price > 0 and new_price != float(w.get("price") or 0):
+                    w["price"] = new_price
+                    changed = True
+            if changed:
+                updated += 1
+            await asyncio.sleep(0.3)            # ménage le quota Gemini
+        await _persist(d)
+        _LOGGER.info("Millésime — refresh : %d doublon(s) fusionné(s), %d fiche(s) complétée(s)", merged, updated)
 
     async def svc_delete_tasting(call: ServiceCall) -> None:
         """Supprime une entrée du journal de dégustation."""
@@ -841,19 +1301,41 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         d["cellar"]["tasting_log"] = [t for t in log if t.get("id") != tid]
         await _persist(d)
 
-    hass.services.async_register(DOMAIN, "add_floor",        svc_add_floor)
-    hass.services.async_register(DOMAIN, "update_floor",     svc_update_floor)
-    hass.services.async_register(DOMAIN, "remove_floor",     svc_remove_floor)
-    hass.services.async_register(DOMAIN, "add_bottle",       svc_add_bottle)
-    hass.services.async_register(DOMAIN, "remove_bottle",    svc_remove_bottle)
-    hass.services.async_register(DOMAIN, "update_bottle",    svc_update_bottle)
-    hass.services.async_register(DOMAIN, "duplicate_bottle", svc_duplicate_bottle)
-    hass.services.async_register(DOMAIN, "rename_cellar",    svc_rename_cellar)
-    hass.services.async_register(DOMAIN, "value_snapshot",   svc_value_snapshot)
-    hass.services.async_register(DOMAIN, "drink_bottle",     svc_drink_bottle)
-    hass.services.async_register(DOMAIN, "delete_tasting",   svc_delete_tasting)
+    hass.services.async_register(DOMAIN, "add_rack",         svc_add_rack)
+    hass.services.async_register(DOMAIN, "update_rack",      svc_update_rack)
+    hass.services.async_register(DOMAIN, "remove_rack",      svc_remove_rack)
+    hass.services.async_register(DOMAIN, "add_wine",          svc_add_wine)
+    hass.services.async_register(DOMAIN, "update_wine",       svc_update_wine)
+    hass.services.async_register(DOMAIN, "add_slot",          svc_add_slot)
+    hass.services.async_register(DOMAIN, "move_slot",         svc_move_slot)
+    hass.services.async_register(DOMAIN, "remove_slot",       svc_remove_slot)
+    hass.services.async_register(DOMAIN, "update_slot",       svc_update_slot)
+    hass.services.async_register(DOMAIN, "remove_wine",       svc_remove_wine)
+    hass.services.async_register(DOMAIN, "rename_cellar",     svc_rename_cellar)
+    hass.services.async_register(DOMAIN, "value_snapshot",    svc_value_snapshot)
+    hass.services.async_register(DOMAIN, "drink_bottle",      svc_drink_bottle)
+    hass.services.async_register(DOMAIN, "delete_tasting",    svc_delete_tasting)
+    hass.services.async_register(DOMAIN, "import_vinotag",    svc_import_vinotag)
+    hass.services.async_register(DOMAIN, "refresh_wines",     svc_refresh_wines)
 
-    mode = "Gemini 3 Flash + photo" if gemini_key else "Open Food Facts"
+    # Import Vinotag AUTOMATIQUE au lancement si le fichier est présent
+    if os.path.exists(hass.config.path("millesime_import_vinotag.csv")):
+        try:
+            await _import_vinotag_run()
+        except HomeAssistantError as exc:
+            _LOGGER.warning("Millésime — import Vinotag au démarrage ignoré : %s", exc)
+    # Compatibilité ancien format
+    hass.services.async_register(DOMAIN, "add_bottle",        svc_add_bottle)
+    hass.services.async_register(DOMAIN, "update_bottle",     svc_update_bottle)
+    hass.services.async_register(DOMAIN, "remove_bottle",     svc_remove_bottle)
+    hass.services.async_register(DOMAIN, "duplicate_bottle",  svc_duplicate_bottle)
+
+    # Alias dépréciés (ancienne nomenclature « étage ») — automatisations existantes
+    hass.services.async_register(DOMAIN, "add_floor",          svc_add_rack)
+    hass.services.async_register(DOMAIN, "update_floor",       svc_update_rack)
+    hass.services.async_register(DOMAIN, "remove_floor",       svc_remove_rack)
+
+    mode = "Gemini 1.5 Flash + photo" if gemini_key else "Open Food Facts"
     _LOGGER.info("Millésime v%s démarré — %s", VERSION, mode)
     return True
 
