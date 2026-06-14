@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.1.5
+ * Millésime Card v6.1.6
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.1.5";
+const MILLESIME_CARD_VERSION = "6.1.6";
 
 const DOMAIN = "millesime";
 
@@ -855,7 +855,7 @@ class MillesimeCard extends HTMLElement {
       alternating:    "Une bouteille sur deux est retournée (sens inversé) au fil des emplacements.",
       alternating_2d: "Alternance en damier : aucune voisine (haut/bas/gauche/droite) n'a le même sens. Imbrication optimale.",
       quinconce:      "Rangs décalés d'une demi-bouteille, façon nid d'abeille : gain de place maximal.",
-      semi_lying:     "Bouteilles couchées et inclinées (~32°), culot posé et goulot relevé, comme sur une clayette de présentation en pente.",
+      semi_lying:     "Bouteilles quasi debout, piqûre posée en bas et goulot en haut, inclinées vers l'arrière, comme dans une clayette de présentation.",
     };
     const layoutSel = box.querySelector("#fl-layout");
     const orientSel = box.querySelector("#fl-orientation");
@@ -866,6 +866,13 @@ class MillesimeCard extends HTMLElement {
     const refresh = () => {
       const v = layoutSel.value;
       if (hintL) hintL.textContent = LAYOUT_HINTS[v] || "";
+      // En semi-couché, l'orientation n'a pas de sens (piqûre toujours en bas) → masquée
+      const orientField = orientSel.closest(".mm-field");
+      if (v === "semi_lying") {
+        if (orientField) orientField.style.display = "none";
+        return;
+      }
+      if (orientField) orientField.style.display = "";
       // Pour les dispositions tête-bêche, l'orientation pilote par quoi on COMMENCE
       const alt = isAlt(v);
       if (lblOrient) lblOrient.textContent = alt ? "Première bouteille" : "Orientation";
@@ -3276,26 +3283,21 @@ class MillesimeCard extends HTMLElement {
             stag + (parity === 1 ? 2.0 - 1.86 * scL : 2.0 - set.tip * scL)
           );
           if (tilt) {
-            // Semi-couché (PJ de référence) : la bouteille est couchée et inclinée
-            // d'environ 32°, PIQÛRE (culot) EN BAS VERS L'AVANT, GOULOT EN HAUT VERS
-            // L'ARRIÈRE, étiquette sur le dessus. L'axe de base a le goulot vers +Z
-            // (l'avant) → pour amener le goulot vers l'arrière-haut, on retourne la
-            // bouteille (rotation Y de π = goulot vers -Z) puis on l'incline en
-            // relevant ce goulot. En orientation "goulot devant", on fait l'inverse.
-            const TILT = 0.56;                              // ~32°
-            const puntFront = (parity === 1);               // parity 1 = piqûre devant
+            // Semi-couché (réf. PJ2 = clayette de présentation) : bouteille QUASI
+            // DEBOUT, PIQÛRE POSÉE EN BAS, GOULOT EN HAUT, inclinée vers l'arrière.
+            // L'axe de base est couché le long de Z (goulot vers +Z). On le redresse
+            // à la verticale, goulot en haut (rotation X de -90°), puis on penche
+            // l'ensemble vers l'arrière (goulot part vers le fond).
+            const LEAN = 0.45;                       // ~26° d'inclinaison arrière depuis la verticale
             g.rotation.set(0, 0, 0);
-            if (puntFront) {
-              g.rotation.y = Math.PI;                       // goulot vers l'arrière
-              g.rotation.x = -TILT;                         // relève le goulot (arrière) vers le haut
-            } else {
-              g.rotation.x = TILT;                          // goulot (avant) relevé
-            }
-            const half = 1.86 * scL;
+            g.rotation.x = -Math.PI / 2 + LEAN;      // goulot en haut, penché vers l'arrière
+            const len = (set.tip + 1.86) * scL;      // longueur totale culot→pointe du bouchon
+            // Culot (piqûre) posé près du bord avant, bouteille remontée d'une
+            // demi-hauteur projetée pour que la piqûre touche la planche
             g.position.set(
               x,
-              shelfY + half * Math.sin(TILT) * 0.5,         // remonte pour poser le culot sur la planche
-              stag + (puntFront ? 2.0 - 1.86 * scL : 2.0 - set.tip * scL)
+              shelfY + (len * 0.5) * Math.cos(LEAN),
+              2.0 - 0.35 - (len * 0.5) * Math.sin(LEAN)
             );
           }
           g.userData = {
