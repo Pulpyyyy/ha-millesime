@@ -4047,32 +4047,6 @@ const CARD_CSS = `<style>
 }
 .header-glass.active { filter:drop-shadow(0 0 11px rgba(192,57,43,1)); transform:scale(1.08); }
 
-/* ── Liste des bouteilles : arborescence Couleur → Région → Châteaux ── */
-.vlist { display:flex; flex-direction:column; }
-.vlist-color-head { display:flex; align-items:center; gap:9px; padding:9px 4px 7px; margin-top:8px;
-  border-bottom:2px solid var(--c, var(--red)); }
-.vlist-color-head:first-child { margin-top:0; }
-.vlist-swatch { width:13px; height:13px; border-radius:50%; box-shadow:0 0 5px rgba(0,0,0,0.4); flex-shrink:0; }
-.vlist-color-name { font-size:1em; font-weight:700; color:var(--cream); font-family:var(--font-serif);
-  text-transform:uppercase; letter-spacing:0.5px; }
-.vlist-count { margin-left:auto; font-size:0.76em; font-weight:700; background:var(--bg-1);
-  padding:2px 9px; border-radius:10px; }
-.vlist-region-head { font-size:0.8em; font-weight:600; color:var(--wood-lt,#c8a06a);
-  padding:8px 0 3px 8px; letter-spacing:0.3px; }
-.vlist-count-sm { font-size:0.86em; color:var(--muted); font-weight:500; }
-.vlist-wine { padding:7px 10px; margin:2px 0 2px 14px; border-left:2px solid var(--border);
-  cursor:pointer; transition:background 0.12s; }
-.vlist-wine:hover { background:var(--bg-3); }
-.vlist-wine-top { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
-.vlist-wine-name { font-size:0.88em; color:var(--cream); }
-.vlist-wine-name i { color:var(--muted); font-style:italic; }
-.vlist-wine-name .vqty { color:var(--muted); font-size:0.9em; }
-.vfav { color:#E8B84B; }
-.vlist-wine-price { font-size:0.85em; font-weight:600; color:var(--cream); white-space:nowrap;
-  font-family:var(--font-serif); font-variant-numeric:tabular-nums; }
-.vlist-wine-meta { display:flex; gap:11px; flex-wrap:wrap; margin-top:3px; }
-.vlist-wine-meta .vm { font-size:0.72em; color:var(--muted); white-space:nowrap; }
-.vlist-wine-meta .vm-qty { color:var(--cream); }
 .mm-empty-hint { text-align:center; color:var(--muted); padding:24px 0; font-size:0.85em; }
 .mm-hint { font-size:0.66em; font-style:italic; color:#c8c8c8; margin-top:9px; line-height:1.4; }
 .btn-primary, .btn-secondary {
@@ -4271,6 +4245,7 @@ const MODAL_CSS = `
   --mm-text: var(--primary-text-color, #EDE0CC);
   --mm-muted: var(--secondary-text-color, #555);
   --mm-border: var(--divider-color, #222);
+  --mm-accent: var(--header-accent, #7B1D2E);
   --mm-red: var(--primary-color, #C0392B);
   --mm-red-h: var(--secondary-color, #E74C3C);
 }
@@ -4284,6 +4259,26 @@ const MODAL_CSS = `
 }
 /* Liste des bouteilles : occupe toute la largeur dispo (PC comme mobile) */
 .mm-box-wide { max-width:min(680px, 95vw); }
+/* ── Liste des bouteilles : arborescence Couleur → Région → Châteaux ── */
+.vlist { display:flex; flex-direction:column; }
+.vlist-color-head { display:flex; align-items:center; gap:10px; padding:11px 2px 7px; margin-top:6px;
+  border-bottom:2px solid var(--c, var(--mm-accent,#7B1D2E)); }
+.vlist-color-head:first-child { margin-top:0; }
+.vlist-swatch { width:13px; height:13px; border-radius:50%; box-shadow:0 0 5px rgba(0,0,0,0.35); flex-shrink:0; }
+.vlist-color-name { font-family:var(--font-serif,Georgia,serif); font-size:0.98em; font-weight:bold;
+  letter-spacing:1px; color:var(--mm-text); text-transform:uppercase; }
+.vlist-count { margin-left:auto; font-size:0.78em; color:var(--c, var(--mm-accent,#7B1D2E)); }
+.vlist-region-head { font-size:0.84em; color:var(--mm-muted); padding:11px 0 4px 2px; }
+.vlist-wine { padding:7px 10px 8px; margin-left:14px; border-left:2px solid var(--mm-border);
+  cursor:pointer; transition:background 0.12s; }
+.vlist-wine:hover { background:var(--mm-bg3); }
+.vlist-wine-top { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+.vlist-wine-name { font-size:0.92em; color:var(--mm-text); }
+.vlist-wine-name i { color:var(--mm-muted); font-style:italic; font-family:var(--font-serif,Georgia,serif); }
+.vfav { color:#E0A82E; }
+.vlist-wine-price { font-size:0.86em; color:var(--mm-text); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.vlist-wine-meta { display:flex; gap:14px; flex-wrap:wrap; margin-top:4px; }
+.vlist-wine-meta .vm { font-size:0.74em; color:var(--mm-muted); white-space:nowrap; }
 /* Description sous les menus (disposition, orientation) : petit, gris clair, italique */
 .mm-hint { font-size:0.74em; font-style:italic; color:#c8c8c8; margin-top:7px; line-height:1.4; }
 .mm-header {
