@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.1.4
+ * Millésime Card v6.1.5
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.1.4";
+const MILLESIME_CARD_VERSION = "6.1.5";
 
 const DOMAIN = "millesime";
 
@@ -2444,7 +2444,7 @@ class MillesimeCard extends HTMLElement {
       const sel = wine && wine.id === this._selected;
       const shelf2d = Math.floor(i / cols);
       const col2d = i % cols;
-      const orient2d = rack.orientation === "neck" ? 1 : 0;
+      const orient2d = rack.orientation === "neck" ? 0 : 1;   // même logique qu'en 3D (piqûre devant = retourné)
       const isAltL = isAlt || isAlt2 || isQc;
       const baseAlt = (isAlt && i % 2 === 1) || ((isAlt2 || isQc) && (shelf2d + col2d) % 2 === 1) ? 1 : 0;
       const alt = (isAltL ? (baseAlt ^ orient2d) : orient2d) === 1;
@@ -3114,7 +3114,7 @@ class MillesimeCard extends HTMLElement {
       const total = rack.slots || cols * (rack.shelves || 2);
       const shelves  = Math.ceil(total / cols);
       const layout = rack.layout || "side_by_side";
-      const orient = rack.orientation === "neck" ? 1 : 0;     // 0=piqûre devant, 1=goulot devant
+      const orient = rack.orientation === "neck" ? 0 : 1;     // punt(piqûre)=1→retourné→piqûre devant ; neck(goulot)=0→défaut→goulot devant
       const tilt   = layout === "semi_lying";
       const TILT_A = 0.56;                                      // ~32° (semi-couché)
       const halfW = (cols * SPACING) / 2;
@@ -3276,18 +3276,26 @@ class MillesimeCard extends HTMLElement {
             stag + (parity === 1 ? 2.0 - 1.86 * scL : 2.0 - set.tip * scL)
           );
           if (tilt) {
-            // Semi-couché (rendu validé en v5.3.4) : la bouteille reste COUCHÉE le long
-            // de Z, simplement INCLINÉE d'environ 32° — culot posé sur la clayette,
-            // goulot relevé vers le fond, comme sur une clayette de présentation en pente.
-            // (Surtout PAS debout : c'est une bouteille allongée et penchée.)
+            // Semi-couché (PJ de référence) : la bouteille est couchée et inclinée
+            // d'environ 32°, PIQÛRE (culot) EN BAS VERS L'AVANT, GOULOT EN HAUT VERS
+            // L'ARRIÈRE, étiquette sur le dessus. L'axe de base a le goulot vers +Z
+            // (l'avant) → pour amener le goulot vers l'arrière-haut, on retourne la
+            // bouteille (rotation Y de π = goulot vers -Z) puis on l'incline en
+            // relevant ce goulot. En orientation "goulot devant", on fait l'inverse.
             const TILT = 0.56;                              // ~32°
-            g.rotation.z = 0;
-            // parity 1 (tête-bêche) a déjà tourné de π en Y → l'inclinaison s'inverse
-            g.rotation.x = (parity === 1 ? -TILT : TILT);
+            const puntFront = (parity === 1);               // parity 1 = piqûre devant
+            g.rotation.set(0, 0, 0);
+            if (puntFront) {
+              g.rotation.y = Math.PI;                       // goulot vers l'arrière
+              g.rotation.x = -TILT;                         // relève le goulot (arrière) vers le haut
+            } else {
+              g.rotation.x = TILT;                          // goulot (avant) relevé
+            }
+            const half = 1.86 * scL;
             g.position.set(
               x,
-              shelfY + 1.86 * scL * Math.sin(TILT) * 0.5,   // remontée pour poser le culot
-              stag + (parity === 1 ? 2.0 - 1.86 * scL : 2.0 - set.tip * scL)
+              shelfY + half * Math.sin(TILT) * 0.5,         // remonte pour poser le culot sur la planche
+              stag + (puntFront ? 2.0 - 1.86 * scL : 2.0 - set.tip * scL)
             );
           }
           g.userData = {
