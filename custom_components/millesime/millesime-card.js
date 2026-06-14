@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.2.0
+ * Millésime Card v6.2.1
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.2.0";
+const MILLESIME_CARD_VERSION = "6.2.1";
 
 const DOMAIN = "millesime";
 
@@ -1871,7 +1871,7 @@ class MillesimeCard extends HTMLElement {
               const items = regions[rg].sort((a, b) => (a.w?.name || a.name || "").localeCompare(b.name || ""));
               const rCount = items.reduce((a, w) => a + slotCount(w), 0);
               return `
-              <div class="vlist-region-head">${esc(rg)} <span class="vlist-count-sm">${rCount}</span></div>
+              <div class="vlist-region-head">${esc(rg)}</div>
               ${items.map((w) => {
                 const n = slotCount(w);
                 const apo = (w.drink_from || w.drink_until)
@@ -1883,10 +1883,11 @@ class MillesimeCard extends HTMLElement {
                 if (apo)           meta.push(`<span class="vm">🕐 ${apo}</span>`);
                 if (w.event)       meta.push(`<span class="vm">📅 ${esc(fmtEvent(w.event))}</span>`);
                 if (w.size && String(w.size) !== "75cl") meta.push(`<span class="vm">🍾 ${esc(String(w.size))}</span>`);
+                meta.push(`<span class="vm vm-qty">Qté : ${n}</span>`);
                 return `
                 <div class="vlist-wine" data-wine="${esc(w.id)}">
                   <div class="vlist-wine-top">
-                    <span class="vlist-wine-name">${w.favorite ? '<span class="vfav">★</span> ' : ""}${esc(w.name || "Sans nom")}${w.vintage ? ` <i>${esc(w.vintage)}</i>` : ""}${n > 1 ? ` <span class="vqty">×${n}</span>` : ""}</span>
+                    <span class="vlist-wine-name">${w.favorite ? '<span class="vfav">★</span> ' : ""}${esc(w.name || "Sans nom")}${w.vintage ? ` <i>${esc(w.vintage)}</i>` : ""}</span>
                     <span class="vlist-wine-price">${w.price ? Math.round(w.price) + "€" : ""}</span>
                   </div>
                   ${meta.length ? `<div class="vlist-wine-meta">${meta.join("")}</div>` : ""}
@@ -3312,9 +3313,13 @@ class MillesimeCard extends HTMLElement {
             if (puntDown) g.rotation.y = Math.PI;           // amène la piqûre vers l'avant
             g.rotation.x = TILT;                            // bascule l'extrémité avant vers le bas
             const half = 1.86 * scL;
+            // Distance du centre à l'extrémité BASSE selon l'orientation (la pointe
+            // du bouchon est un peu plus longue que la piqûre) → levage exact pour
+            // que cette extrémité repose sur la planche sans passer dessous.
+            const downDist = (puntDown ? 1.86 : set.tip) * scL;
             g.position.set(
               x,
-              shelfY + half * Math.sin(TILT) * 0.5,         // pose l'extrémité basse sur la planche
+              shelfY + downDist * Math.sin(TILT) + 0.02,
               stag + (puntDown ? 2.0 - 1.86 * scL : 2.0 - set.tip * scL)
             );
           }
@@ -3401,7 +3406,13 @@ class MillesimeCard extends HTMLElement {
       const plateReserve  = (this._labelMode === "plate" || this._labelMode === "both") ? 0.55 : 0;
       const bubbleReserve = (this._labelMode === "bubble" || this._labelMode === "both") ? 1.25 : 0;
       const markReserve = Math.max(plateReserve, bubbleReserve);
-      yCursor = yBot - SHELF_DY - RACK_GAP - markReserve;
+      // Si le PROCHAIN casier est semi-couché, ses bouteilles montent ~2 unités
+      // au-dessus de sa planche → on réserve de l'espace au-dessus de lui (sous CE
+      // casier) pour qu'elles ne percutent pas la clayette/les repères du dessus.
+      const nextRack = racks[fi + 1];
+      const nextTilted = nextRack && (nextRack.layout || "side_by_side") === "semi_lying";
+      const tiltReserve = nextTilted ? 1.45 : 0;
+      yCursor = yBot - SHELF_DY - RACK_GAP - markReserve - tiltReserve;
     });
 
     // Marqueur de dépôt (drag & drop)
@@ -4061,6 +4072,7 @@ const CARD_CSS = `<style>
   font-family:var(--font-serif); font-variant-numeric:tabular-nums; }
 .vlist-wine-meta { display:flex; gap:11px; flex-wrap:wrap; margin-top:3px; }
 .vlist-wine-meta .vm { font-size:0.72em; color:var(--muted); white-space:nowrap; }
+.vlist-wine-meta .vm-qty { color:var(--cream); }
 .mm-empty-hint { text-align:center; color:var(--muted); padding:24px 0; font-size:0.85em; }
 .mm-hint { font-size:0.66em; font-style:italic; color:#c8c8c8; margin-top:9px; line-height:1.4; }
 .btn-primary, .btn-secondary {
