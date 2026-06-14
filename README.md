@@ -1,7 +1,7 @@
 # 🍷 Millésime — Cave à vin pour Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-6.1.1-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
+[![version](https://img.shields.io/badge/version-6.1.2-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
 [![Offrir un verre de vin](https://img.shields.io/badge/🍷_Offrir_un_verre_de_vin-PayPal-7B1D2E.svg?style=flat-square)](https://paypal.me/Redsklns)
 
 **Millésime** transforme Home Assistant en gestionnaire de cave à vin complet : visualisez vos bouteilles dans une scène **3D réaliste**, scannez les étiquettes par **photo**, suivez la valeur de votre collection et tenez un **journal de dégustation**.
@@ -99,6 +99,17 @@ L'intégralité de Millésime a été conçue et développée en collaboration a
 ---
 
 ## 📝 Changelog
+
+### [6.1.2] — 2026-06
+Dispositions enrichies, formats et formes de bouteille, liste exportable.
+
+- **Liste des bouteilles** : un clic sur le compteur « Bouteilles » ouvre la liste complète (nom, type, appellation, producteur, emplacement, prix, note) avec **export CSV** (compatible Excel)
+- **Orientation par casier** : choix piqûre (cul) ou goulot vers l'avant ; pour les dispositions tête-bêche, choix de la bouteille de départ
+- **Disposition Semi-couché** rétablie (bouteilles inclinées, culot posé et goulot relevé)
+- **Texte explicatif** sous le choix de disposition, mis à jour selon la sélection
+- **Format de bouteille** au format menu déroulant à l'ajout d'un vin : Demi 37,5 cl, Bouteille 75 cl, Magnum 150 cl, Jéroboam 300 cl, Réhoboam 450 cl, Mathusalem 600 cl
+- **Forme de bouteille** sélectionnable : automatique (détectée par l'IA lors du scan, repli sur le type de vin) ou choix manuel parmi six silhouettes (bordelaise, bourguignonne, champenoise, flûte d'Alsace, Provence/rosé, ligérienne)
+- **Tailles harmonisées** dans l'en-tête et le menu d'options pour un rendu homogène
 
 ### [6.1.1] — 2026-06
 Ajustements d'affichage, notamment pour l'usage sur iPhone.
