@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.1.3
+ * Millésime Card v6.1.4
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.1.3";
+const MILLESIME_CARD_VERSION = "6.1.4";
 
 const DOMAIN = "millesime";
 
@@ -693,7 +693,7 @@ class MillesimeCard extends HTMLElement {
     overlay.style.fontFamily = this._fontSans || "'Inter', sans-serif";
     overlay.style.fontSize   = (this._fsBase  || 13) + 'px';
     const box = document.createElement("div");
-    box.className = "mm-box";
+    box.className = "mm-box" + (type === "bottlelist" ? " mm-box-wide" : "");
 
     if (type === "rack")     box.innerHTML = this._rackFormHTML(opts.rack);
     if (type === "bottle")    box.innerHTML = this._bottleFormHTML(opts.wine, opts.slot);
@@ -855,7 +855,7 @@ class MillesimeCard extends HTMLElement {
       alternating:    "Une bouteille sur deux est retournée (sens inversé) au fil des emplacements.",
       alternating_2d: "Alternance en damier : aucune voisine (haut/bas/gauche/droite) n'a le même sens. Imbrication optimale.",
       quinconce:      "Rangs décalés d'une demi-bouteille, façon nid d'abeille : gain de place maximal.",
-      semi_lying:     "Bouteilles presque debout, posées sur la piqûre et inclinées vers l'arrière, comme sur une clayette de présentation.",
+      semi_lying:     "Bouteilles couchées et inclinées (~32°), culot posé et goulot relevé, comme sur une clayette de présentation en pente.",
     };
     const layoutSel = box.querySelector("#fl-layout");
     const orientSel = box.querySelector("#fl-orientation");
@@ -2751,11 +2751,11 @@ class MillesimeCard extends HTMLElement {
     };
     // Mêmes 5 formes que la vue 2D (profils partagés normalisés) : diamètre commun
     // BOTTLE_R partout → rest et labelR identiques pour toutes les formes
-    const setBordeaux  = mkSet("bordeaux",  { rest: 0.43, capR: 0.165, capH: 0.36, capY: 3.53, corkR: 0.125, corkH: 0.16, corkY: 3.76, colR: 0.15,  colH: 0.18, colY: 3.15, labelR: 0.44, labelH: 0.95, labelY: 1.05 });
-    const setLoire     = mkSet("loire",     { rest: 0.43, capR: 0.155, capH: 0.36, capY: 3.53, corkR: 0.12,  corkH: 0.16, corkY: 3.76, colR: 0.16,  colH: 0.16, colY: 3.28, labelR: 0.44, labelH: 0.90, labelY: 1.00 });
-    const setFlute     = mkSet("flute",     { rest: 0.43, capR: 0.155, capH: 0.36, capY: 3.53, corkR: 0.12,  corkH: 0.16, corkY: 3.76, colR: 0.155, colH: 0.16, colY: 3.30, labelR: 0.44, labelH: 0.85, labelY: 0.95 });
-    const setRose      = mkSet("rose",      { rest: 0.43, capR: 0.16,  capH: 0.40, capY: 3.51, corkR: 0.12,  corkH: 0.16, corkY: 3.76, colR: 0.148, colH: 0.18, colY: 3.05, labelR: 0.44, labelH: 0.90, labelY: 0.98 });
-    const setBourgogne = mkSet("bourgogne", { rest: 0.43, capR: 0.17,  capH: 0.36, capY: 3.53, corkR: 0.125, corkH: 0.16, corkY: 3.76, colR: 0.155, colH: 0.18, colY: 3.28, labelR: 0.44, labelH: 0.95, labelY: 1.00 });
+    const setBordeaux  = mkSet("bordeaux",  { rest: 0.43, capR: 0.165, capH: 0.36, capY: 3.53, corkR: 0.125, corkH: 0.16, corkY: 3.60, colR: 0.15,  colH: 0.18, colY: 3.15, labelR: 0.44, labelH: 0.95, labelY: 1.05 });
+    const setLoire     = mkSet("loire",     { rest: 0.43, capR: 0.155, capH: 0.36, capY: 3.53, corkR: 0.12,  corkH: 0.16, corkY: 3.60, colR: 0.16,  colH: 0.16, colY: 3.28, labelR: 0.44, labelH: 0.90, labelY: 1.00 });
+    const setFlute     = mkSet("flute",     { rest: 0.43, capR: 0.155, capH: 0.36, capY: 3.53, corkR: 0.12,  corkH: 0.16, corkY: 3.60, colR: 0.155, colH: 0.16, colY: 3.30, labelR: 0.44, labelH: 0.85, labelY: 0.95 });
+    const setRose      = mkSet("rose",      { rest: 0.43, capR: 0.16,  capH: 0.40, capY: 3.51, corkR: 0.12,  corkH: 0.16, corkY: 3.60, colR: 0.148, colH: 0.18, colY: 3.05, labelR: 0.44, labelH: 0.90, labelY: 0.98 });
+    const setBourgogne = mkSet("bourgogne", { rest: 0.43, capR: 0.17,  capH: 0.36, capY: 3.53, corkR: 0.125, corkH: 0.16, corkY: 3.60, colR: 0.155, colH: 0.18, colY: 3.28, labelR: 0.44, labelH: 0.95, labelY: 1.00 });
     // Champenoise : coiffe conique épousant la pente du col, collerette en jupe
     // descendant loin sur le col (continuité avec la coiffe), bouchon champignon plus large
     const setChampagne = mkSet("champagne", { rest: 0.43,
@@ -3276,22 +3276,18 @@ class MillesimeCard extends HTMLElement {
             stag + (parity === 1 ? 2.0 - 1.86 * scL : 2.0 - set.tip * scL)
           );
           if (tilt) {
-            // Semi-couché façon clayette inclinée (PJ) : la bouteille est presque
-            // DEBOUT, posée sur sa piqûre (culot en bas), inclinée vers l'arrière,
-            // goulot en l'air vers le fond. L'axe du mesh est couché le long de Z
-            // (goulot vers +Z) → on le redresse (-90° autour de X = goulot vers le
-            // haut) puis on bascule légèrement vers l'arrière.
-            const LEAN = 0.32;                       // ~18° d'inclinaison arrière
-            g.rotation.set(0, 0, 0);
-            if (parity === 1) g.rotation.y = Math.PI; // garde l'orientation gauche/droite
-            g.rotation.x = -Math.PI / 2 + LEAN;       // debout sur le culot, penchée arrière
-            // Culot posé au ras du bord avant de la planche, bouteille remontée pour
-            // que la piqûre touche la clayette
-            const half = 1.86 * scL;                  // demi-longueur (culot→goulot)
+            // Semi-couché (rendu validé en v5.3.4) : la bouteille reste COUCHÉE le long
+            // de Z, simplement INCLINÉE d'environ 32° — culot posé sur la clayette,
+            // goulot relevé vers le fond, comme sur une clayette de présentation en pente.
+            // (Surtout PAS debout : c'est une bouteille allongée et penchée.)
+            const TILT = 0.56;                              // ~32°
+            g.rotation.z = 0;
+            // parity 1 (tête-bêche) a déjà tourné de π en Y → l'inclinaison s'inverse
+            g.rotation.x = (parity === 1 ? -TILT : TILT);
             g.position.set(
               x,
-              shelfY + half * Math.cos(LEAN) * 0.5,
-              2.0 - 0.2 - half * Math.sin(LEAN)
+              shelfY + 1.86 * scL * Math.sin(TILT) * 0.5,   // remontée pour poser le culot
+              stag + (parity === 1 ? 2.0 - 1.86 * scL : 2.0 - set.tip * scL)
             );
           }
           g.userData = {
@@ -4234,6 +4230,8 @@ const MODAL_CSS = `
   animation:mm-slide 0.22s ease-out; color:var(--mm-text);
   overflow:hidden;
 }
+/* Liste des bouteilles : occupe toute la largeur dispo (PC comme mobile) */
+.mm-box-wide { max-width:min(1100px, 96vw); }
 .mm-header {
   display:flex; align-items:center; justify-content:space-between;
   padding:16px 20px 12px; border-bottom:1px solid var(--mm-border);
