@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.1.1
+ * Millésime Card v6.1.2
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.1.1";
+const MILLESIME_CARD_VERSION = "6.1.2";
 
 const DOMAIN = "millesime";
 
@@ -132,6 +132,25 @@ const _shape2d = (kind) => {
 };
 const BOTTLE_SHAPES = {};
 for (const kind of Object.keys(BOTTLE_PROFILES)) BOTTLE_SHAPES[kind] = _shape2d(kind);
+
+// Formats les plus courants : [valeur stockée, libellé affiché]
+const BOTTLE_SIZES = [
+  ["37.5cl", "Demi / Fillette — 37,5 cl"],
+  ["75cl",   "Bouteille — 75 cl"],
+  ["150cl",  "Magnum — 150 cl"],
+  ["300cl",  "Jéroboam — 300 cl"],
+  ["450cl",  "Réhoboam — 450 cl"],
+  ["600cl",  "Mathusalem — 600 cl"],
+];
+// Formes de bouteille manuelles : [clé profil, libellé]
+const BOTTLE_SHAPE_LABELS = [
+  ["bordeaux",  "Bordelaise (épaules marquées)"],
+  ["bourgogne", "Bourguignonne (épaules tombantes)"],
+  ["champagne", "Champenoise (base large)"],
+  ["flute",     "Flûte d'Alsace (fine et haute)"],
+  ["rose",      "Provence / rosé"],
+  ["loire",     "Ligérienne (Loire)"],
+];
 // Teinte du verre — TOUTES les bouteilles sont en verre transparent, le vin
 // (couleur du type) est visible au travers
 // Le verre du rouge est vert antique sombre et peu transparent (comme celui de
@@ -202,8 +221,8 @@ const normKey = (s) => String(s ?? "").trim().toLowerCase()
   .normalize("NFD").replace(/\p{Diacritic}/gu, "");
 
 let _bmUid = 0;
-const BOTTLE_MINI = (color, w = null, type = "red", flipped = false, size = null) => {
-  const sp = BOTTLE_SHAPES[TYPE_SHAPE[type] || "bordeaux"];
+const BOTTLE_MINI = (color, w = null, type = "red", flipped = false, size = null, shapeOverride = "") => {
+  const sp = BOTTLE_SHAPES[(shapeOverride && BOTTLE_SHAPES[shapeOverride]) ? shapeOverride : (TYPE_SHAPE[type] || "bordeaux")];
   // Échelle du format (magnum/demi) : la bouteille change de taille DANS sa
   // cellule (ancrée au culot), la grille ne bouge pas
   const sc = sizeScale(size);
@@ -685,6 +704,7 @@ class MillesimeCard extends HTMLElement {
     if (type === "slotedit")  box.innerHTML = this._slotEditHTML(opts.wine, opts.slotIdx);
     if (type === "journal")   box.innerHTML = this._journalHTML();
     if (type === "search")    box.innerHTML = this._searchModalHTML();
+    if (type === "bottlelist") box.innerHTML = this._bottleListHTML();
     if (type === "moverack") box.innerHTML = this._moveRackHTML(opts.rack);
 
     overlay.appendChild(box);
@@ -705,6 +725,7 @@ class MillesimeCard extends HTMLElement {
     if (type === "drink")     this._bindDrinkForm(box, opts.wine);
     if (type === "journal")   this._bindJournal(box);
     if (type === "search")    this._bindSearchModal(box);
+    if (type === "bottlelist") this._bindBottleList(box);
     if (type === "moverack") this._bindMoveRack(box, opts.rack);
   }
 
@@ -747,7 +768,17 @@ class MillesimeCard extends HTMLElement {
             <option value="alternating"    ${rack?.layout === "alternating"    ? "selected" : ""}>Tête-bêche</option>
             <option value="alternating_2d" ${rack?.layout === "alternating_2d" ? "selected" : ""}>Tête-bêche alterné</option>
             <option value="quinconce"      ${rack?.layout === "quinconce"      ? "selected" : ""}>Quinconce</option>
+            <option value="semi_lying"     ${rack?.layout === "semi_lying"     ? "selected" : ""}>Semi-couché</option>
           </select>
+          <div class="mm-hint" id="fl-layout-hint"></div>
+        </div>
+        <div class="mm-field">
+          <label class="mm-label" id="fl-orient-label">Orientation</label>
+          <select class="mm-input" id="fl-orientation">
+            <option value="punt" ${(rack?.orientation || "punt") === "punt" ? "selected" : ""}>Piqûre (cul) devant</option>
+            <option value="neck" ${rack?.orientation === "neck" ? "selected" : ""}>Goulot devant</option>
+          </select>
+          <div class="mm-hint" id="fl-orient-hint"></div>
         </div>
         ${this._rackStyleFieldsHTML(rack)}
       </div>
@@ -810,12 +841,47 @@ class MillesimeCard extends HTMLElement {
         const v = box.querySelector(sel).value;
         if (v !== "") style[key] = v === "1";
       });
+      const orientation = box.querySelector("#fl-orientation").value;
       if (rack) {
-        await this._callService("update_rack", { rack_id: rack.id, name, columns: cols, shelves, layout, style });
+        await this._callService("update_rack", { rack_id: rack.id, name, columns: cols, shelves, layout, orientation, style });
       } else {
-        await this._callService("add_rack", { name, columns: cols, shelves, layout, slots: cols * shelves, style });
+        await this._callService("add_rack", { name, columns: cols, shelves, layout, orientation, slots: cols * shelves, style });
       }
     });
+
+    // Textes informatifs dynamiques (disposition + libellé/aide orientation)
+    const LAYOUT_HINTS = {
+      side_by_side:   "Toutes les bouteilles dans le même sens, alignées côte à côte.",
+      alternating:    "Une bouteille sur deux est retournée (sens inversé) au fil des emplacements.",
+      alternating_2d: "Alternance en damier : aucune voisine (haut/bas/gauche/droite) n'a le même sens. Imbrication optimale.",
+      quinconce:      "Rangs décalés d'une demi-bouteille, façon nid d'abeille : gain de place maximal.",
+      semi_lying:     "Bouteilles inclinées (~30°), culot posé et goulot relevé, comme sur une clayette en pente.",
+    };
+    const layoutSel = box.querySelector("#fl-layout");
+    const orientSel = box.querySelector("#fl-orientation");
+    const lblOrient = box.querySelector("#fl-orient-label");
+    const hintL = box.querySelector("#fl-layout-hint");
+    const hintO = box.querySelector("#fl-orient-hint");
+    const isAlt = (v) => v === "alternating" || v === "alternating_2d" || v === "quinconce";
+    const refresh = () => {
+      const v = layoutSel.value;
+      if (hintL) hintL.textContent = LAYOUT_HINTS[v] || "";
+      // Pour les dispositions tête-bêche, l'orientation pilote par quoi on COMMENCE
+      const alt = isAlt(v);
+      if (lblOrient) lblOrient.textContent = alt ? "Première bouteille" : "Orientation";
+      const opts = orientSel.querySelectorAll("option");
+      if (alt) {
+        opts[0].textContent = "Commencer par la piqûre (cul)";
+        opts[1].textContent = "Commencer par le goulot";
+        if (hintO) hintO.textContent = "Définit le sens de la 1ʳᵉ bouteille ; l'alternance suit.";
+      } else {
+        opts[0].textContent = "Piqûre (cul) devant";
+        opts[1].textContent = "Goulot devant";
+        if (hintO) hintO.textContent = "Sens commun à toutes les bouteilles du casier.";
+      }
+    };
+    layoutSel?.addEventListener("change", refresh);
+    refresh();
   }
 
   // ── HTML formulaire bouteille ──────────────────────────────────────────────────
@@ -864,13 +930,24 @@ class MillesimeCard extends HTMLElement {
         <div class="mm-row">
           <div class="mm-field">
             <label class="mm-label">Format</label>
-            <input class="mm-input" id="bt-size" value="${esc(b.size || "")}" placeholder="75cl">
+            <select class="mm-input" id="bt-size">
+              ${BOTTLE_SIZES.map(([val, lbl]) =>
+                `<option value="${val}" ${(b.size || "75cl") === val ? "selected" : ""}>${lbl}</option>`).join("")}
+            </select>
           </div>
           <div class="mm-field">
             <label class="mm-label">Coup de cœur</label>
             <button type="button" id="bt-favorite" class="mm-fav${b.favorite ? " on" : ""}"
               title="Coup de cœur" aria-pressed="${b.favorite ? "true" : "false"}">${b.favorite ? "★" : "☆"}</button>
           </div>
+        </div>
+        <div class="mm-field">
+          <label class="mm-label">Forme de la bouteille</label>
+          <select class="mm-input" id="bt-shape">
+            <option value="" ${!b.shape ? "selected" : ""}>Automatique (IA / type de vin)</option>
+            ${BOTTLE_SHAPE_LABELS.map(([val, lbl]) =>
+              `<option value="${val}" ${b.shape === val ? "selected" : ""}>${lbl}</option>`).join("")}
+          </select>
         </div>
         <div class="mm-row">
           <div class="mm-field">
@@ -994,6 +1071,8 @@ class MillesimeCard extends HTMLElement {
       set("bt-pairing",     w.food_pairing  || "");
       const typeEl = box.querySelector("#bt-type");
       if (typeEl && w.type) typeEl.value = w.type;
+      const shapeEl = box.querySelector("#bt-shape");
+      if (shapeEl && w.shape) shapeEl.value = w.shape;   // forme détectée par Gemini
       results.innerHTML = "";
       results.style.display = "none";
       if (w.image_url) {
@@ -1168,6 +1247,7 @@ class MillesimeCard extends HTMLElement {
         size:          txt("bt-size"),
         favorite:      !!box.querySelector("#bt-favorite")?.classList.contains("on"),
         type:          box.querySelector("#bt-type")?.value || "red",
+        shape:         box.querySelector("#bt-shape")?.value || "",
         producer:      txt("bt-producer"),
         appellation:   txt("bt-appellation"),
         region:        txt("bt-region"),
@@ -1743,6 +1823,95 @@ class MillesimeCard extends HTMLElement {
     setTimeout(() => input?.focus(), 150);
   }
 
+  // ── Liste des bouteilles (clic sur le compteur) + export CSV ────────────────
+
+  _bottleListHTML() {
+    const wines = this._data?.wines || [];
+    const rows = [];
+    for (const w of wines) {
+      for (const s of (w.slots || [])) rows.push({ w, s });
+    }
+    rows.sort((a, b) => (a.w.name || "").localeCompare(b.w.name || ""));
+    const fmtEvent = (e) => (EVENT_TYPES.find(x => x.v === e)?.l) || "";
+
+    const body = rows.length === 0
+      ? `<div class="mm-empty-hint">Aucune bouteille dans la cave.</div>`
+      : `<div class="blist">
+          ${rows.map(({ w, s }) => {
+            const t = WINE_TYPES[w.type] || WINE_TYPES.red;
+            const sz = w.size && String(w.size) !== "75cl" ? ` · ${esc(String(w.size))}` : "";
+            return `
+            <div class="blist-row" data-wine="${esc(w.id)}">
+              <span class="blist-dot" style="background:${t.color}"></span>
+              <div class="blist-main">
+                <div class="blist-name">${esc(w.name || "Sans nom")}${w.vintage ? " " + esc(w.vintage) : ""}${w.favorite ? " ⭐" : ""}</div>
+                <div class="blist-sub">${[esc(t.label), esc(w.appellation), esc(w.producer)].filter(Boolean).join(" · ")}</div>
+                <div class="blist-loc">📍 ${esc(this._slotLabel(s))}${sz}</div>
+              </div>
+              <div class="blist-side">
+                ${w.price ? `<span class="blist-price">${Math.round(w.price)}€</span>` : ""}
+                ${w.vivino_rating ? `<span class="blist-rate">★ ${w.vivino_rating}</span>` : ""}
+                ${w.event ? `<span class="blist-evt">${esc(fmtEvent(w.event))}</span>` : ""}
+              </div>
+            </div>`;
+          }).join("")}
+        </div>`;
+
+    return `
+      <div class="mm-header">
+        <span class="mm-title">🍷 ${rows.length} bouteille${rows.length > 1 ? "s" : ""}</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">${body}</div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Fermer</button>
+        <button class="mm-btn mm-btn-primary" id="blist-export">⬇️ Exporter en CSV</button>
+      </div>`;
+  }
+
+  _bindBottleList(box) {
+    box.querySelectorAll(".blist-row").forEach((row) =>
+      row.addEventListener("click", () => {
+        const wine = (this._data?.wines || []).find((w) => w.id === row.dataset.wine);
+        if (wine) { this._closeModal(); this._openModal("detail", { wine }); }
+      })
+    );
+    box.querySelector("#blist-export")?.addEventListener("click", () => this._exportCSV());
+  }
+
+  _exportCSV() {
+    const wines = this._data?.wines || [];
+    const cols = ["Nom", "Millésime", "Type", "Appellation", "Région", "Pays", "Producteur",
+                  "Prix", "Note", "Format", "Emplacement", "Événement", "Coup de cœur", "Apogée début", "Apogée fin"];
+    const cell = (v) => {
+      const s = String(v ?? "");
+      return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [cols.join(";")];
+    for (const w of wines) {
+      const t = WINE_TYPES[w.type] || WINE_TYPES.red;
+      const evt = (EVENT_TYPES.find(x => x.v === w.event)?.l) || "";
+      for (const s of (w.slots || [])) {
+        lines.push([
+          w.name, w.vintage, t.label, w.appellation, w.region, w.country, w.producer,
+          w.price || "", w.vivino_rating || "", w.size || "75cl",
+          this._slotLabel(s), evt, w.favorite ? "Oui" : "", w.drink_from || "", w.drink_until || "",
+        ].map(cell).join(";"));
+      }
+    }
+    const csv = "\ufeff" + lines.join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `millesime-cave-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    this._showToast("success", "Export CSV téléchargé 📥");
+  }
+
   // ── Déplacer le contenu d'un casier vers un autre ───────────────────────────
 
   _moveRackHTML(rack) {
@@ -2156,7 +2325,7 @@ class MillesimeCard extends HTMLElement {
         </div>
         <div class="header-right">
           <div class="header-stats">
-            <div class="stat"><span class="stat-value">${total}</span><span class="stat-label">Bouteilles</span></div>
+            <div class="stat stat-clickable" id="btn-bottlelist" title="Voir la liste des bouteilles"><span class="stat-value">${total}</span><span class="stat-label">Bouteilles</span></div>
             <div class="stat"><span class="stat-value">${nRack}</span><span class="stat-label">Casiers</span></div>
             <div class="stat stat-clickable" id="btn-history" title="Évolution de la valeur de la cave">
               <span class="stat-value">${value > 0 ? Math.round(value) + "€" : "—"}</span><span class="stat-label">Valeur</span>
@@ -2260,7 +2429,10 @@ class MillesimeCard extends HTMLElement {
       const sel = wine && wine.id === this._selected;
       const shelf2d = Math.floor(i / cols);
       const col2d = i % cols;
-      const alt = (isAlt && i % 2 === 1) || (isAlt2 && (shelf2d + col2d) % 2 === 1);
+      const orient2d = rack.orientation === "neck" ? 1 : 0;
+      const isAltL = isAlt || isAlt2 || isQc;
+      const baseAlt = (isAlt && i % 2 === 1) || ((isAlt2 || isQc) && (shelf2d + col2d) % 2 === 1) ? 1 : 0;
+      const alt = (isAltL ? (baseAlt ^ orient2d) : orient2d) === 1;
       const dotStyle = wine ? `--dot-glow:${wt.glow};opacity:${filtered ? 0.15 : 1}` : "";
       const isCircle = this._view === "dot";
 
@@ -2285,7 +2457,7 @@ class MillesimeCard extends HTMLElement {
       const bottleContent = wine
         ? (isCircle
             ? `<svg class="dot-svg-c" viewBox="0 0 10 10" width="10" height="10" xmlns="http://www.w3.org/2000/svg" style="width:${circleSize}px;height:${circleSize}px;display:block"><circle cx="5" cy="5" r="5" fill="${wt.color}"/><circle cx="5" cy="5" r="5" fill="white" opacity="0.12"/><ellipse cx="3.5" cy="3.5" rx="1.5" ry="1" fill="white" opacity="0.2"/></svg>`
-            : BOTTLE_MINI(wt.color, Math.round(80 * 10 / 26), wine.type, alt, entry.size || wine.size))
+            : BOTTLE_MINI(wt.color, Math.round(80 * 10 / 26), wine.type, alt, entry.size || wine.size, wine.shape || ""))
         : (isCircle
             ? `<svg class="dot-svg-c" viewBox="0 0 10 10" width="10" height="10" xmlns="http://www.w3.org/2000/svg" style="width:${circleSize}px;height:${circleSize}px;display:block"><circle cx="5" cy="5" r="4.5" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="0.8" stroke-dasharray="1.8 1.2"/></svg>`
             : BOTTLE_GHOST(Math.round(80 * 10 / 26)));
@@ -2927,6 +3099,9 @@ class MillesimeCard extends HTMLElement {
       const total = rack.slots || cols * (rack.shelves || 2);
       const shelves  = Math.ceil(total / cols);
       const layout = rack.layout || "side_by_side";
+      const orient = rack.orientation === "neck" ? 1 : 0;     // 0=piqûre devant, 1=goulot devant
+      const tilt   = layout === "semi_lying";
+      const TILT_A = 0.56;                                      // ~32° (semi-couché)
       const halfW = (cols * SPACING) / 2;
       const yTop = yCursor;
       let occ = 0;
@@ -2982,9 +3157,11 @@ class MillesimeCard extends HTMLElement {
           // Pas de décalage avant/arrière : bouteilles parallèles, entièrement sur la
           // clayette (3.72 de long pour 4.0 de profondeur — un décalage ferait déborder)
           const stag = 0;
-          // Tête-bêche : même parité que la vue 2D (oriente bouteilles ET silhouettes vides)
-          const parity = layout === "alternating" ? i % 2
+          // Tête-bêche : parité de base + sens de départ (orient) ; côte à côte/semi : orient = sens commun
+          const baseParity = layout === "alternating" ? i % 2
             : (layout === "alternating_2d" || layout === "quinconce") ? (r + c) % 2 : 0;
+          const isAltLayout = layout === "alternating" || layout === "alternating_2d" || layout === "quinconce";
+          const parity = isAltLayout ? (baseParity ^ orient) : orient;
 
           if (!entry) {
             // Même alignement au bord avant que les vraies bouteilles (la silhouette
@@ -3008,7 +3185,8 @@ class MillesimeCard extends HTMLElement {
             (this._filter !== "all" && wine.type !== this._filter) ||
             (this._filterEvent !== "all" && (wine.event || "") !== this._filterEvent);
 
-          const set = geoByType[tp] || setBordeaux;
+          const shapeKey = (wine.shape && geoByType[wine.shape]) ? wine.shape : tp;
+          const set = geoByType[shapeKey] || geoByType[tp] || setBordeaux;
           const g = new THREE.Group();
           const body = new THREE.Mesh(set.body, filtered ? fadedMats[tp] : mats[tp]);
           const cap  = new THREE.Mesh(set.cap, capMats[tp]);
@@ -3083,6 +3261,14 @@ class MillesimeCard extends HTMLElement {
             shelfY + set.rest * sc.r * (1 - Math.cos(roll)),
             stag + (parity === 1 ? 2.0 - 1.86 * scL : 2.0 - set.tip * scL)
           );
+          if (tilt) {
+            // Semi-couché : on relève le goulot vers le fond (rotation autour de X),
+            // culot posé sur la planche. L'inclinaison prime sur le roulis esthétique.
+            g.rotation.z = 0;
+            g.rotation.x = (parity === 1 ? -TILT_A : TILT_A);
+            g.position.x = x;
+            g.position.y = shelfY + 1.86 * scL * Math.sin(TILT_A) * 0.5;
+          }
           g.userData = {
             wineId: wine.id, slotIdx: entry.slotIdx, slot: i, rackId: rack.id,
             // Pour la dépose optimiste exacte : coordonnées du slot + paramètres
@@ -3525,6 +3711,7 @@ class MillesimeCard extends HTMLElement {
       try { localStorage.setItem("millesime-labelmode", this._labelMode); } catch (err) {}
       if (this._view === "3d") this._render();   // re-rendu pour appliquer aux repères 3D
     });
+    s.getElementById("btn-bottlelist")?.addEventListener("click", () => this._openModal("bottlelist"));
     s.getElementById("btn-search")?.addEventListener("click",  () => this._openModal("search"));
     s.getElementById("btn-journal")?.addEventListener("click", () => this._openModal("journal"));
     s.getElementById("btn-import")?.addEventListener("click", async () => {
@@ -3766,8 +3953,11 @@ const CARD_CSS = `<style>
 /* La rangée d'icônes (vue + 🔍 + 📓) occupe la colonne "Bouteilles" */
 .ha-icons { display:flex; gap:5px; }
 .ha-icons .btn-icon, .ha-icons .view-select { flex:1; min-width:0; }
-.header-actions > .btn-secondary,
 .header-actions > .btn-primary { width:100%; }
+.header-actions .btn-icon, .header-actions .view-select, .header-actions .btn-primary {
+  height:38px; box-sizing:border-box;
+}
+.header-actions .btn-primary { font-size:0.92em; padding:0 10px; }
 
 /* ── Ligne d'options repliable (sous le verre du logo) ── */
 .header-options {
@@ -3779,23 +3969,41 @@ const CARD_CSS = `<style>
   max-height:140px; opacity:1; padding:10px 14px;
   border-bottom:1px solid var(--border);
 }
-.opt-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.opt-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; align-items:center; }
 .opt-btn {
-  padding:7px 12px; border-radius:8px; border:1px solid var(--border);
+  padding:9px 12px; border-radius:8px; border:1px solid var(--border);
   background:var(--bg-2); color:var(--cream); font-size:0.78em; font-weight:600;
-  cursor:pointer; transition:all 0.15s; white-space:nowrap; flex:1; min-width:140px;
+  cursor:pointer; transition:all 0.15s; white-space:nowrap; width:100%; box-sizing:border-box;
 }
 .opt-btn:hover { background:var(--bg-3); border-color:var(--header-accent,var(--red)); }
 .opt-btn-accent { background:color-mix(in srgb,var(--accent) 22%,var(--bg-2) 78%); border-color:var(--accent); }
 .opt-btn-accent:hover { background:color-mix(in srgb,var(--accent) 34%,var(--bg-2) 66%); }
-.opt-select-compact { max-width:150px; flex:0 1 150px; }
-.opt-field { display:flex; align-items:center; gap:7px; flex:1; min-width:160px; }
+.opt-select-compact { flex:1; min-width:0; background:transparent; border:none; padding:9px 0; }
+.opt-field { display:flex; align-items:center; gap:7px; width:100%;
+  background:var(--bg-2); border:1px solid var(--border); border-radius:8px; padding:0 10px; height:100%; box-sizing:border-box; }
 .opt-field-label { font-size:0.6em; color:var(--muted); text-transform:uppercase; letter-spacing:1px; white-space:nowrap; }
 .opt-select {
   flex:1; padding:7px 9px; border-radius:8px; border:1px solid var(--border);
   background:var(--bg-2); color:var(--cream); font-size:0.78em; cursor:pointer;
 }
 .header-glass.active { filter:drop-shadow(0 0 11px rgba(192,57,43,1)); transform:scale(1.08); }
+
+/* ── Liste des bouteilles (clic sur le compteur) ── */
+.blist { display:flex; flex-direction:column; gap:6px; }
+.blist-row { display:flex; align-items:flex-start; gap:9px; padding:9px 10px; background:var(--bg-2);
+  border:1px solid var(--border); border-radius:9px; cursor:pointer; transition:all 0.13s; }
+.blist-row:hover { background:var(--bg-3); border-color:var(--header-accent,var(--red)); }
+.blist-dot { width:9px; height:9px; border-radius:50%; flex-shrink:0; margin-top:4px; }
+.blist-main { flex:1; min-width:0; }
+.blist-name { font-size:0.9em; font-weight:600; color:var(--cream); }
+.blist-sub { font-size:0.7em; color:var(--muted); margin-top:1px; }
+.blist-loc { font-size:0.66em; color:var(--wood-lt,#c8a06a); margin-top:2px; }
+.blist-side { display:flex; flex-direction:column; align-items:flex-end; gap:3px; flex-shrink:0; }
+.blist-price { font-size:0.82em; font-weight:700; color:var(--cream); font-family:var(--font-serif); }
+.blist-rate { font-size:0.66em; color:#E8B84B; }
+.blist-evt { font-size:0.6em; color:var(--muted); background:var(--bg-1); padding:1px 6px; border-radius:5px; }
+.mm-empty-hint { text-align:center; color:var(--muted); padding:24px 0; font-size:0.85em; }
+.mm-hint { font-size:0.72em; font-style:italic; color:var(--muted); margin-top:5px; line-height:1.35; }
 .btn-primary, .btn-secondary {
   padding:7px 12px; border-radius:8px; border:none;
   font-family:var(--font-sans); font-size:0.85em; font-weight:600;
