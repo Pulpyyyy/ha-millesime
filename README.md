@@ -1,7 +1,7 @@
 # 🍷 Millésime — Cave à vin pour Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-6.1.7-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
+[![version](https://img.shields.io/badge/version-6.1.8-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
 [![Offrir un verre de vin](https://img.shields.io/badge/🍷_Offrir_un_verre_de_vin-PayPal-7B1D2E.svg?style=flat-square)](https://paypal.me/Redsklns)
 
 **Millésime** transforme Home Assistant en gestionnaire de cave à vin complet : visualisez vos bouteilles dans une scène **3D réaliste**, scannez les étiquettes par **photo**, suivez la valeur de votre collection et tenez un **journal de dégustation**.
@@ -99,6 +99,13 @@ L'intégralité de Millésime a été conçue et développée en collaboration a
 ---
 
 ## 📝 Changelog
+
+### [6.1.8] — 2026-06
+Liste des vins hiérarchique et finitions.
+
+- **Liste des bouteilles** réorganisée en arborescence claire : Couleur → Région → Châteaux, avec comptage par niveau ; clic sur un vin pour ouvrir sa fiche, export CSV conservé
+- **Disposition semi-couchée** : orientation ajustée — l'extrémité choisie (piqûre ou goulot) est bien posée en bas à l'avant, l'autre relevée vers l'arrière
+- **Descriptions** (disposition, première bouteille) affinées : plus petites, gris clair, italiques, avec un léger espace avant le texte
 
 ### [6.1.7] — 2026-06
 Ajustements de la disposition semi-couchée et des descriptions.
