@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.1.9
+ * Millésime Card v6.2.0
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.1.9";
+const MILLESIME_CARD_VERSION = "6.2.0";
 
 const DOMAIN = "millesime";
 
@@ -1831,54 +1831,74 @@ class MillesimeCard extends HTMLElement {
 
   _bottleListHTML() {
     const wines = this._data?.wines || [];
-    const rows = [];
+
+    // Ordre des couleurs imposé : Rouge → Blanc → Liquoreux → Rosé → Effervescent
+    const COLOR_ORDER = ["red", "white", "dessert", "rose", "sparkling"];
+
+    // Regroupement Couleur → Région → vins (châteaux)
+    const groups = {};   // type → region → [wine]
+    let totalSlots = 0;
     for (const w of wines) {
-      for (const s of (w.slots || [])) rows.push({ w, s });
+      const count = (w.slots || []).length;
+      if (count === 0) continue;
+      totalSlots += count;
+      const region = (w.region || "").trim() || "Sans région";
+      (groups[w.type] ??= {});
+      (groups[w.type][region] ??= []).push(w);
     }
-    // Tri : couleur (type) → région → château (nom)
-    const typeOrder = { red: 0, white: 1, rose: 2, sparkling: 3, dessert: 4 };
-    rows.sort((a, b) =>
-      (typeOrder[a.w.type] ?? 9) - (typeOrder[b.w.type] ?? 9) ||
-      (a.w.region || "").localeCompare(b.w.region || "") ||
-      (a.w.name || "").localeCompare(b.w.name || "")
+
+    const orderedTypes = Object.keys(groups).sort(
+      (a, b) => (COLOR_ORDER.indexOf(a) + 1 || 99) - (COLOR_ORDER.indexOf(b) + 1 || 99)
     );
     const fmtEvent = (e) => (EVENT_TYPES.find(x => x.v === e)?.l) || "";
+    const slotCount = (w) => (w.slots || []).length;
 
-    const body = rows.length === 0
+    const body = totalSlots === 0
       ? `<div class="mm-empty-hint">Aucune bouteille dans la cave.</div>`
-      : `<div class="blist-scroll">
-          <table class="blist-table">
-            <thead>
-              <tr>
-                <th>Couleur</th><th>Région</th><th>Château</th><th>Producteur</th>
-                <th class="bt-num">Année</th><th class="bt-num">Prix</th><th>À boire</th><th>Événement</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rows.map(({ w }) => {
-                const t = WINE_TYPES[w.type] || WINE_TYPES.red;
+      : `<div class="vlist">
+          ${orderedTypes.map((tp) => {
+            const t = WINE_TYPES[tp] || WINE_TYPES.red;
+            const regions = groups[tp];
+            const tCount = Object.values(regions).reduce((s, arr) => s + arr.reduce((a, w) => a + slotCount(w), 0), 0);
+            const regionNames = Object.keys(regions).sort((a, b) => a.localeCompare(b));
+            return `
+            <div class="vlist-color-head" style="--c:${t.color}">
+              <span class="vlist-swatch" style="background:${t.color}"></span>
+              <span class="vlist-color-name">${esc(t.label)}</span>
+              <span class="vlist-count" style="color:${t.color}">${tCount}</span>
+            </div>
+            ${regionNames.map((rg) => {
+              const items = regions[rg].sort((a, b) => (a.w?.name || a.name || "").localeCompare(b.name || ""));
+              const rCount = items.reduce((a, w) => a + slotCount(w), 0);
+              return `
+              <div class="vlist-region-head">${esc(rg)} <span class="vlist-count-sm">${rCount}</span></div>
+              ${items.map((w) => {
+                const n = slotCount(w);
                 const apo = (w.drink_from || w.drink_until)
-                  ? `${esc(w.drink_from || "?")}${w.drink_until ? "–" + esc(w.drink_until) : ""}`
-                  : "—";
+                  ? `${esc(w.drink_from || "?")}–${esc(w.drink_until || "?")}` : "";
+                const meta = [];
+                if (w.appellation) meta.push(`<span class="vm">📍 ${esc(w.appellation)}</span>`);
+                if (w.producer)    meta.push(`<span class="vm">🏭 ${esc(w.producer)}</span>`);
+                if (w.vivino_rating) meta.push(`<span class="vm">★ ${w.vivino_rating}</span>`);
+                if (apo)           meta.push(`<span class="vm">🕐 ${apo}</span>`);
+                if (w.event)       meta.push(`<span class="vm">📅 ${esc(fmtEvent(w.event))}</span>`);
+                if (w.size && String(w.size) !== "75cl") meta.push(`<span class="vm">🍾 ${esc(String(w.size))}</span>`);
                 return `
-                <tr data-wine="${esc(w.id)}">
-                  <td><span class="blist-dot" style="background:${t.color}" title="${esc(t.label)}"></span> ${esc(t.label)}</td>
-                  <td>${esc(w.region || "—")}</td>
-                  <td class="bt-name">${esc(w.name || "Sans nom")}${w.favorite ? " ⭐" : ""}</td>
-                  <td>${esc(w.producer || "—")}</td>
-                  <td class="bt-num">${esc(w.vintage || "—")}</td>
-                  <td class="bt-num">${w.price ? Math.round(w.price) + "€" : "—"}</td>
-                  <td>${apo}</td>
-                  <td>${w.event ? esc(fmtEvent(w.event)) : "—"}</td>
-                </tr>`;
-              }).join("")}
-            </tbody>
-          </table>
+                <div class="vlist-wine" data-wine="${esc(w.id)}">
+                  <div class="vlist-wine-top">
+                    <span class="vlist-wine-name">${w.favorite ? '<span class="vfav">★</span> ' : ""}${esc(w.name || "Sans nom")}${w.vintage ? ` <i>${esc(w.vintage)}</i>` : ""}${n > 1 ? ` <span class="vqty">×${n}</span>` : ""}</span>
+                    <span class="vlist-wine-price">${w.price ? Math.round(w.price) + "€" : ""}</span>
+                  </div>
+                  ${meta.length ? `<div class="vlist-wine-meta">${meta.join("")}</div>` : ""}
+                </div>`;
+              }).join("")}`;
+            }).join("")}`;
+          }).join("")}
         </div>`;
 
     return `
       <div class="mm-header">
-        <span class="mm-title">🍷 ${rows.length} bouteille${rows.length > 1 ? "s" : ""}</span>
+        <span class="mm-title">🍷 ${totalSlots} bouteille${totalSlots > 1 ? "s" : ""}</span>
         <button class="mm-close" data-close>✕</button>
       </div>
       <div class="mm-body">${body}</div>
@@ -1889,7 +1909,7 @@ class MillesimeCard extends HTMLElement {
   }
 
   _bindBottleList(box) {
-    box.querySelectorAll("tr[data-wine]").forEach((row) =>
+    box.querySelectorAll(".vlist-wine[data-wine]").forEach((row) =>
       row.addEventListener("click", () => {
         const wine = (this._data?.wines || []).find((w) => w.id === row.dataset.wine);
         if (wine) { this._closeModal(); this._openModal("detail", { wine }); }
@@ -2755,11 +2775,11 @@ class MillesimeCard extends HTMLElement {
     };
     // Mêmes 5 formes que la vue 2D (profils partagés normalisés) : diamètre commun
     // BOTTLE_R partout → rest et labelR identiques pour toutes les formes
-    const setBordeaux  = mkSet("bordeaux",  { rest: 0.43, capR: 0.158, capH: 0.30, capY: 3.56, corkR: 0.125, corkH: 0.14, corkY: 3.55, colR: 0.15,  colH: 0.18, colY: 3.15, labelR: 0.44, labelH: 0.95, labelY: 1.05 });
-    const setLoire     = mkSet("loire",     { rest: 0.43, capR: 0.150, capH: 0.30, capY: 3.56, corkR: 0.12,  corkH: 0.14, corkY: 3.55, colR: 0.16,  colH: 0.16, colY: 3.28, labelR: 0.44, labelH: 0.90, labelY: 1.00 });
-    const setFlute     = mkSet("flute",     { rest: 0.43, capR: 0.150, capH: 0.30, capY: 3.56, corkR: 0.12,  corkH: 0.14, corkY: 3.55, colR: 0.155, colH: 0.16, colY: 3.30, labelR: 0.44, labelH: 0.85, labelY: 0.95 });
-    const setRose      = mkSet("rose",      { rest: 0.43, capR: 0.155, capH: 0.32, capY: 3.55, corkR: 0.12,  corkH: 0.14, corkY: 3.55, colR: 0.148, colH: 0.18, colY: 3.05, labelR: 0.44, labelH: 0.90, labelY: 0.98 });
-    const setBourgogne = mkSet("bourgogne", { rest: 0.43, capR: 0.162, capH: 0.30, capY: 3.56, corkR: 0.125, corkH: 0.14, corkY: 3.55, colR: 0.155, colH: 0.18, colY: 3.28, labelR: 0.44, labelH: 0.95, labelY: 1.00 });
+    const setBordeaux  = mkSet("bordeaux",  { rest: 0.43, capR: 0.158, capR2: 0.140, capH: 0.30, capY: 3.56, corkR: 0.125, corkH: 0.14, corkY: 3.55, colR: 0.15,  colH: 0.18, colY: 3.15, labelR: 0.44, labelH: 0.95, labelY: 1.05 });
+    const setLoire     = mkSet("loire",     { rest: 0.43, capR: 0.150, capR2: 0.140, capH: 0.30, capY: 3.56, corkR: 0.12,  corkH: 0.14, corkY: 3.55, colR: 0.16,  colH: 0.16, colY: 3.28, labelR: 0.44, labelH: 0.90, labelY: 1.00 });
+    const setFlute     = mkSet("flute",     { rest: 0.43, capR: 0.150, capR2: 0.135, capH: 0.30, capY: 3.56, corkR: 0.12,  corkH: 0.14, corkY: 3.55, colR: 0.155, colH: 0.16, colY: 3.30, labelR: 0.44, labelH: 0.85, labelY: 0.95 });
+    const setRose      = mkSet("rose",      { rest: 0.43, capR: 0.155, capR2: 0.138, capH: 0.32, capY: 3.55, corkR: 0.12,  corkH: 0.14, corkY: 3.55, colR: 0.148, colH: 0.18, colY: 3.05, labelR: 0.44, labelH: 0.90, labelY: 0.98 });
+    const setBourgogne = mkSet("bourgogne", { rest: 0.43, capR: 0.162, capR2: 0.148, capH: 0.30, capY: 3.56, corkR: 0.125, corkH: 0.14, corkY: 3.55, colR: 0.155, colH: 0.18, colY: 3.28, labelR: 0.44, labelH: 0.95, labelY: 1.00 });
     // Champenoise : coiffe conique épousant la pente du col, collerette en jupe
     // descendant loin sur le col (continuité avec la coiffe), bouchon champignon plus large
     const setChampagne = mkSet("champagne", { rest: 0.43,
@@ -3219,7 +3239,9 @@ class MillesimeCard extends HTMLElement {
           // Étiquette : texture solidaire de la bouteille (tête-bêche → texte renversé avec elle)
           const lblMat = labelMatFor(tp, wine.name) || labelMat;
           const lbl  = new THREE.Mesh(set.label, lblMat);
-          cap.visible = cork.visible = col.visible = lbl.visible = !filtered;
+          cap.visible = cork.visible = lbl.visible = !filtered;
+          // Collerette masquée en disposition semi-couchée (demande utilisateur)
+          col.visible = !filtered && !tilt;
           if (!filtered) {
             const csh = new THREE.Mesh(contactGeo, contactMat);
             csh.position.set(x, shelfY + 0.011, stag);
@@ -4014,19 +4036,31 @@ const CARD_CSS = `<style>
 }
 .header-glass.active { filter:drop-shadow(0 0 11px rgba(192,57,43,1)); transform:scale(1.08); }
 
-/* ── Liste des bouteilles : tableau ── */
-.blist-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; margin:0 -4px; }
-.blist-table { width:100%; border-collapse:collapse; font-size:0.78em; }
-.blist-table thead th { position:sticky; top:0; background:var(--bg-1); color:var(--muted);
-  font-size:0.82em; font-weight:600; text-transform:uppercase; letter-spacing:0.4px;
-  text-align:left; padding:8px 9px; border-bottom:2px solid var(--border); white-space:nowrap; }
-.blist-table td { padding:8px 9px; border-bottom:1px solid var(--border); color:var(--cream); white-space:nowrap; }
-.blist-table tbody tr { cursor:pointer; transition:background 0.12s; }
-.blist-table tbody tr:hover { background:var(--bg-3); }
-.blist-table .bt-name { font-weight:600; }
-.blist-table .bt-num { text-align:right; font-variant-numeric:tabular-nums; }
-.blist-dot { display:inline-block; width:10px; height:10px; border-radius:50%; flex-shrink:0;
-  box-shadow:0 0 4px rgba(0,0,0,0.4); vertical-align:middle; margin-right:3px; }
+/* ── Liste des bouteilles : arborescence Couleur → Région → Châteaux ── */
+.vlist { display:flex; flex-direction:column; }
+.vlist-color-head { display:flex; align-items:center; gap:9px; padding:9px 4px 7px; margin-top:8px;
+  border-bottom:2px solid var(--c, var(--red)); }
+.vlist-color-head:first-child { margin-top:0; }
+.vlist-swatch { width:13px; height:13px; border-radius:50%; box-shadow:0 0 5px rgba(0,0,0,0.4); flex-shrink:0; }
+.vlist-color-name { font-size:1em; font-weight:700; color:var(--cream); font-family:var(--font-serif);
+  text-transform:uppercase; letter-spacing:0.5px; }
+.vlist-count { margin-left:auto; font-size:0.76em; font-weight:700; background:var(--bg-1);
+  padding:2px 9px; border-radius:10px; }
+.vlist-region-head { font-size:0.8em; font-weight:600; color:var(--wood-lt,#c8a06a);
+  padding:8px 0 3px 8px; letter-spacing:0.3px; }
+.vlist-count-sm { font-size:0.86em; color:var(--muted); font-weight:500; }
+.vlist-wine { padding:7px 10px; margin:2px 0 2px 14px; border-left:2px solid var(--border);
+  cursor:pointer; transition:background 0.12s; }
+.vlist-wine:hover { background:var(--bg-3); }
+.vlist-wine-top { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+.vlist-wine-name { font-size:0.88em; color:var(--cream); }
+.vlist-wine-name i { color:var(--muted); font-style:italic; }
+.vlist-wine-name .vqty { color:var(--muted); font-size:0.9em; }
+.vfav { color:#E8B84B; }
+.vlist-wine-price { font-size:0.85em; font-weight:600; color:var(--cream); white-space:nowrap;
+  font-family:var(--font-serif); font-variant-numeric:tabular-nums; }
+.vlist-wine-meta { display:flex; gap:11px; flex-wrap:wrap; margin-top:3px; }
+.vlist-wine-meta .vm { font-size:0.72em; color:var(--muted); white-space:nowrap; }
 .mm-empty-hint { text-align:center; color:var(--muted); padding:24px 0; font-size:0.85em; }
 .mm-hint { font-size:0.66em; font-style:italic; color:#c8c8c8; margin-top:9px; line-height:1.4; }
 .btn-primary, .btn-secondary {
@@ -4237,7 +4271,7 @@ const MODAL_CSS = `
   overflow:hidden;
 }
 /* Liste des bouteilles : occupe toute la largeur dispo (PC comme mobile) */
-.mm-box-wide { max-width:min(1100px, 96vw); }
+.mm-box-wide { max-width:min(680px, 95vw); }
 /* Description sous les menus (disposition, orientation) : petit, gris clair, italique */
 .mm-hint { font-size:0.74em; font-style:italic; color:#c8c8c8; margin-top:7px; line-height:1.4; }
 .mm-header {
