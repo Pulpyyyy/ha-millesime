@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.1.6
+ * Millésime Card v6.1.7
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.1.6";
+const MILLESIME_CARD_VERSION = "6.1.7";
 
 const DOMAIN = "millesime";
 
@@ -855,7 +855,7 @@ class MillesimeCard extends HTMLElement {
       alternating:    "Une bouteille sur deux est retournée (sens inversé) au fil des emplacements.",
       alternating_2d: "Alternance en damier : aucune voisine (haut/bas/gauche/droite) n'a le même sens. Imbrication optimale.",
       quinconce:      "Rangs décalés d'une demi-bouteille, façon nid d'abeille : gain de place maximal.",
-      semi_lying:     "Bouteilles quasi debout, piqûre posée en bas et goulot en haut, inclinées vers l'arrière, comme dans une clayette de présentation.",
+      semi_lying:     "Bouteilles couchées et inclinées (~32°), une extrémité posée et l'autre relevée vers l'arrière, comme sur une clayette en pente.",
     };
     const layoutSel = box.querySelector("#fl-layout");
     const orientSel = box.querySelector("#fl-orientation");
@@ -866,13 +866,6 @@ class MillesimeCard extends HTMLElement {
     const refresh = () => {
       const v = layoutSel.value;
       if (hintL) hintL.textContent = LAYOUT_HINTS[v] || "";
-      // En semi-couché, l'orientation n'a pas de sens (piqûre toujours en bas) → masquée
-      const orientField = orientSel.closest(".mm-field");
-      if (v === "semi_lying") {
-        if (orientField) orientField.style.display = "none";
-        return;
-      }
-      if (orientField) orientField.style.display = "";
       // Pour les dispositions tête-bêche, l'orientation pilote par quoi on COMMENCE
       const alt = isAlt(v);
       if (lblOrient) lblOrient.textContent = alt ? "Première bouteille" : "Orientation";
@@ -881,6 +874,10 @@ class MillesimeCard extends HTMLElement {
         opts[0].textContent = "Commencer par la piqûre (cul)";
         opts[1].textContent = "Commencer par le goulot";
         if (hintO) hintO.textContent = "Définit le sens de la 1ʳᵉ bouteille ; l'alternance suit.";
+      } else if (v === "semi_lying") {
+        opts[0].textContent = "Piqûre (cul) en bas";
+        opts[1].textContent = "Goulot en bas";
+        if (hintO) hintO.textContent = "Extrémité posée en bas ; l'autre est relevée vers l'arrière.";
       } else {
         opts[0].textContent = "Piqûre (cul) devant";
         opts[1].textContent = "Goulot devant";
@@ -3283,21 +3280,24 @@ class MillesimeCard extends HTMLElement {
             stag + (parity === 1 ? 2.0 - 1.86 * scL : 2.0 - set.tip * scL)
           );
           if (tilt) {
-            // Semi-couché (réf. PJ2 = clayette de présentation) : bouteille QUASI
-            // DEBOUT, PIQÛRE POSÉE EN BAS, GOULOT EN HAUT, inclinée vers l'arrière.
-            // L'axe de base est couché le long de Z (goulot vers +Z). On le redresse
-            // à la verticale, goulot en haut (rotation X de -90°), puis on penche
-            // l'ensemble vers l'arrière (goulot part vers le fond).
-            const LEAN = 0.45;                       // ~26° d'inclinaison arrière depuis la verticale
+            // Semi-couché (géométrie 6.1.5) : bouteille couchée le long de Z, inclinée
+            // d'environ 32°. L'orientation du casier décide quelle extrémité est en bas :
+            //  - piqûre devant (parity 1) → piqûre/culot en bas, goulot relevé vers le fond
+            //  - goulot devant (parity 0) → goulot en bas, culot relevé vers le fond
+            const TILT = 0.56;                              // ~32°
+            const puntFront = (parity === 1);               // parity 1 = piqûre devant
             g.rotation.set(0, 0, 0);
-            g.rotation.x = -Math.PI / 2 + LEAN;      // goulot en haut, penché vers l'arrière
-            const len = (set.tip + 1.86) * scL;      // longueur totale culot→pointe du bouchon
-            // Culot (piqûre) posé près du bord avant, bouteille remontée d'une
-            // demi-hauteur projetée pour que la piqûre touche la planche
+            if (puntFront) {
+              g.rotation.y = Math.PI;                       // goulot vers l'arrière
+              g.rotation.x = -TILT;                         // relève le goulot (arrière)
+            } else {
+              g.rotation.x = TILT;                          // relève le culot (arrière)
+            }
+            const half = 1.86 * scL;
             g.position.set(
               x,
-              shelfY + (len * 0.5) * Math.cos(LEAN),
-              2.0 - 0.35 - (len * 0.5) * Math.sin(LEAN)
+              shelfY + half * Math.sin(TILT) * 0.5,         // remonte pour poser l'extrémité basse
+              stag + (puntFront ? 2.0 - 1.86 * scL : 2.0 - set.tip * scL)
             );
           }
           g.userData = {
@@ -4032,7 +4032,7 @@ const CARD_CSS = `<style>
 .blist-dot { display:inline-block; width:11px; height:11px; border-radius:50%; flex-shrink:0;
   box-shadow:0 0 4px rgba(0,0,0,0.4); }
 .mm-empty-hint { text-align:center; color:var(--muted); padding:24px 0; font-size:0.85em; }
-.mm-hint { font-size:0.72em; font-style:italic; color:var(--muted); margin-top:5px; line-height:1.35; }
+.mm-hint { font-size:0.72em; font-style:italic; color:#b9b9b9; margin-top:8px; line-height:1.4; }
 .btn-primary, .btn-secondary {
   padding:7px 12px; border-radius:8px; border:none;
   font-family:var(--font-sans); font-size:0.85em; font-weight:600;
