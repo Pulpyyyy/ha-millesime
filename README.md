@@ -103,7 +103,7 @@ L'intégralité de Millésime a été conçue et développée en collaboration a
 ### [6.2.1] — 2026-06
 Liste des vins peaufinée et correction de la disposition semi-couchée.
 
-- **Liste des bouteilles** : présentation affinée qui s'adapte au thème clair ou sombre de Home Assistant ; quantité affichée sous la forme « Qté : N » ; compteur retiré à côté des régions (conservé pour les couleurs)
+- **Liste des bouteilles** : présentation affinée qui s'adapte au thème clair ou sombre de Home Assistant (le style ne s'appliquait pas dans la fenêtre) ; quantité affichée sous la forme « Qté : N » ; compteur retiré à côté des régions (conservé pour les couleurs)
 - **Disposition semi-couchée** : les bouteilles reposent correctement sur la planche (elles ne dépassent plus sous la clayette) et un espace est réservé au-dessus du casier pour éviter tout chevauchement avec la clayette et les repères du dessus
 
 ### [6.2.0] — 2026-06
