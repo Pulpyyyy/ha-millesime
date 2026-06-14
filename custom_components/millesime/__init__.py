@@ -1,4 +1,4 @@
-"""Millésime v6.1.1 — Cave à Vin pour Home Assistant.
+"""Millésime v6.1.2 — Cave à Vin pour Home Assistant.
 
 Recherche texte : gemini-3.1-flash-lite (tier gratuit)
 Lecture photo   : gemini-3-flash (tier gratuit)
@@ -34,7 +34,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN    = "millesime"
 PLATFORMS = ["sensor"]
 DATA_FILE = "millesime_data.json"
-VERSION   = "6.1.1"
+VERSION   = "6.1.2"
 
 OFF_UA       = f"Millesime-HA/{VERSION} (github.com/Redsklns/ha-millesime)"
 # Deux modèles séparés = deux pools de quota indépendants (free tier)
@@ -265,10 +265,11 @@ _GEMINI_SYSTEM = """\
 Tu es un expert mondial en vins et sommelière.
 Retourne UNIQUEMENT un tableau JSON valide [], sans markdown ni backticks.
 Chaque objet doit avoir exactement ces champs (string, jamais null) :
-  name, vintage, type, appellation, region, country, producer,
+  name, vintage, type, shape, appellation, region, country, producer,
   tasting_notes, food_pairing, drink_from, drink_until, vivino_rating, price
 Règles :
 - type : "red" | "white" | "rose" | "sparkling" | "dessert" uniquement
+- shape : forme de la bouteille, "bordeaux" | "bourgogne" | "champagne" | "flute" | "rose" | "loire" | "" (vide si incertain). Bordeaux=épaules marquées ; bourgogne=épaules tombantes ; champagne=épaisse à base large ; flute=fine et haute (Alsace) ; rose=type Provence ; loire=ligérienne
 - vintage / drink_from / drink_until : "YYYY" ou ""
 - vivino_rating : décimal 0.0–5.0 (0 si inconnu)
 - price : prix moyen constaté en euros, UNIQUEMENT le nombre décimal (ex: 18.5). 0.0 si inconnu. Jamais de texte.
@@ -316,6 +317,7 @@ def _parse_gemini_response(raw: str, source: str) -> tuple[list[dict], str | Non
             "name":          str(w.get("name", "")).strip(),
             "vintage":       str(w.get("vintage", "") or ""),
             "type":          w.get("type") if w.get("type") in valid_types else "red",
+            "shape":         (w.get("shape") if w.get("shape") in ("bordeaux","bourgogne","champagne","flute","rose","loire") else ""),
             "appellation":   str(w.get("appellation", "") or ""),
             "region":        str(w.get("region", "") or ""),
             "country":       str(w.get("country", "") or ""),
@@ -939,6 +941,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "name":    call.data.get("name", f"Casier {len(d['cellar']['racks']) + 1}"),
             "columns": cols, "shelves": shelves, "slots": cols * shelves,
             "layout":  call.data.get("layout", "side_by_side"),
+            "orientation": call.data.get("orientation", "punt"),
         }
         style = _rack_style(call)
         if style:
@@ -950,7 +953,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         d = _get()
         for f in d["cellar"]["racks"]:
             if f["id"] == _call_rack_id(call):
-                for k in ["name", "columns", "shelves", "layout"]:
+                for k in ["name", "columns", "shelves", "layout", "orientation"]:
                     if k in call.data:
                         f[k] = call.data[k]
                 if "rows" in call.data and "shelves" not in call.data:  # alias déprécié
@@ -986,6 +989,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "name":         call.data.get("name", ""),
             "vintage":      call.data.get("vintage", ""),
             "type":         call.data.get("type", "red"),
+            "shape":        call.data.get("shape", ""),
             "appellation":  call.data.get("appellation", ""),
             "region":       call.data.get("region", ""),
             "producer":     call.data.get("producer", ""),
@@ -1014,7 +1018,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "name", "vintage", "type", "appellation", "region", "producer",
             "country", "price", "drink_from", "drink_until", "notes",
             "tasting_notes", "food_pairing", "event", "vivino_rating",
-            "image_url", "vivino_url", "size", "favorite",
+            "image_url", "vivino_url", "size", "favorite", "shape",
         ]
         for w in d["wines"]:
             if w["id"] == call.data["wine_id"]:
@@ -1112,7 +1116,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "name", "vintage", "type", "appellation", "region", "producer",
             "country", "price", "drink_from", "drink_until", "notes",
             "tasting_notes", "food_pairing", "event", "vivino_rating",
-            "image_url", "vivino_url", "size", "favorite",
+            "image_url", "vivino_url", "size", "favorite", "shape",
         ]
         new_rack = call.data.get("rack_id", call.data.get("floor_id"))
         new_slot  = call.data.get("slot")
