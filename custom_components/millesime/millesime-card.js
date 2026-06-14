@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.1.7
+ * Millésime Card v6.1.8
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.1.7";
+const MILLESIME_CARD_VERSION = "6.1.8";
 
 const DOMAIN = "millesime";
 
@@ -1831,54 +1831,60 @@ class MillesimeCard extends HTMLElement {
 
   _bottleListHTML() {
     const wines = this._data?.wines || [];
-    const rows = [];
-    for (const w of wines) {
-      for (const s of (w.slots || [])) rows.push({ w, s });
-    }
-    // Tri : couleur (type) → région → nom
-    const typeOrder = { red: 0, white: 1, rose: 2, sparkling: 3, dessert: 4 };
-    rows.sort((a, b) =>
-      (typeOrder[a.w.type] ?? 9) - (typeOrder[b.w.type] ?? 9) ||
-      (a.w.region || "").localeCompare(b.w.region || "") ||
-      (a.w.name || "").localeCompare(b.w.name || "")
-    );
-    const fmtEvent = (e) => (EVENT_TYPES.find(x => x.v === e)?.l) || "";
 
-    const body = rows.length === 0
+    // Regroupement : Couleur (type) → Région → vins (châteaux), avec comptage des emplacements
+    const typeOrder = ["red", "white", "rose", "sparkling", "dessert"];
+    const groups = {};   // type → region → [{wine, count}]
+    let totalSlots = 0;
+    for (const w of wines) {
+      const count = (w.slots || []).length;
+      if (count === 0) continue;
+      totalSlots += count;
+      const region = (w.region || "").trim() || "Sans région";
+      (groups[w.type] ??= {});
+      (groups[w.type][region] ??= []).push({ w, count });
+    }
+
+    const orderedTypes = Object.keys(groups).sort(
+      (a, b) => (typeOrder.indexOf(a) + 1 || 99) - (typeOrder.indexOf(b) + 1 || 99)
+    );
+
+    const body = totalSlots === 0
       ? `<div class="mm-empty-hint">Aucune bouteille dans la cave.</div>`
-      : `<div class="blist-scroll">
-          <table class="blist-table">
-            <thead>
-              <tr>
-                <th>Couleur</th><th>Région</th><th>Château</th><th>Producteur</th>
-                <th class="bt-num">Année</th><th class="bt-num">Prix</th><th>À boire</th><th>Événement</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rows.map(({ w }) => {
-                const t = WINE_TYPES[w.type] || WINE_TYPES.red;
-                const apo = (w.drink_from || w.drink_until)
-                  ? `${esc(w.drink_from || "?")}${w.drink_until ? "–" + esc(w.drink_until) : ""}`
-                  : "—";
+      : `<div class="vlist">
+          ${orderedTypes.map((tp) => {
+            const t = WINE_TYPES[tp] || WINE_TYPES.red;
+            const regions = groups[tp];
+            const tCount = Object.values(regions).reduce(
+              (s, arr) => s + arr.reduce((a, x) => a + x.count, 0), 0);
+            const regionNames = Object.keys(regions).sort((a, b) => a.localeCompare(b));
+            return `
+            <div class="vlist-color">
+              <div class="vlist-color-head" style="--c:${t.color}">
+                <span class="vlist-swatch" style="background:${t.color}"></span>
+                <span class="vlist-color-name">${esc(t.label)}</span>
+                <span class="vlist-count">${tCount}</span>
+              </div>
+              ${regionNames.map((rg) => {
+                const items = regions[rg].sort((a, b) => (a.w.name || "").localeCompare(b.w.name || ""));
+                const rCount = items.reduce((a, x) => a + x.count, 0);
                 return `
-                <tr data-wine="${esc(w.id)}">
-                  <td><span class="blist-dot" style="background:${t.color}" title="${esc(t.label)}"></span></td>
-                  <td>${esc(w.region || "—")}</td>
-                  <td class="bt-name">${esc(w.name || "Sans nom")}${w.favorite ? " ⭐" : ""}</td>
-                  <td>${esc(w.producer || "—")}</td>
-                  <td class="bt-num">${esc(w.vintage || "—")}</td>
-                  <td class="bt-num">${w.price ? Math.round(w.price) + "€" : "—"}</td>
-                  <td>${apo}</td>
-                  <td>${w.event ? esc(fmtEvent(w.event)) : "—"}</td>
-                </tr>`;
+                <div class="vlist-region">
+                  <div class="vlist-region-head">${esc(rg)} <span class="vlist-count-sm">${rCount}</span></div>
+                  ${items.map(({ w, count }) => `
+                    <div class="vlist-wine" data-wine="${esc(w.id)}">
+                      <span class="vlist-wine-name">${esc(w.name || "Sans nom")}${w.vintage ? " <i>" + esc(w.vintage) + "</i>" : ""}${w.favorite ? " ⭐" : ""}</span>
+                      <span class="vlist-wine-meta">${count > 1 ? `×${count}` : ""}${w.price ? ` · ${Math.round(w.price)}€` : ""}</span>
+                    </div>`).join("")}
+                </div>`;
               }).join("")}
-            </tbody>
-          </table>
+            </div>`;
+          }).join("")}
         </div>`;
 
     return `
       <div class="mm-header">
-        <span class="mm-title">🍷 ${rows.length} bouteille${rows.length > 1 ? "s" : ""}</span>
+        <span class="mm-title">🍷 ${totalSlots} bouteille${totalSlots > 1 ? "s" : ""}</span>
         <button class="mm-close" data-close>✕</button>
       </div>
       <div class="mm-body">${body}</div>
@@ -1889,7 +1895,7 @@ class MillesimeCard extends HTMLElement {
   }
 
   _bindBottleList(box) {
-    box.querySelectorAll("tr[data-wine]").forEach((row) =>
+    box.querySelectorAll(".vlist-wine[data-wine]").forEach((row) =>
       row.addEventListener("click", () => {
         const wine = (this._data?.wines || []).find((w) => w.id === row.dataset.wine);
         if (wine) { this._closeModal(); this._openModal("detail", { wine }); }
@@ -3280,24 +3286,20 @@ class MillesimeCard extends HTMLElement {
             stag + (parity === 1 ? 2.0 - 1.86 * scL : 2.0 - set.tip * scL)
           );
           if (tilt) {
-            // Semi-couché (géométrie 6.1.5) : bouteille couchée le long de Z, inclinée
-            // d'environ 32°. L'orientation du casier décide quelle extrémité est en bas :
-            //  - piqûre devant (parity 1) → piqûre/culot en bas, goulot relevé vers le fond
-            //  - goulot devant (parity 0) → goulot en bas, culot relevé vers le fond
+            // Semi-couché : bouteille couchée inclinée ~32°. L'extrémité choisie est
+            // posée EN BAS À L'AVANT, l'autre relevée vers l'arrière.
+            //  - "piqûre en bas" (parity 1) → piqûre/cul au sol devant, goulot en l'air
+            //  - "goulot en bas" (parity 0) → goulot au sol devant, piqûre en l'air
             const TILT = 0.56;                              // ~32°
-            const puntFront = (parity === 1);               // parity 1 = piqûre devant
+            const puntDown = (parity === 1);
             g.rotation.set(0, 0, 0);
-            if (puntFront) {
-              g.rotation.y = Math.PI;                       // goulot vers l'arrière
-              g.rotation.x = -TILT;                         // relève le goulot (arrière)
-            } else {
-              g.rotation.x = TILT;                          // relève le culot (arrière)
-            }
+            if (puntDown) g.rotation.y = Math.PI;           // amène la piqûre vers l'avant
+            g.rotation.x = TILT;                            // bascule l'extrémité avant vers le bas
             const half = 1.86 * scL;
             g.position.set(
               x,
-              shelfY + half * Math.sin(TILT) * 0.5,         // remonte pour poser l'extrémité basse
-              stag + (puntFront ? 2.0 - 1.86 * scL : 2.0 - set.tip * scL)
+              shelfY + half * Math.sin(TILT) * 0.5,         // pose l'extrémité basse sur la planche
+              stag + (puntDown ? 2.0 - 1.86 * scL : 2.0 - set.tip * scL)
             );
           }
           g.userData = {
@@ -4018,21 +4020,28 @@ const CARD_CSS = `<style>
 }
 .header-glass.active { filter:drop-shadow(0 0 11px rgba(192,57,43,1)); transform:scale(1.08); }
 
-/* ── Liste des bouteilles : tableau (clic sur le compteur) ── */
-.blist-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; margin:0 -4px; }
-.blist-table { width:100%; border-collapse:collapse; font-size:0.78em; }
-.blist-table thead th { position:sticky; top:0; background:var(--bg-1); color:var(--muted);
-  font-size:0.82em; font-weight:600; text-transform:uppercase; letter-spacing:0.5px;
-  text-align:left; padding:8px 9px; border-bottom:2px solid var(--border); white-space:nowrap; }
-.blist-table td { padding:8px 9px; border-bottom:1px solid var(--border); color:var(--cream); white-space:nowrap; }
-.blist-table tbody tr { cursor:pointer; transition:background 0.12s; }
-.blist-table tbody tr:hover { background:var(--bg-3); }
-.blist-table .bt-name { font-weight:600; }
-.blist-table .bt-num { text-align:right; font-variant-numeric:tabular-nums; }
-.blist-dot { display:inline-block; width:11px; height:11px; border-radius:50%; flex-shrink:0;
-  box-shadow:0 0 4px rgba(0,0,0,0.4); }
+/* ── Liste des bouteilles : vue hiérarchique Couleur → Région → Châteaux ── */
+.vlist { display:flex; flex-direction:column; gap:14px; }
+.vlist-color-head { display:flex; align-items:center; gap:9px; padding:7px 4px 7px 0;
+  border-bottom:2px solid var(--c, var(--red)); margin-bottom:6px; }
+.vlist-swatch { width:14px; height:14px; border-radius:50%; box-shadow:0 0 5px rgba(0,0,0,0.4); flex-shrink:0; }
+.vlist-color-name { font-size:1.02em; font-weight:700; color:var(--cream); font-family:var(--font-serif);
+  text-transform:uppercase; letter-spacing:0.5px; }
+.vlist-count { margin-left:auto; font-size:0.78em; font-weight:700; color:var(--c, var(--red));
+  background:var(--bg-1); padding:2px 9px; border-radius:10px; }
+.vlist-region { margin:0 0 8px 8px; }
+.vlist-region-head { font-size:0.82em; font-weight:600; color:var(--wood-lt,#c8a06a);
+  padding:4px 0 5px; letter-spacing:0.3px; }
+.vlist-count-sm { font-size:0.86em; color:var(--muted); font-weight:500; }
+.vlist-wine { display:flex; align-items:baseline; justify-content:space-between; gap:10px;
+  padding:6px 10px; margin:2px 0 2px 12px; background:var(--bg-2); border:1px solid var(--border);
+  border-radius:7px; cursor:pointer; transition:all 0.12s; }
+.vlist-wine:hover { background:var(--bg-3); border-color:var(--header-accent,var(--red)); transform:translateX(2px); }
+.vlist-wine-name { font-size:0.86em; color:var(--cream); }
+.vlist-wine-name i { color:var(--muted); font-style:italic; }
+.vlist-wine-meta { font-size:0.74em; color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums; }
 .mm-empty-hint { text-align:center; color:var(--muted); padding:24px 0; font-size:0.85em; }
-.mm-hint { font-size:0.72em; font-style:italic; color:#b9b9b9; margin-top:8px; line-height:1.4; }
+.mm-hint { font-size:0.66em; font-style:italic; color:#c8c8c8; margin-top:9px; line-height:1.4; }
 .btn-primary, .btn-secondary {
   padding:7px 12px; border-radius:8px; border:none;
   font-family:var(--font-sans); font-size:0.85em; font-weight:600;
@@ -4241,7 +4250,7 @@ const MODAL_CSS = `
   overflow:hidden;
 }
 /* Liste des bouteilles : occupe toute la largeur dispo (PC comme mobile) */
-.mm-box-wide { max-width:min(1100px, 96vw); }
+.mm-box-wide { max-width:min(640px, 94vw); }
 .mm-header {
   display:flex; align-items:center; justify-content:space-between;
   padding:16px 20px 12px; border-bottom:1px solid var(--mm-border);
