@@ -247,7 +247,7 @@ const BOTTLE_MINI = (color, w = null, type = "red", flipped = false, size = null
   const lblY = f(shBot + (22.5 - shBot) * 0.40);   // étiquette sur le bas du fût
   const lblH = 4.3, lblX = f(bL + 0.55), lblW = f(bw * 2 - 1.1);
   const colY = f(shTop - 1.45);                    // collerette juste au-dessus de l'épaule
-  return `<svg class="dot-svg-b" viewBox="0 0 10 26" xmlns="http://www.w3.org/2000/svg" style="${w ? `width:${w}px;height:${Math.round(w * 2.6)}px` : 'width:100%;height:auto'};display:block;${tf}">
+  return `<svg class="dot-svg-b" viewBox="0 0 10 26" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMax meet" style="${w ? `width:${w}px;height:${Math.round(w * 2.6)}px` : 'width:100%;height:auto'};display:block;${tf}">
   <defs><clipPath id="${cid}"><path d="${glass}"/></clipPath></defs>
   <!-- Ombre au sol -->
   <ellipse cx="5" cy="25.3" rx="${f(bw * 0.92)}" ry="0.65" fill="black" opacity="0.38"/>
@@ -419,14 +419,20 @@ class MillesimeCard extends HTMLElement {
       this._fsModalCss = this._fsBase + 'px';
     } else {
       // Base FLUIDE par défaut : suit la largeur de la CARTE (unité cqi résolue via
-      // le conteneur :host), bornée 13–15px. Tout le texte étant en em, l'ensemble
-      // s'adapte en continu. Appliquée sur .card car un conteneur ne peut pas se
-      // mesurer lui-même (cqi sur :host viserait le viewport).
-      this._fsBase = 14;                       // médiane pour les calculs JS (labels 2D)
+      // le conteneur :host), bornée 13–18px. Tout le texte étant en em, l'ensemble
+      // s'adapte en continu — y compris vers le HAUT sur grand écran (Full HD), où
+      // l'ancien plafond 15px (atteint dès ~440px) bridait la carte. Appliquée sur
+      // .card car un conteneur ne peut pas se mesurer lui-même (cqi sur :host
+      // viserait le viewport).
+      this._fsBase = 15;                       // médiane pour les calculs JS (labels 2D)
       this.style.removeProperty('font-size');
-      set('--fs-base', 'clamp(13px, 3.4cqi, 15px)');
-      // Popups hors conteneur (document.body) → fluide en vw au lieu de cqi.
-      this._fsModalCss = 'clamp(13px, 3.6vw, 15px)';
+      // Pas d'inline : le défaut vient de :host (CARD_CSS) → surchargeable par card-mod.
+      this.style.removeProperty('--fs-base');
+      // Popups hors conteneur (document.body) → fluide en vw au lieu de cqi (cqi y
+      // viserait le viewport). Plancher 14px (confort des formulaires au doigt),
+      // plafond 21px : une boîte de dialogue peut être un peu plus généreuse que la
+      // carte, et sur Full HD l'ancien plafond 18px paraissait petit.
+      this._fsModalCss = 'clamp(14px, 2vw, 21px)';
     }
   }
 
@@ -1568,6 +1574,7 @@ class MillesimeCard extends HTMLElement {
 
   _slotEditHTML(wine, slotIdx) {
     const s = wine.slots?.[slotIdx] || {};
+    const racks = this._data?.cellar?.racks || [];
     return `
       <div class="mm-header">
         <span class="mm-title">🍾 Modifier la bouteille</span>
@@ -1590,6 +1597,15 @@ class MillesimeCard extends HTMLElement {
             <input class="mm-input" id="se-comment" value="${esc(s.comment || "")}" placeholder="ex. : cadeau, étiquette abîmée…">
           </div>
         </div>
+        <!-- Déplacement tactile : alternative au glisser-déposer (inopérant au doigt en 2D) -->
+        <div class="mm-field" style="margin-top:6px">
+          <label class="mm-label">📍 Déplacer cette bouteille</label>
+          <select class="mm-input" id="se-rack">
+            ${racks.map(f => `<option value="${esc(f.id)}" ${f.id === s.rack_id ? "selected" : ""}>${esc(f.name)}</option>`).join("")}
+          </select>
+          <input type="hidden" id="se-slot" value="${Number.isInteger(s.slot) ? s.slot : 0}">
+          <div id="se-slot-picker" class="sp-picker"></div>
+        </div>
       </div>
       <div class="mm-footer">
         <button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
@@ -1598,13 +1614,51 @@ class MillesimeCard extends HTMLElement {
   }
 
   _bindSlotEdit(box, wine, slotIdx) {
+    const cur = wine.slots?.[slotIdx] || {};
+    // Picker mono-sélection : le slot actuel de CETTE bouteille est exclu des
+    // occupés (donc déplaçable sur lui-même = aucun déplacement) ; les slots des
+    // autres bouteilles restent « pris » et non cliquables.
+    const renderPicker = () => this._renderSlotPicker(box, "se-rack", "se-slot-picker", "se-slot", wine.id, false);
+    box.querySelector("#se-rack")?.addEventListener("change", () => {
+      // Casier changé : présélectionne le 1er emplacement libre du nouveau casier
+      const rackId = box.querySelector("#se-rack").value;
+      if (rackId !== cur.rack_id) {
+        const rack = (this._data?.cellar?.racks || []).find(f => f.id === rackId);
+        const total = rack ? (rack.slots || (rack.columns || 8) * (rack.shelves || 2)) : 0;
+        const taken = new Set();
+        (this._data?.wines || []).forEach(w => w.slots?.forEach(sl => {
+          if (sl.rack_id === rackId && !(w.id === wine.id)) taken.add(sl.slot);
+        }));
+        let free = 0; while (free < total && taken.has(free)) free++;
+        box.querySelector("#se-slot").value = free < total ? free : 0;
+      }
+      renderPicker();
+    });
+    renderPicker();
+
     box.querySelector("#se-submit")?.addEventListener("click", async () => {
-      await this._callService("update_slot", {
-        wine_id:  wine.id,
-        slot_idx: slotIdx,
-        size:     box.querySelector("#se-size")?.value?.trim() || "",
-        comment:  box.querySelector("#se-comment")?.value?.trim() || "",
-      });
+      const tgtRack = box.querySelector("#se-rack")?.value || cur.rack_id;
+      const tgtSlot = parseInt(box.querySelector("#se-slot")?.value);
+      const moved = !isNaN(tgtSlot) && (tgtRack !== cur.rack_id || tgtSlot !== cur.slot);
+      try {
+        if (moved) {
+          await this._hass.callService(DOMAIN, "move_slot", {
+            wine_id: wine.id, slot_idx: slotIdx, rack_id: tgtRack, slot: tgtSlot,
+          });
+        }
+        await this._hass.callService(DOMAIN, "update_slot", {
+          wine_id:  wine.id,
+          slot_idx: slotIdx,
+          size:     box.querySelector("#se-size")?.value?.trim() || "",
+          comment:  box.querySelector("#se-comment")?.value?.trim() || "",
+        });
+        this._closeModal();
+        await this._fetchData();
+        setTimeout(() => this._fetchData(), 600);
+        if (moved) this._showToast("success", "Bouteille déplacée ✓");
+      } catch (err) {
+        this._showToast("error", `Erreur : ${err.message || JSON.stringify(err)}`);
+      }
     });
   }
 
@@ -2467,12 +2521,10 @@ class MillesimeCard extends HTMLElement {
     const isAlt  = rack.layout === "alternating";
     const isAlt2 = rack.layout === "alternating_2d";
     const isQc   = rack.layout === "quinconce";
-    const isCircleMode = this._view === "dot";
     const lm = this._config?.bottle_label || "none";
     // font-size:0.85em × line-height:1.3 = 14.3px + padding-top:1px → 16px par label
     const lblCount = (lm === "name_vintage" || lm === "vintage_name") ? 2 : lm === "none" ? 0 : 1;
     const labelExtraH = lblCount * Math.ceil((this._fsBase || 13) * 0.85 * 1.3 + 1);
-    const rowH = (isCircleMode ? 40 : 80) + labelExtraH;
     const pct   = Math.round((Object.keys(slotMap).length / total) * 100);
 
     const byType = {};
@@ -2517,39 +2569,41 @@ class MillesimeCard extends HTMLElement {
         else if (lm === "vintage_name") labelEls = lbl(yr || ph) + lbl(nm ? nbsp(short(nm, 12)) : ph);
       }
 
-      // En mode cercle + tête-bêche : positions alternées = cercle plus petit (pas de rotation)
-      const circleSize = isCircle ? (alt ? 28 : 40) : 40;
+      // Taille FLUIDE : plus aucune dimension en pixels fixes ici. La largeur des
+      // bouteilles/pastilles est plafonnée en CSS (clamp + cqi → progressif avec la
+      // largeur de carte) et, sous ce plafond, suit la largeur de colonne (1fr) →
+      // aucun débordement, quel que soit le nombre de colonnes. (Le `.dot` garde
+      // width:100% : la cible tactile reste toute la cellule.)
       const bottleContent = wine
         ? (isCircle
-            ? `<svg class="dot-svg-c" viewBox="0 0 10 10" width="10" height="10" xmlns="http://www.w3.org/2000/svg" style="width:${circleSize}px;height:${circleSize}px;display:block"><circle cx="5" cy="5" r="5" fill="${wt.color}"/><circle cx="5" cy="5" r="5" fill="white" opacity="0.12"/><ellipse cx="3.5" cy="3.5" rx="1.5" ry="1" fill="white" opacity="0.2"/></svg>`
-            : BOTTLE_MINI(wt.color, Math.round(80 * 10 / 26), wine.type, alt, entry.size || wine.size, wine.shape || ""))
+            ? `<svg class="dot-svg-c" viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block"><circle cx="5" cy="5" r="5" fill="${wt.color}"/><circle cx="5" cy="5" r="5" fill="white" opacity="0.12"/><ellipse cx="3.5" cy="3.5" rx="1.5" ry="1" fill="white" opacity="0.2"/></svg>`
+            : BOTTLE_MINI(wt.color, null, wine.type, alt, entry.size || wine.size, wine.shape || ""))
         : (isCircle
-            ? `<svg class="dot-svg-c" viewBox="0 0 10 10" width="10" height="10" xmlns="http://www.w3.org/2000/svg" style="width:${circleSize}px;height:${circleSize}px;display:block"><circle cx="5" cy="5" r="4.5" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="0.8" stroke-dasharray="1.8 1.2"/></svg>`
-            : BOTTLE_GHOST(Math.round(80 * 10 / 26)));
+            ? `<svg class="dot-svg-c" viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block"><circle cx="5" cy="5" r="4.5" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="0.8" stroke-dasharray="1.8 1.2"/></svg>`
+            : BOTTLE_GHOST());
 
-      // mode dot : seule la hauteur est imposée inline (width:100% vient du CSS, le SVG est centré par justify-content:center)
-      const sizeStyle = isCircle ? `height:40px;` : ``;
       const dotEl = `<div
         class="dot ${wine ? "dot--filled" : "dot--empty"} ${sel ? "dot--selected" : ""} ${!isCircle && alt ? "dot--alt" : ""} ${isCircle && alt ? "dot--c-alt" : ""}"
         data-slot="${i}" data-rack-id="${rack.id}" data-wine-id="${wine?.id || ""}" data-slot-idx="${slotIdx}"
-        style="${[dotStyle, sizeStyle].filter(Boolean).join(";")}"
+        style="${dotStyle}"
         title="${wine
           ? esc(wine.name) + (wine.vintage ? " " + esc(wine.vintage) : "") + " — " + esc(this._slotLabel({ rack_id: rack.id, slot: i }))
           : esc(this._slotLabel({ rack_id: rack.id, slot: i })) + " — cliquer pour ajouter"}"
       >${bottleContent}</div>`;
 
       const labelsHtml = labelEls ? `<div class="dot-labels" style="height:${labelExtraH}px">${labelEls}</div>` : "";
-      const cellStyle = `height:${rowH}px;${extraStyle}`;
-      return `<div class="dot-cell${lm !== "none" ? " dot-cell--labeled" : ""}" style="${cellStyle}">${dotEl}${labelsHtml}</div>`;
+      // La hauteur de cellule n'est plus imposée : elle découle de la hauteur réelle
+      // (fluide) de la bouteille + des libellés. `grid-auto-rows:auto` s'en charge.
+      return `<div class="dot-cell${lm !== "none" ? " dot-cell--labeled" : ""}"${extraStyle ? ` style="${extraStyle}"` : ""}>${dotEl}${labelsHtml}</div>`;
     };
 
     let dots = "";
-    let dotsStyle = `grid-template-columns:repeat(${cols},1fr);grid-auto-rows:${rowH}px`;
+    let dotsStyle = `grid-template-columns:repeat(${cols},1fr);grid-auto-rows:auto`;
 
     if (isQc) {
       // Grille double-colonne : chaque bouteille occupe 2 colonnes
       // Les étagères impaires sont décalées d'une colonne → quinconce parfait
-      dotsStyle = `grid-template-columns:repeat(${cols * 2 + 1},1fr);grid-auto-rows:${rowH}px;padding-top:4px`;
+      dotsStyle = `grid-template-columns:repeat(${cols * 2 + 1},1fr);grid-auto-rows:auto;padding-top:4px`;
       const numRows = Math.ceil(total / cols);
       for (let row = 0; row < numRows; row++) {
         const odd = row % 2 === 1;
@@ -4067,6 +4121,10 @@ function _drow(label, value) {
 const CARD_CSS = `<style>
 :host {
   display: block; font-size: var(--fs-base, 13px);
+  /* Défaut FLUIDE de la base typographique posé ici (feuille de style) et non plus
+     en inline → un override card-mod « :host { --fs-base: … } » peut le surcharger.
+     Seule la config YAML font_size: repasse en inline (choix explicite, prioritaire). */
+  --fs-base: clamp(13px, 3.1cqi, 18px);
   /* Le responsive est piloté par la largeur de la CARTE (container query), pas du
      viewport : une carte dans une colonne étroite se compacte même sur grand écran. */
   container-type: inline-size; container-name: mm;
@@ -4116,8 +4174,8 @@ const CARD_CSS = `<style>
 }
 @keyframes float-anim { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
 .header-meta { text-align:center; }
-.header-name { font-family:var(--font-serif); font-size:clamp(0.77em,1.55cqi,0.98em); color:var(--cream); line-height:1.2; }
-.header-tagline { font-size:clamp(0.54em,1.05cqi,0.62em); color:var(--red); text-transform:uppercase; letter-spacing:1.5px; margin-top:1px; }
+.header-name { font-family:var(--font-serif); font-size:clamp(0.85em,2.4cqi,1.25em); color:var(--cream); line-height:1.2; }
+.header-tagline { font-size:clamp(0.55em,1.3cqi,0.74em); color:var(--red); text-transform:uppercase; letter-spacing:1.5px; margin-top:1px; }
 /* Colonne droite : stats en haut, boutons en dessous */
 .header-right { display:flex; flex-direction:column; gap:7px; flex:1; min-width:0; }
 /* Stats et actions partagent la MÊME grille 3 colonnes → alignement parfait */
@@ -4125,8 +4183,8 @@ const CARD_CSS = `<style>
 .header-actions { display:grid; grid-template-columns:repeat(5, 1fr); gap:5px; align-items:stretch; }
 .header-actions .ha-icons { display:contents; }  /* les 4 icônes deviennent 4 cellules égales de la grille */
 .stat { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:5px 6px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border); }
-.stat-value { font-size:1.08em; font-weight:700; color:var(--cream); font-family:var(--font-serif); line-height:1; }
-.stat-label { font-size:0.54em; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-top:2px; }
+.stat-value { font-size:clamp(1.05em,2.1cqi,1.5em); font-weight:700; color:var(--cream); font-family:var(--font-serif); line-height:1; }
+.stat-label { font-size:clamp(0.54em,0.95cqi,0.66em); color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-top:2px; }
 .stat-clickable { cursor:pointer; transition:all 0.15s; }
 .stat-clickable:hover { background:var(--bg-3); border-color:var(--header-accent,var(--red)); }
 .stat-clickable:active { transform:scale(0.97); }
@@ -4134,8 +4192,8 @@ const CARD_CSS = `<style>
 .header-actions .btn-icon, .header-actions .view-select, .header-actions .btn-primary {
   height:38px; box-sizing:border-box; width:100%; min-width:0;
 }
-.header-actions .btn-primary { font-size:0.86em; padding:0 6px; white-space:nowrap; }
-.header-actions .view-select { padding:0 4px; font-size:0.82em; }
+.header-actions .btn-primary { font-size:clamp(0.82em,1.4cqi,1.0em); padding:0 6px; white-space:nowrap; }
+.header-actions .view-select { padding:0 4px; font-size:clamp(0.78em,1.3cqi,0.95em); }
 
 /* ── Ligne d'options repliable (sous le verre du logo) ── */
 .header-options {
@@ -4150,7 +4208,7 @@ const CARD_CSS = `<style>
 .opt-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; align-items:center; }
 .opt-btn {
   padding:9px 12px; border-radius:8px; border:1px solid var(--border);
-  background:var(--bg-2); color:var(--cream); font-size:0.78em; font-weight:600;
+  background:var(--bg-2); color:var(--cream); font-size:clamp(0.82em,1.5cqi,1.02em); font-weight:600;
   cursor:pointer; transition:all 0.15s; white-space:nowrap; width:100%; box-sizing:border-box;
 }
 .opt-btn:hover { background:var(--bg-3); border-color:var(--header-accent,var(--red)); }
@@ -4159,10 +4217,10 @@ const CARD_CSS = `<style>
 .opt-select-compact { flex:1; min-width:0; background:transparent; border:none; padding:9px 0; }
 .opt-field { display:flex; align-items:center; gap:7px; width:100%;
   background:var(--bg-2); border:1px solid var(--border); border-radius:8px; padding:0 10px; height:100%; box-sizing:border-box; }
-.opt-field-label { font-size:0.6em; color:var(--muted); text-transform:uppercase; letter-spacing:1px; white-space:nowrap; }
+.opt-field-label { font-size:clamp(0.62em,0.95cqi,0.76em); color:var(--muted); text-transform:uppercase; letter-spacing:1px; white-space:nowrap; }
 .opt-select {
   flex:1; padding:7px 9px; border-radius:8px; border:1px solid var(--border);
-  background:var(--bg-2); color:var(--cream); font-size:0.78em; cursor:pointer;
+  background:var(--bg-2); color:var(--cream); font-size:clamp(0.82em,1.5cqi,1.0em); cursor:pointer;
 }
 .header-glass.active { filter:drop-shadow(0 0 11px rgba(192,57,43,1)); transform:scale(1.08); }
 
@@ -4183,7 +4241,7 @@ const CARD_CSS = `<style>
 .mm-hint { font-size:0.72em; font-style:italic; color:#b9b9b9; margin-top:8px; line-height:1.4; }
 .btn-primary, .btn-secondary {
   padding:clamp(7px,1.2cqi,9px) clamp(12px,2cqi,15px); border-radius:8px; border:none;
-  font-family:var(--font-sans); font-size:clamp(0.85em,1.6cqi,0.95em); font-weight:600;
+  font-family:var(--font-sans); font-size:clamp(0.85em,1.6cqi,1.05em); font-weight:600;
   cursor:pointer; transition:all 0.15s; white-space:nowrap;
 }
 .btn-primary { background:var(--accent); color:#fff; }
@@ -4200,7 +4258,7 @@ const CARD_CSS = `<style>
 .view-select {
   flex:1.8; min-width:0; padding:0 4px; border-radius:8px;
   border:1px solid var(--border); background:var(--bg-2);
-  color:var(--cream); font-family:var(--font-sans); font-size:clamp(0.8em,1.6cqi,0.95em);
+  color:var(--cream); font-family:var(--font-sans); font-size:clamp(0.8em,1.6cqi,1.0em);
   cursor:pointer; transition:all 0.15s;
 }
 .view-select:hover { background:var(--bg-3); }
@@ -4211,13 +4269,13 @@ const CARD_CSS = `<style>
 }
 .filter-group { display:flex; flex-direction:column; gap:4px; flex:1; }
 .filter-label {
-  font-size:clamp(0.69em,1.3cqi,0.8em); color:var(--muted); text-transform:uppercase;
+  font-size:clamp(0.7em,1.5cqi,0.95em); color:var(--muted); text-transform:uppercase;
   letter-spacing:1.5px; text-align:center;
 }
 .filter-select {
   width:100%; padding:6px 28px 6px 10px; border-radius:8px;
   border:1px solid var(--border); background:var(--bg-2);
-  color:var(--cream); font-family:var(--font-sans); font-size:clamp(0.92em,1.7cqi,1.02em);
+  color:var(--cream); font-family:var(--font-sans); font-size:clamp(0.92em,1.7cqi,1.12em);
   cursor:pointer; outline:none; -webkit-appearance:none; appearance:none;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%235A5A5A'/%3E%3C/svg%3E");
   background-repeat:no-repeat; background-position:right 10px center;
@@ -4229,8 +4287,8 @@ const CARD_CSS = `<style>
 .cellar { padding:12px 14px; display:flex; flex-direction:column; gap:2px; }
 .empty-state { text-align:center; padding:44px 20px; }
 .empty-glass { width:36px; margin:0 auto 12px; opacity:0.4; }
-.empty-title { font-family:var(--font-serif); color:var(--cream); font-size:1.15em; margin-bottom:5px; }
-.empty-sub { font-size:0.92em; color:var(--muted); }
+.empty-title { font-family:var(--font-serif); color:var(--cream); font-size:clamp(1.15em,2.5cqi,1.6em); margin-bottom:5px; }
+.empty-sub { font-size:clamp(0.92em,1.6cqi,1.1em); color:var(--muted); }
 
 .rack { margin-bottom:10px; animation:slide-in 0.3s ease-out both; }
 @keyframes slide-in { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
@@ -4241,13 +4299,22 @@ const CARD_CSS = `<style>
   border-radius:10px 10px 0 0; padding:8px 9px; min-height:0;
 }
 .rack-counters { display:flex; flex-direction:column; align-items:flex-end; gap:1px; min-width:24px; }
-.type-count { font-size:0.69em; font-weight:700; display:block; }
+.type-count { font-size:clamp(0.69em,1.1cqi,0.85em); font-weight:700; display:block; }
 .rack-actions { display:flex; flex-direction:column; gap:3px; margin-left:2px; }
-.icon-btn { background:none; border:none; cursor:pointer; font-size:0.85em; padding:2px; opacity:0.3; color:var(--cream); transition:opacity 0.15s; line-height:1; }
+.icon-btn { background:none; border:none; cursor:pointer; font-size:clamp(0.85em,1.5cqi,1.05em); padding:2px; opacity:0.3; color:var(--cream); transition:opacity 0.15s; line-height:1; }
 .icon-btn:hover { opacity:1; }
 
 .rack-dots { display:grid; flex:1; gap:4px 3px; align-items:stretch; overflow:visible; }
-.dot { height:80px; width:100%; cursor:pointer; transition:transform 0.12s, filter 0.12s; display:flex; align-items:center; justify-content:center; }
+/* Le .dot occupe toute la cellule (cible tactile pleine largeur) ; le SVG à
+   l'intérieur est plafonné et centré. Plus de hauteur fixe : elle suit la
+   bouteille (fluide). */
+.dot { width:100%; cursor:pointer; transition:transform 0.12s, filter 0.12s; display:flex; align-items:flex-end; justify-content:center; }
+/* Taille FLUIDE et progressive : le plafond grandit/diminue avec la largeur de la
+   CARTE (cqi) ; sous ce plafond, la largeur suit la colonne (1fr) → jamais de
+   débordement, quel que soit le nombre de colonnes ou la largeur d'écran. */
+.dot-svg-b { width:100%; max-width:clamp(17px, 5.6cqi, 34px); height:auto; }
+.dot-svg-c { width:100%; max-width:clamp(20px, 6.4cqi, 42px); height:auto; }
+.dot--c-alt .dot-svg-c { max-width:clamp(14px, 4.4cqi, 29px); }  /* tête-bêche pastille : plus petit */
 .dot--empty { opacity:0.3; }
 .dot--empty:hover { opacity:0.55; transform:scale(1.08); }
 .dot--filled { filter:drop-shadow(0 2px 4px var(--dot-glow,rgba(192,57,43,0.35))); }
@@ -4267,7 +4334,7 @@ const CARD_CSS = `<style>
 }
 .three-loading {
   display:flex; align-items:center; justify-content:center; gap:8px;
-  height:170px; color:var(--muted); font-size:0.92em;
+  height:170px; color:var(--muted); font-size:clamp(0.92em,1.6cqi,1.1em);
 }
 .view3d-stage .mm-spinner {
   display:inline-block; width:12px; height:12px;
@@ -4278,7 +4345,7 @@ const CARD_CSS = `<style>
 .t3-badge {
   position:absolute; transform:translateX(-50%); display:flex; align-items:center; gap:6px;
   background:rgba(14,12,10,0.82); border:1px solid #2E2620;
-  border-radius:8px; padding:3px 10px; font-size:0.77em; color:var(--cream);
+  border-radius:8px; padding:3px 10px; font-size:clamp(0.77em,1.4cqi,0.98em); color:var(--cream);
   letter-spacing:0.5px; pointer-events:none; backdrop-filter:blur(3px);
   white-space:nowrap;
 }
@@ -4296,9 +4363,9 @@ const CARD_CSS = `<style>
   background:linear-gradient(90deg,var(--wood-dk),var(--wood-md),var(--wood-lt),var(--wood-md),var(--wood-dk));
   border:1px solid var(--wood-lt); border-top:none; border-radius:0 0 10px 10px;
   display:flex; align-items:center; justify-content:center; gap:8px; padding:4px 12px;
-  font-size:0.69em; font-weight:600; color:var(--gold); letter-spacing:2px; text-transform:uppercase;
+  font-size:clamp(0.69em,1.4cqi,0.92em); font-weight:600; color:var(--gold); letter-spacing:2px; text-transform:uppercase;
 }
-.rack-pct { color:var(--wood-lt); font-size:0.62em; }
+.rack-pct { color:var(--wood-lt); font-size:clamp(0.62em,1.0cqi,0.78em); }
 
 /* ─── Footer détail : 4 boutons ─── */
 .mm-footer-detail { gap:5px; flex-wrap:wrap; }
@@ -4343,11 +4410,9 @@ const CARD_CSS = `<style>
 @container mm (max-width: 500px) {
   .cellar { padding:6px 5px; }
   .rack-frame { padding:4px 5px; }
-  .rack-dots { gap:2px !important; grid-auto-rows:auto !important; }
-  .dot-cell { height:auto !important; min-height:0 !important; }
-  .dot { height:50px !important; min-height:0 !important; }
-  .dot-svg-b { height:50px !important; width:auto !important; }
-  .dot-labels { height:auto !important; }
+  .rack-dots { gap:2px !important; }
+  /* Les bouteilles/pastilles se réduisent désormais en continu (clamp cqi) :
+     plus besoin de forcer une hauteur en pixels par palier. */
   .dot-lbl { font-size:0.69em; letter-spacing:0; }
   .header { padding:7px 8px 6px; gap:7px; }
   .header-glass { width:22px; }
@@ -4371,8 +4436,6 @@ const CARD_CSS = `<style>
   .ha-icons { gap:3px; }
   .btn-icon { min-width:28px; font-size:1em; }
   .btn-primary, .btn-secondary { font-size:0.72em; padding:5px; }
-  .dot { height:42px !important; }
-  .dot-svg-b { height:42px !important; }
   .filters { padding:6px 8px; gap:6px; }
   .opt-btn { min-width:0; font-size:0.72em; padding:6px 8px; }   /* laisse rétrécir/empiler */
   .opt-field { min-width:0; }
