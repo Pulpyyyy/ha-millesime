@@ -1,7 +1,7 @@
 # 🍷 Millésime — Cave à vin pour Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-6.1.9-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
+[![version](https://img.shields.io/badge/version-6.2.0-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
 [![Offrir un verre de vin](https://img.shields.io/badge/🍷_Offrir_un_verre_de_vin-PayPal-7B1D2E.svg?style=flat-square)](https://paypal.me/Redsklns)
 
 **Millésime** transforme Home Assistant en gestionnaire de cave à vin complet : visualisez vos bouteilles dans une scène **3D réaliste**, scannez les étiquettes par **photo**, suivez la valeur de votre collection et tenez un **journal de dégustation**.
@@ -99,6 +99,15 @@ L'intégralité de Millésime a été conçue et développée en collaboration a
 ---
 
 ## 📝 Changelog
+
+### [6.2.0] — 2026-06
+Liste des vins en arborescence détaillée et correction des capsules.
+
+- **Liste des bouteilles** présentée en arborescence **Couleur → Région → Châteaux**, dans l'ordre Rouge, Blanc, Liquoreux, Rosé, Effervescent
+- Chaque vin affiche ses informations disponibles : millésime, prix, appellation, producteur, note, fenêtre de dégustation, événement, format et coup de cœur
+- Comptage des bouteilles par couleur et par région ; clic sur un vin pour ouvrir sa fiche ; **export CSV** conservé
+- **Capsules des bouteilles** affinées en 3D : forme légèrement conique épousant le goulot, sans le bourrelet disgracieux à la base
+- **Collerette** masquée pour les bouteilles en disposition semi-couchée
 
 ### [6.1.9] — 2026-06
 Corrections d'affichage.
