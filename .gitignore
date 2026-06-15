@@ -2,3 +2,6 @@ demo-cave-complete.json
 TODO.local.md
 examples/build_demo.py
 examples/millesime_data.demo.json
+tools/ref/out/
+__pycache__/
+*.pyc
