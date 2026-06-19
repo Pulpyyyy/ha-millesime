@@ -1,7 +1,7 @@
 # 🍷 Millésime — Cave à vin pour Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-6.2.2-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
+[![version](https://img.shields.io/badge/version-6.3.0-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
 [![Offrir un verre de vin](https://img.shields.io/badge/🍷_Offrir_un_verre_de_vin-PayPal-7B1D2E.svg?style=flat-square)](https://paypal.me/Redsklns)
 
 **Millésime** transforme Home Assistant en gestionnaire de cave à vin complet : visualisez vos bouteilles dans une scène **3D réaliste**, scannez les étiquettes par **photo**, suivez la valeur de votre collection et tenez un **journal de dégustation**.
@@ -99,6 +99,14 @@ L'intégralité de Millésime a été conçue et développée en collaboration a
 ---
 
 ## 📝 Changelog
+
+### [6.3.0] — 2026-06
+Suivi de la température et de l'hygrométrie de la cave.
+
+- **Deux zones d'affichage** (température et hygrométrie) à côté des filtres, alimentées par vos capteurs Home Assistant en temps réel, dans le même style que les autres indicateurs
+- **Sélection des capteurs** depuis le menu options (🌡️ Capteurs T° / humidité) : listes déroulantes de vos entités classées par type (température, humidité, autres)
+- **Courbes d'évolution** : un clic sur la température ou l'hygrométrie ouvre un graphique d'historique réel issu de l'enregistreur de Home Assistant, avec choix de la période (24 h, 7 j, 30 j)
+- **Filtres Type / Événement** déplacés dans un sous-menu repliable (bouton ⚲) pour laisser la place aux nouvelles zones
 
 ### [6.2.2] — 2026-06
 - **Liste des bouteilles** : le style de la nouvelle présentation (arborescence Couleur → Région → Châteaux) s'applique enfin correctement dans la fenêtre, avec adaptation au thème clair/sombre
