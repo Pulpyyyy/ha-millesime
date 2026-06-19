@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.2.2
+ * Millésime Card v6.3.0
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.2.2";
+const MILLESIME_CARD_VERSION = "6.3.0";
 
 const DOMAIN = "millesime";
 
@@ -346,6 +346,7 @@ class MillesimeCard extends HTMLElement {
     this._view       = "2d";  // "2d" | "dot" | "3d"
     this._viewTouched = false; // l'utilisateur a basculé manuellement (prime sur default_view)
     this._optionsOpen = false; // ligne d'options repliable (sous le verre du logo)
+    this._filtersOpen = false; // sous-menu Type/Événement repliable
     let lblMode = "both";
     try { lblMode = localStorage.getItem("millesime-labelmode") || "both"; } catch (e) {}
     this._labelMode = ["plate", "bubble", "both"].includes(lblMode) ? lblMode : "both"; // repères 3D
@@ -465,9 +466,20 @@ class MillesimeCard extends HTMLElement {
   set hass(hass) {
     const first = !this._hass;
     const themeChanged = this._hass?.themes !== hass.themes;
+    const prevHass = this._hass;
     this._hass = hass;
     if (first) { this._subscribeUpdates(); this._fetchData(); }
     if (first || themeChanged) this._applyTheme();
+    // Re-render léger si la valeur d'un capteur configuré a changé (zones T°/hygro)
+    if (!first && !this._modal && prevHass) {
+      const c = this._data?.cellar || {};
+      for (const ent of [c.temp_entity, c.humid_entity]) {
+        if (ent && prevHass.states[ent]?.state !== hass.states[ent]?.state) {
+          this._render();
+          break;
+        }
+      }
+    }
   }
 
   getCardSize() { return 8; }
@@ -706,6 +718,8 @@ class MillesimeCard extends HTMLElement {
     if (type === "search")    box.innerHTML = this._searchModalHTML();
     if (type === "bottlelist") box.innerHTML = this._bottleListHTML();
     if (type === "moverack") box.innerHTML = this._moveRackHTML(opts.rack);
+    if (type === "sensors")   box.innerHTML = this._sensorsHTML();
+    if (type === "envhistory") box.innerHTML = this._envHistoryHTML(opts.entity, opts.kind);
 
     overlay.appendChild(box);
     document.body.appendChild(overlay);
@@ -727,6 +741,8 @@ class MillesimeCard extends HTMLElement {
     if (type === "search")    this._bindSearchModal(box);
     if (type === "bottlelist") this._bindBottleList(box);
     if (type === "moverack") this._bindMoveRack(box, opts.rack);
+    if (type === "sensors")   this._bindSensors(box);
+    if (type === "envhistory") this._bindEnvHistory(box, opts.entity, opts.kind);
   }
 
   _closeModal() {
@@ -1954,6 +1970,207 @@ class MillesimeCard extends HTMLElement {
 
   // ── Déplacer le contenu d'un casier vers un autre ───────────────────────────
 
+  // ── Capteurs température / hygrométrie ──────────────────────────────────────
+
+  _sensorsHTML() {
+    const cellar = this._data?.cellar || {};
+    return `
+      <div class="mm-header">
+        <span class="mm-title">🌡️ Capteurs de la cave</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        <p class="mm-hint" style="margin-bottom:14px">Choisissez les capteurs Home Assistant à afficher. Les listes se chargent depuis vos entités.</p>
+        <div class="mm-field">
+          <label class="mm-label">🌡️ Capteur de température</label>
+          <select class="mm-input" id="sensor-temp"><option value="">⏳ Chargement…</option></select>
+        </div>
+        <div class="mm-field">
+          <label class="mm-label">💧 Capteur d'hygrométrie</label>
+          <select class="mm-input" id="sensor-humid"><option value="">⏳ Chargement…</option></select>
+        </div>
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
+        <button class="mm-btn mm-btn-primary" id="sensors-save">Enregistrer</button>
+      </div>`;
+  }
+
+  async _bindSensors(box) {
+    const cellar = this._data?.cellar || {};
+    const tSel = box.querySelector("#sensor-temp");
+    const hSel = box.querySelector("#sensor-humid");
+
+    // Charger la liste des capteurs depuis le backend
+    let sensors = { temperature: [], humidity: [], other: [] };
+    try {
+      sensors = await this._hass.connection.sendMessagePromise({ type: "millesime/list_sensors" });
+    } catch (err) {
+      console.error("[Millésime] list_sensors:", err);
+    }
+
+    const opt = (s, sel) => `<option value="${s.entity_id}" ${s.entity_id === sel ? "selected" : ""}>${s.name}${s.unit ? ` (${s.state}${s.unit})` : ""}</option>`;
+    const fill = (sel, primary, current) => {
+      const groups = [];
+      groups.push(`<option value="">— Aucun —</option>`);
+      if (primary.length) groups.push(`<optgroup label="Capteurs ${sel === tSel ? "température" : "humidité"}">${primary.map(s => opt(s, current)).join("")}</optgroup>`);
+      if (sensors.other.length) groups.push(`<optgroup label="Autres capteurs">${sensors.other.map(s => opt(s, current)).join("")}</optgroup>`);
+      sel.innerHTML = groups.join("");
+    };
+    fill(tSel, sensors.temperature, cellar.temp_entity || "");
+    fill(hSel, sensors.humidity, cellar.humid_entity || "");
+
+    box.querySelector("#sensors-save")?.addEventListener("click", async () => {
+      const btn = box.querySelector("#sensors-save");
+      btn.textContent = "⏳…"; btn.disabled = true;
+      try {
+        await this._hass.connection.sendMessagePromise({
+          type: "millesime/set_sensors",
+          temp_entity: tSel.value || null,
+          humid_entity: hSel.value || null,
+        });
+        await new Promise(r => setTimeout(r, 400));
+        await this._fetchData();
+        this._closeModal();
+        this._showToast("success", "Capteurs enregistrés ✓");
+      } catch (err) {
+        btn.textContent = "Enregistrer"; btn.disabled = false;
+        this._showToast("error", "Erreur : " + (err.message || err));
+      }
+    });
+  }
+
+  _envHistoryHTML(entity, kind) {
+    const cur = this._sensorVal(entity);
+    const icon = kind === "temperature" ? "🌡️" : "💧";
+    const title = kind === "temperature" ? "Température" : "Hygrométrie";
+    return `
+      <div class="mm-header">
+        <span class="mm-title">${icon} ${title}</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px">
+          <span style="font-size:2em;font-weight:700;color:var(--mm-text);font-family:var(--font-serif,Georgia,serif)">${cur ? `${cur.value}${cur.unit}` : "—"}</span>
+          <span style="font-size:0.82em;color:var(--mm-muted)">${cur ? esc(cur.name) : esc(entity)}</span>
+        </div>
+        <div class="env-range" style="display:flex;gap:6px;margin:10px 0">
+          ${[["24h", 24], ["7 j", 168], ["30 j", 720]].map(([lbl, h], i) =>
+            `<button class="env-range-btn ${i === 1 ? "active" : ""}" data-hours="${h}">${lbl}</button>`).join("")}
+        </div>
+        <div id="env-chart-wrap" style="width:100%;height:200px;background:var(--mm-bg0,#0D0D0D);border-radius:8px;border:1px solid var(--mm-border,#222)"></div>
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Fermer</button>
+      </div>`;
+  }
+
+  async _bindEnvHistory(box, entity, kind) {
+    const wrap = box.querySelector("#env-chart-wrap");
+    const unit = this._sensorVal(entity)?.unit || (kind === "temperature" ? "°" : "%");
+    const load = async (hours) => {
+      wrap.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--mm-muted);font-size:0.9em">⏳ Chargement…</div>`;
+      let points = [];
+      try {
+        const res = await this._hass.connection.sendMessagePromise({
+          type: "millesime/entity_history", entity_id: entity, hours,
+        });
+        points = res.points || [];
+      } catch (err) {
+        console.error("[Millésime] entity_history:", err);
+      }
+      this._renderEntityChart(wrap, points, unit);
+    };
+    box.querySelectorAll(".env-range-btn").forEach((b) =>
+      b.addEventListener("click", () => {
+        box.querySelectorAll(".env-range-btn").forEach(x => x.classList.remove("active"));
+        b.classList.add("active");
+        load(parseInt(b.dataset.hours, 10));
+      })
+    );
+    load(168);  // 7 jours par défaut
+  }
+
+  _renderEntityChart(wrap, points, unit) {
+    wrap.innerHTML = "";
+    const tv     = this._hass?.themes?.themes?.[this._hass?.themes?.theme] || {};
+    const cBg    = tv['primary-background-color'] || '#0D0D0D';
+    const cGrid  = tv['divider-color']            || '#222';
+    const cMuted = tv['secondary-text-color']     || '#777';
+    const cText  = tv['primary-text-color']       || '#EDE0CC';
+    const cAccent= tv['primary-color']            || '#C0392B';
+    const sans   = this._fontSans || 'Inter,sans-serif';
+
+    if (!points || points.length < 2) {
+      wrap.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:${cMuted};font-size:0.9em;font-family:${sans}">Pas assez de données sur cette période</div>`;
+      return;
+    }
+
+    const NS = "http://www.w3.org/2000/svg";
+    const W = wrap.offsetWidth || wrap.parentElement?.offsetWidth || 340;
+    const H = 200;
+    const pad = { t: 16, r: 14, b: 26, l: 44 };
+    const cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
+
+    const ts = points.map(p => new Date(p.t).getTime());
+    const vs = points.map(p => p.v);
+    const tMin = Math.min(...ts), tMax = Math.max(...ts);
+    const vMin = Math.min(...vs), vMax = Math.max(...vs);
+    const vSpanRaw = vMax - vMin;
+    const lo = vMin - (vSpanRaw || 1) * 0.12;
+    const hi = vMax + (vSpanRaw || 1) * 0.12;
+    const span = hi - lo || 1;
+    const tSpan = tMax - tMin || 1;
+
+    const px = t => pad.l + ((t - tMin) / tSpan) * cw;
+    const py = v => pad.t + ch - ((v - lo) / span) * ch;
+    const mk = tag => document.createElementNS(NS, tag);
+    const at = (el, a) => { Object.entries(a).forEach(([k, v]) => el.setAttribute(k, v)); return el; };
+
+    const svg = at(mk("svg"), { width: W, height: H, viewBox: `0 0 ${W} ${H}` });
+    svg.style.cssText = "display:block;width:100%;height:100%";
+    const defs = mk("defs");
+    const grad = at(mk("linearGradient"), { id: "eg", x1: "0", y1: "0", x2: "0", y2: "1" });
+    grad.appendChild(at(mk("stop"), { offset: "0%", "stop-color": cAccent, "stop-opacity": "0.35" }));
+    grad.appendChild(at(mk("stop"), { offset: "100%", "stop-color": cAccent, "stop-opacity": "0.02" }));
+    defs.appendChild(grad); svg.appendChild(defs);
+    svg.appendChild(at(mk("rect"), { x: 0, y: 0, width: W, height: H, fill: cBg }));
+
+    for (let g = 0; g <= 4; g++) {
+      const v = hi - span * g / 4;
+      const y = (pad.t + ch * g / 4).toFixed(1);
+      svg.appendChild(at(mk("line"), { x1: pad.l, y1: y, x2: W - pad.r, y2: y, stroke: cGrid, "stroke-width": "1" }));
+      const txt = at(mk("text"), { x: pad.l - 5, y: (parseFloat(y) + 3.5).toFixed(1), "text-anchor": "end", fill: cMuted, "font-size": "10", "font-family": sans });
+      txt.textContent = (Math.round(v * 10) / 10) + unit;
+      svg.appendChild(txt);
+    }
+
+    // Étiquettes de temps (début / milieu / fin)
+    [0, 0.5, 1].forEach(f => {
+      const t = tMin + tSpan * f;
+      const d = new Date(t);
+      const x = px(t);
+      const lbl = tSpan > 36 * 3600 * 1000
+        ? `${d.getDate()}/${d.getMonth() + 1}`
+        : `${String(d.getHours()).padStart(2, "0")}h`;
+      const txt = at(mk("text"), { x: x, y: H - 8, "text-anchor": f === 0 ? "start" : f === 1 ? "end" : "middle", fill: cMuted, "font-size": "10", "font-family": sans });
+      txt.textContent = lbl;
+      svg.appendChild(txt);
+    });
+
+    const line = points.map((p, i) => `${i === 0 ? "M" : "L"} ${px(ts[i]).toFixed(1)} ${py(p.v).toFixed(1)}`).join(" ");
+    const area = `${line} L ${px(tMax).toFixed(1)} ${(pad.t + ch).toFixed(1)} L ${px(tMin).toFixed(1)} ${(pad.t + ch).toFixed(1)} Z`;
+    svg.appendChild(at(mk("path"), { d: area, fill: "url(#eg)" }));
+    svg.appendChild(at(mk("path"), { d: line, fill: "none", stroke: cAccent, "stroke-width": "2", "stroke-linejoin": "round", "stroke-linecap": "round" }));
+
+    // Min / max
+    const tMaxV = ts[vs.indexOf(vMax)], tMinV = ts[vs.indexOf(vMin)];
+    [[tMaxV, vMax], [tMinV, vMin]].forEach(([t, v]) =>
+      svg.appendChild(at(mk("circle"), { cx: px(t).toFixed(1), cy: py(v).toFixed(1), r: "2.5", fill: cText })));
+
+    wrap.appendChild(svg);
+  }
+
   _moveRackHTML(rack) {
     const racks = (this._data?.cellar?.racks || []).filter(f => f.id !== rack.id);
     const cnt = (this._data?.wines || []).reduce(
@@ -2387,6 +2604,7 @@ class MillesimeCard extends HTMLElement {
           <button class="opt-btn opt-btn-accent" id="btn-add-rack" title="Ajouter un casier">➕ Ajouter un casier</button>
           <button class="opt-btn" id="btn-import"  title="Importer millesime_import_vinotag.csv">📥 Importer des données</button>
           <button class="opt-btn" id="btn-refresh" title="Compléter les fiches via Gemini + fusionner les doublons">♻️ Compléter les fiches</button>
+          <button class="opt-btn" id="btn-sensors" title="Choisir les capteurs température et hygrométrie">🌡️ Capteurs T° / humidité</button>
           <div class="opt-field">
             <span class="opt-field-label">Repères 3D</span>
             ${labelSel}
@@ -2395,9 +2613,44 @@ class MillesimeCard extends HTMLElement {
       </div>`;
   }
 
+  _sensorVal(entityId) {
+    // Valeur courante d'un capteur, lue en temps réel depuis hass.states
+    if (!entityId || !this._hass) return null;
+    const st = this._hass.states[entityId];
+    if (!st || st.state === "unavailable" || st.state === "unknown") return null;
+    const v = parseFloat(st.state);
+    return {
+      value: isNaN(v) ? st.state : v,
+      unit: st.attributes?.unit_of_measurement || "",
+      name: st.attributes?.friendly_name || entityId,
+    };
+  }
+
   _renderFilters() {
+    const cellar = this._data?.cellar || {};
+    const temp = this._sensorVal(cellar.temp_entity);
+    const humid = this._sensorVal(cellar.humid_entity);
+
+    const tempBox = `
+      <div class="env-box ${cellar.temp_entity ? "env-clickable" : "env-empty"}" id="env-temp">
+        <span class="env-value">${temp ? `${temp.value}${temp.unit || "°"}` : "—"}</span>
+        <span class="env-label">🌡️ Température</span>
+      </div>`;
+    const humidBox = `
+      <div class="env-box ${cellar.humid_entity ? "env-clickable" : "env-empty"}" id="env-humid">
+        <span class="env-value">${humid ? `${humid.value}${humid.unit || "%"}` : "—"}</span>
+        <span class="env-label">💧 Hygrométrie</span>
+      </div>`;
+
     return `
-      <div class="filters">
+      <div class="env-row">
+        ${tempBox}
+        ${humidBox}
+        <button class="env-filter-toggle ${this._filtersOpen ? "open" : ""}" id="btn-filters-toggle" title="Filtres">
+          <span>⚲</span>
+        </button>
+      </div>
+      <div class="filters-collapse ${this._filtersOpen ? "open" : ""}" id="filters-collapse">
         <div class="filter-group">
           <span class="filter-label">Type</span>
           <select class="filter-select" id="sel-type">
@@ -3753,6 +4006,24 @@ class MillesimeCard extends HTMLElement {
     });
 
     s.getElementById("btn-history")?.addEventListener("click", () => this._openModal("history"));
+
+    // Zones environnement : repli des filtres + clic vers l'historique du capteur
+    s.getElementById("btn-filters-toggle")?.addEventListener("click", () => {
+      this._filtersOpen = !this._filtersOpen;
+      const c = this.shadowRoot.getElementById("filters-collapse");
+      const b = this.shadowRoot.getElementById("btn-filters-toggle");
+      if (c) c.classList.toggle("open", this._filtersOpen);
+      if (b) b.classList.toggle("open", this._filtersOpen);
+    });
+    s.getElementById("env-temp")?.addEventListener("click", () => {
+      const ent = this._data?.cellar?.temp_entity;
+      if (ent) this._openModal("envhistory", { entity: ent, kind: "temperature" });
+    });
+    s.getElementById("env-humid")?.addEventListener("click", () => {
+      const ent = this._data?.cellar?.humid_entity;
+      if (ent) this._openModal("envhistory", { entity: ent, kind: "humidity" });
+    });
+
     s.getElementById("sel-view")?.addEventListener("change", (e) => {
       this._viewTouched = true;
       this._view = e.target.value;
@@ -3799,6 +4070,7 @@ class MillesimeCard extends HTMLElement {
         this._showToast("success", "Fiches rafraîchies ✓");
     });
     s.getElementById("btn-add-rack")?.addEventListener("click",   () => this._openModal("rack"));
+    s.getElementById("btn-sensors")?.addEventListener("click",    () => this._openModal("sensors"));
 
     s.getElementById("btn-add-bottle")?.addEventListener("click", () => {
       if (!data.cellar.racks.length) {
@@ -4073,6 +4345,33 @@ const CARD_CSS = `<style>
 }
 .view-select:hover { background:var(--bg-3); }
 
+.env-row {
+  display:flex; gap:10px; align-items:stretch; padding:8px 14px;
+  background:var(--bg-1); border-bottom:1px solid var(--border);
+}
+.env-box {
+  flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  padding:6px 8px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border);
+}
+.env-value { font-size:1.08em; font-weight:700; color:var(--cream); font-family:var(--font-serif); line-height:1.1; }
+.env-label { font-size:0.56em; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-top:3px; }
+.env-clickable { cursor:pointer; transition:all 0.15s; }
+.env-clickable:hover { background:var(--bg-3); border-color:var(--header-accent,var(--red)); }
+.env-clickable:active { transform:scale(0.97); }
+.env-empty { opacity:0.5; }
+.env-filter-toggle {
+  flex:0 0 auto; width:42px; display:flex; align-items:center; justify-content:center;
+  background:var(--bg-2); border:1px solid var(--border); border-radius:8px; cursor:pointer;
+  color:var(--muted); font-size:1.1em; transition:all 0.15s;
+}
+.env-filter-toggle:hover { background:var(--bg-3); color:var(--cream); }
+.env-filter-toggle.open { background:var(--accent); color:#fff; border-color:var(--accent); }
+.filters-collapse {
+  display:grid; grid-template-columns:1fr 1fr; gap:10px;
+  max-height:0; overflow:hidden; padding:0 14px;
+  background:var(--bg-1); transition:max-height 0.25s ease, padding 0.25s ease;
+}
+.filters-collapse.open { max-height:120px; padding:0 14px 10px; border-bottom:1px solid var(--border); }
 .filters {
   display:flex; gap:10px; padding:8px 14px;
   background:var(--bg-1); border-bottom:1px solid var(--border);
@@ -4279,6 +4578,13 @@ const MODAL_CSS = `
 .vlist-wine-price { font-size:0.86em; color:var(--mm-text); white-space:nowrap; font-variant-numeric:tabular-nums; }
 .vlist-wine-meta { display:flex; gap:14px; flex-wrap:wrap; margin-top:4px; }
 .vlist-wine-meta .vm { font-size:0.74em; color:var(--mm-muted); white-space:nowrap; }
+.env-range-btn {
+  flex:1; padding:6px 4px; border-radius:7px; border:1px solid var(--mm-border);
+  background:var(--mm-bg2); color:var(--mm-muted); font-size:0.82em; cursor:pointer;
+  font-family:var(--font-sans); transition:all 0.13s;
+}
+.env-range-btn:hover { color:var(--mm-text); }
+.env-range-btn.active { background:var(--mm-accent); color:#fff; border-color:var(--mm-accent); }
 /* Description sous les menus (disposition, orientation) : petit, gris clair, italique */
 .mm-hint { font-size:0.74em; font-style:italic; color:#c8c8c8; margin-top:7px; line-height:1.4; }
 .mm-header {
