@@ -1,4 +1,4 @@
-"""Millésime v6.2.2 — Cave à Vin pour Home Assistant.
+"""Millésime v6.3.0 — Cave à Vin pour Home Assistant.
 
 Recherche texte : gemini-3.1-flash-lite (tier gratuit)
 Lecture photo   : gemini-3-flash (tier gratuit)
@@ -34,7 +34,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN    = "millesime"
 PLATFORMS = ["sensor"]
 DATA_FILE = "millesime_data.json"
-VERSION   = "6.2.2"
+VERSION   = "6.3.0"
 
 OFF_UA       = f"Millesime-HA/{VERSION} (github.com/Redsklns/ha-millesime)"
 # Deux modèles séparés = deux pools de quota indépendants (free tier)
@@ -827,6 +827,111 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         connection.send_result(msg["id"], result)
 
     websocket_api.async_register_command(hass, ws_get_data)
+
+    # ── WebSocket : lister les capteurs température / humidité disponibles ─────
+    @websocket_api.websocket_command({vol.Required("type"): "millesime/list_sensors"})
+    @websocket_api.async_response
+    async def ws_list_sensors(hass: HomeAssistant, connection, msg: dict) -> None:
+        temp, humid, other = [], [], []
+        for state in hass.states.async_all("sensor"):
+            dc = state.attributes.get("device_class")
+            unit = state.attributes.get("unit_of_measurement", "") or ""
+            entry = {
+                "entity_id": state.entity_id,
+                "name": state.attributes.get("friendly_name", state.entity_id),
+                "unit": unit,
+                "state": state.state,
+            }
+            if dc == "temperature" or "°" in unit:
+                temp.append(entry)
+            elif dc == "humidity" or unit == "%":
+                humid.append(entry)
+            else:
+                other.append(entry)
+        temp.sort(key=lambda e: e["name"].lower())
+        humid.sort(key=lambda e: e["name"].lower())
+        other.sort(key=lambda e: e["name"].lower())
+        connection.send_result(msg["id"], {"temperature": temp, "humidity": humid, "other": other})
+
+    websocket_api.async_register_command(hass, ws_list_sensors)
+
+    # ── WebSocket : enregistrer les entités capteurs choisies ─────────────────
+    @websocket_api.websocket_command({
+        vol.Required("type"): "millesime/set_sensors",
+        vol.Optional("temp_entity"): vol.Any(str, None),
+        vol.Optional("humid_entity"): vol.Any(str, None),
+    })
+    @websocket_api.async_response
+    async def ws_set_sensors(hass: HomeAssistant, connection, msg: dict) -> None:
+        data = await hass.async_add_executor_job(_load, hass)
+        cellar = data.setdefault("cellar", {})
+        if "temp_entity" in msg:
+            cellar["temp_entity"] = msg["temp_entity"] or ""
+        if "humid_entity" in msg:
+            cellar["humid_entity"] = msg["humid_entity"] or ""
+        await hass.async_add_executor_job(_save, hass, data)
+        hass.bus.async_fire(f"{DOMAIN}_updated", {})
+        connection.send_result(msg["id"], {"ok": True})
+
+    websocket_api.async_register_command(hass, ws_set_sensors)
+
+    # ── WebSocket : état courant des capteurs configurés ──────────────────────
+    @websocket_api.websocket_command({vol.Required("type"): "millesime/sensor_states"})
+    @websocket_api.async_response
+    async def ws_sensor_states(hass: HomeAssistant, connection, msg: dict) -> None:
+        data = await hass.async_add_executor_job(_load, hass)
+        cellar = data.get("cellar", {})
+        out = {}
+        for key, ent in (("temperature", cellar.get("temp_entity")), ("humidity", cellar.get("humid_entity"))):
+            if ent:
+                st = hass.states.get(ent)
+                if st:
+                    out[key] = {
+                        "entity_id": ent,
+                        "state": st.state,
+                        "unit": st.attributes.get("unit_of_measurement", ""),
+                        "name": st.attributes.get("friendly_name", ent),
+                    }
+        connection.send_result(msg["id"], out)
+
+    websocket_api.async_register_command(hass, ws_sensor_states)
+
+    # ── WebSocket : historique d'une entité (recorder) ────────────────────────
+    @websocket_api.websocket_command({
+        vol.Required("type"): "millesime/entity_history",
+        vol.Required("entity_id"): str,
+        vol.Optional("hours", default=168): int,
+    })
+    @websocket_api.async_response
+    async def ws_entity_history(hass: HomeAssistant, connection, msg: dict) -> None:
+        from datetime import timedelta
+        from homeassistant.util import dt as dt_util
+        try:
+            from homeassistant.components.recorder import history, get_instance
+            end = dt_util.utcnow()
+            start = end - timedelta(hours=msg["hours"])
+            ent = msg["entity_id"]
+
+            def _fetch():
+                return history.state_changes_during_period(
+                    hass, start, end, ent, include_start_time_state=True, no_attributes=True
+                )
+
+            states = await get_instance(hass).async_add_executor_job(_fetch)
+            points = []
+            for st in states.get(ent, []):
+                try:
+                    val = float(st.state)
+                except (ValueError, TypeError):
+                    continue
+                ts = st.last_changed or st.last_updated
+                points.append({"t": ts.isoformat(), "v": val})
+            connection.send_result(msg["id"], {"entity_id": ent, "points": points})
+        except Exception as exc:
+            _LOGGER.warning("Millésime — historique %s impossible : %s", msg.get("entity_id"), exc)
+            connection.send_result(msg["id"], {"entity_id": msg.get("entity_id"), "points": []})
+
+    websocket_api.async_register_command(hass, ws_entity_history)
 
     # ── WebSocket : search_wine (texte) ───────────────────────────────────────
 
