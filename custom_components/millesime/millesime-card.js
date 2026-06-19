@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.2.1
+ * Millésime Card v6.2.2
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.2.1";
+const MILLESIME_CARD_VERSION = "6.2.2";
 
 const DOMAIN = "millesime";
 
