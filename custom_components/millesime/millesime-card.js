@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.3.0
+ * Millésime Card v6.3.2
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.3.0";
+const MILLESIME_CARD_VERSION = "6.3.2";
 
 const DOMAIN = "millesime";
 
@@ -1918,6 +1918,9 @@ class MillesimeCard extends HTMLElement {
         <span class="mm-title">🍷 ${totalSlots} bouteille${totalSlots > 1 ? "s" : ""}</span>
         <button class="mm-close" data-close>✕</button>
       </div>
+      <div class="vlist-search-wrap">
+        <input type="text" id="vlist-search" class="vlist-search" placeholder="🔍 Rechercher un vin, une région, un producteur…" autocomplete="off">
+      </div>
       <div class="mm-body">${body}</div>
       <div class="mm-footer">
         <button class="mm-btn mm-btn-ghost" data-close>Fermer</button>
@@ -1929,10 +1932,71 @@ class MillesimeCard extends HTMLElement {
     box.querySelectorAll(".vlist-wine[data-wine]").forEach((row) =>
       row.addEventListener("click", () => {
         const wine = (this._data?.wines || []).find((w) => w.id === row.dataset.wine);
-        if (wine) { this._closeModal(); this._openModal("detail", { wine }); }
+        if (wine) this._locateBottle(wine);
       })
     );
     box.querySelector("#blist-export")?.addEventListener("click", () => this._exportCSV());
+
+    // Recherche en direct dans la liste
+    const search = box.querySelector("#vlist-search");
+    if (search) {
+      const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const apply = () => {
+        const q = norm(search.value.trim());
+        const wines = this._data?.wines || [];
+        const byId = Object.fromEntries(wines.map(w => [w.id, w]));
+        box.querySelectorAll(".vlist-wine[data-wine]").forEach((row) => {
+          const w = byId[row.dataset.wine];
+          const hay = norm([w?.name, w?.region, w?.appellation, w?.producer, w?.vintage].join(" "));
+          row.style.display = (!q || hay.includes(q)) ? "" : "none";
+        });
+        // Masquer les en-têtes région/couleur devenus vides
+        box.querySelectorAll(".vlist-region-head").forEach((rh) => {
+          let n = rh.nextElementSibling, any = false;
+          while (n && n.classList.contains("vlist-wine")) {
+            if (n.style.display !== "none") { any = true; break; }
+            n = n.nextElementSibling;
+          }
+          rh.style.display = any ? "" : "none";
+        });
+        box.querySelectorAll(".vlist-color-head").forEach((ch) => {
+          let n = ch.nextElementSibling, any = false;
+          while (n && !n.classList.contains("vlist-color-head")) {
+            if (n.classList.contains("vlist-wine") && n.style.display !== "none") { any = true; break; }
+            n = n.nextElementSibling;
+          }
+          ch.style.display = any ? "" : "none";
+        });
+      };
+      search.addEventListener("input", apply);
+      setTimeout(() => search.focus(), 120);
+    }
+  }
+
+  // Ferme la liste, sélectionne le vin, bascule en vue 2D et défile jusqu'à la bouteille
+  _locateBottle(wine) {
+    const slot = (wine.slots || [])[0];
+    this._closeModal();
+    this._selected = wine.id;
+    // La surbrillance (halo) est fiable en vue 2D → on y bascule
+    if (this._view !== "2d") {
+      this._view = "2d";
+      this._viewTouched = true;
+      try { localStorage.setItem("millesime-view", this._view); } catch (err) {}
+    }
+    this._render();
+    // Défilement vers la bouteille après le rendu
+    setTimeout(() => {
+      const sel = slot
+        ? this.shadowRoot.querySelector(`[data-wine-id="${wine.id}"][data-rack-id="${slot.rack_id}"]`)
+        : this.shadowRoot.querySelector(`[data-wine-id="${wine.id}"]`);
+      if (sel) {
+        sel.scrollIntoView({ behavior: "smooth", block: "center" });
+        sel.classList.add("bottle-flash");
+        setTimeout(() => sel.classList.remove("bottle-flash"), 2000);
+      }
+      this._showToast("info", `${wine.name || "Vin"} mis en surbrillance dans la cave`);
+    }, 160);
   }
 
   _exportCSV() {
@@ -2565,11 +2629,12 @@ class MillesimeCard extends HTMLElement {
       </select>`;
     // Menu déroulant des repères 3D (étiquette de planche / bulle / les deux)
     const labelSel = `
-      <select class="opt-select opt-select-compact" id="sel-labelmode" title="Repères des étagères en 3D">
-        ${[["plate", "🏷️ Étiquette"], ["bubble", "🔵 Bulle"], ["both", "Les deux"]]
-          .map(([v, lbl]) => `<option value="${v}" ${this._labelMode === v ? "selected" : ""}>${lbl}</option>`)
+      <div class="seg3" id="seg-labelmode" role="group" aria-label="Repères 3D">
+        ${[["plate", "🏷️", "Étiquette"], ["bubble", "🔵", "Bulle"], ["both", "⊕", "Les deux"]]
+          .map(([v, icon, lbl]) =>
+            `<button type="button" class="seg3-btn ${this._labelMode === v ? "active" : ""}" data-mode="${v}" title="${lbl}">${icon}<span class="seg3-lbl">${lbl}</span></button>`)
           .join("")}
-      </select>`;
+      </div>`;
 
     return `
       <div class="header">
@@ -2591,17 +2656,16 @@ class MillesimeCard extends HTMLElement {
           <div class="header-actions">
             <div class="ha-icons">
               ${viewSel}
-              <button class="btn-icon" id="btn-search"  title="Rechercher une bouteille">🔍</button>
               <button class="btn-icon" id="btn-journal" title="Journal de dégustation">📓</button>
               <button class="btn-icon" id="btn-options" title="Options" aria-label="Options">⚙️</button>
             </div>
+            <button class="btn-secondary" id="btn-add-rack" title="Ajouter un casier">➕ Casier</button>
             <button class="btn-primary" id="btn-add-bottle">+ Vin</button>
           </div>
         </div>
       </div>
       <div class="header-options ${this._optionsOpen ? "open" : ""}" id="header-options">
         <div class="opt-row">
-          <button class="opt-btn opt-btn-accent" id="btn-add-rack" title="Ajouter un casier">➕ Ajouter un casier</button>
           <button class="opt-btn" id="btn-import"  title="Importer millesime_import_vinotag.csv">📥 Importer des données</button>
           <button class="opt-btn" id="btn-refresh" title="Compléter les fiches via Gemini + fusionner les doublons">♻️ Compléter les fiches</button>
           <button class="opt-btn" id="btn-sensors" title="Choisir les capteurs température et hygrométrie">🌡️ Capteurs T° / humidité</button>
@@ -2632,22 +2696,20 @@ class MillesimeCard extends HTMLElement {
     const humid = this._sensorVal(cellar.humid_entity);
 
     const tempBox = `
-      <div class="env-box ${cellar.temp_entity ? "env-clickable" : "env-empty"}" id="env-temp">
-        <span class="env-value">${temp ? `${temp.value}${temp.unit || "°"}` : "—"}</span>
-        <span class="env-label">🌡️ Température</span>
+      <div class="env-box ${cellar.temp_entity ? "env-clickable" : "env-empty"}" id="env-temp" title="Température">
+        <span class="env-value">🌡️ ${temp ? `${temp.value}${temp.unit || "°"}` : "—"}</span>
       </div>`;
     const humidBox = `
-      <div class="env-box ${cellar.humid_entity ? "env-clickable" : "env-empty"}" id="env-humid">
-        <span class="env-value">${humid ? `${humid.value}${humid.unit || "%"}` : "—"}</span>
-        <span class="env-label">💧 Hygrométrie</span>
+      <div class="env-box ${cellar.humid_entity ? "env-clickable" : "env-empty"}" id="env-humid" title="Hygrométrie">
+        <span class="env-value">💧 ${humid ? `${humid.value}${humid.unit || "%"}` : "—"}</span>
       </div>`;
 
     return `
       <div class="env-row">
         ${tempBox}
         ${humidBox}
-        <button class="env-filter-toggle ${this._filtersOpen ? "open" : ""}" id="btn-filters-toggle" title="Filtres">
-          <span>⚲</span>
+        <button class="env-filter-toggle ${this._filtersOpen ? "open" : ""}" id="btn-filters-toggle" title="Filtres par type et occasion">
+          <svg class="cork-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 2v3M10.5 5h3M11 8c-1 1-1 2 0 3s1 2 0 3 1 2 0 3M13 8c1 1 1 2 0 3s-1 2 0 3-1 2 0 3M12 20v2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="cork-label">Occasion</span>
         </button>
       </div>
       <div class="filters-collapse ${this._filtersOpen ? "open" : ""}" id="filters-collapse">
@@ -4037,13 +4099,16 @@ class MillesimeCard extends HTMLElement {
       if (el) el.classList.toggle("open", this._optionsOpen);
       if (logo) logo.classList.toggle("active", this._optionsOpen);
     });
-    s.getElementById("sel-labelmode")?.addEventListener("change", (e) => {
-      this._labelMode = e.target.value;
-      try { localStorage.setItem("millesime-labelmode", this._labelMode); } catch (err) {}
-      if (this._view === "3d") this._render();   // re-rendu pour appliquer aux repères 3D
-    });
+    // Sélecteur segmenté 3 positions des repères 3D
+    s.querySelectorAll("#seg-labelmode .seg3-btn").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        this._labelMode = btn.dataset.mode;
+        try { localStorage.setItem("millesime-labelmode", this._labelMode); } catch (err) {}
+        s.querySelectorAll("#seg-labelmode .seg3-btn").forEach(b => b.classList.toggle("active", b === btn));
+        if (this._view === "3d") this._render();
+      })
+    );
     s.getElementById("btn-bottlelist")?.addEventListener("click", () => this._openModal("bottlelist"));
-    s.getElementById("btn-search")?.addEventListener("click",  () => this._openModal("search"));
     s.getElementById("btn-journal")?.addEventListener("click", () => this._openModal("journal"));
     s.getElementById("btn-import")?.addEventListener("click", async () => {
       const ok = await this._confirm(
@@ -4317,6 +4382,16 @@ const CARD_CSS = `<style>
   flex:1; padding:7px 9px; border-radius:8px; border:1px solid var(--border);
   background:var(--bg-2); color:var(--cream); font-size:0.78em; cursor:pointer;
 }
+.seg3 { display:flex; flex:1; min-width:0; border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--bg-2); }
+.seg3-btn {
+  flex:1; min-width:0; display:flex; align-items:center; justify-content:center; gap:4px;
+  padding:7px 4px; border:none; background:transparent; color:var(--muted);
+  font-size:0.78em; cursor:pointer; transition:all 0.13s; border-right:1px solid var(--border);
+}
+.seg3-btn:last-child { border-right:none; }
+.seg3-btn:hover { background:var(--bg-3); color:var(--cream); }
+.seg3-btn.active { background:var(--accent); color:#fff; font-weight:600; }
+.seg3-lbl { font-size:0.86em; }
 .header-glass.active { filter:drop-shadow(0 0 11px rgba(192,57,43,1)); transform:scale(1.08); }
 
 .mm-empty-hint { text-align:center; color:var(--muted); padding:24px 0; font-size:0.85em; }
@@ -4346,25 +4421,31 @@ const CARD_CSS = `<style>
 .view-select:hover { background:var(--bg-3); }
 
 .env-row {
-  display:flex; gap:10px; align-items:stretch; padding:8px 14px;
+  display:flex; gap:8px; align-items:stretch; padding:7px 14px;
   background:var(--bg-1); border-bottom:1px solid var(--border);
 }
 .env-box {
-  flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
-  padding:6px 8px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border);
+  flex:1; display:flex; align-items:center; justify-content:center;
+  padding:5px 8px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border);
 }
-.env-value { font-size:1.08em; font-weight:700; color:var(--cream); font-family:var(--font-serif); line-height:1.1; }
-.env-label { font-size:0.56em; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-top:3px; }
+.env-value { font-size:0.94em; font-weight:700; color:var(--cream); font-family:var(--font-serif); line-height:1; white-space:nowrap; }
 .env-clickable { cursor:pointer; transition:all 0.15s; }
 .env-clickable:hover { background:var(--bg-3); border-color:var(--header-accent,var(--red)); }
 .env-clickable:active { transform:scale(0.97); }
 .env-empty { opacity:0.5; }
 .env-filter-toggle {
-  flex:0 0 auto; width:42px; display:flex; align-items:center; justify-content:center;
+  flex:0 0 auto; display:flex; align-items:center; gap:5px; padding:5px 11px;
   background:var(--bg-2); border:1px solid var(--border); border-radius:8px; cursor:pointer;
-  color:var(--muted); font-size:1.1em; transition:all 0.15s;
+  color:var(--muted); transition:all 0.15s;
+}
+.env-filter-toggle .cork-icon { flex-shrink:0; }
+.env-filter-toggle .cork-label {
+  font-size:0.76em; font-weight:600; max-width:0; overflow:hidden; white-space:nowrap;
+  opacity:0; transition:max-width 0.22s ease, opacity 0.18s ease;
 }
 .env-filter-toggle:hover { background:var(--bg-3); color:var(--cream); }
+.env-filter-toggle:hover .cork-label,
+.env-filter-toggle.open .cork-label { max-width:70px; opacity:1; }
 .env-filter-toggle.open { background:var(--accent); color:#fff; border-color:var(--accent); }
 .filters-collapse {
   display:grid; grid-template-columns:1fr 1fr; gap:10px;
@@ -4420,6 +4501,11 @@ const CARD_CSS = `<style>
 .dot--filled { filter:drop-shadow(0 2px 4px var(--dot-glow,rgba(192,57,43,0.35))); }
 .dot--filled:hover { transform:scale(1.12) translateY(-2px); filter:drop-shadow(0 4px 8px var(--dot-glow,rgba(192,57,43,0.6))); }
 .dot--selected { filter:drop-shadow(0 0 5px var(--gold)) drop-shadow(0 2px 5px var(--dot-glow,rgba(192,57,43,0.4))); transform:scale(1.1); }
+@keyframes bottle-flash {
+  0%, 100% { filter:drop-shadow(0 0 4px var(--gold)); }
+  50% { filter:drop-shadow(0 0 14px var(--gold)) drop-shadow(0 0 22px var(--gold)); }
+}
+.bottle-flash { animation:bottle-flash 0.5s ease-in-out 4; z-index:5; }
 .dot--alt { transform:rotate(180deg); }
 .dot--alt:hover { transform:rotate(180deg) scale(1.12) translateY(2px); }
 .dot--alt.dot--selected { transform:rotate(180deg) scale(1.1); }
@@ -4585,6 +4671,14 @@ const MODAL_CSS = `
 }
 .env-range-btn:hover { color:var(--mm-text); }
 .env-range-btn.active { background:var(--mm-accent); color:#fff; border-color:var(--mm-accent); }
+.vlist-search-wrap { padding:10px 20px 0; }
+.vlist-search {
+  width:100%; box-sizing:border-box; padding:9px 12px; border-radius:9px;
+  border:1px solid var(--mm-border); background:var(--mm-bg2); color:var(--mm-text);
+  font-size:0.92em; font-family:var(--font-sans,Inter,sans-serif); outline:none;
+}
+.vlist-search:focus { border-color:var(--mm-accent); }
+.vlist-search::placeholder { color:var(--mm-muted); }
 /* Description sous les menus (disposition, orientation) : petit, gris clair, italique */
 .mm-hint { font-size:0.74em; font-style:italic; color:#c8c8c8; margin-top:7px; line-height:1.4; }
 .mm-header {
