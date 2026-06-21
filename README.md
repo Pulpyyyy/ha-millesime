@@ -1,7 +1,7 @@
 # 🍷 Millésime — Cave à vin pour Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-6.3.3-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
+[![version](https://img.shields.io/badge/version-6.3.4-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
 [![Offrir un verre de vin](https://img.shields.io/badge/🍷_Offrir_un_verre_de_vin-PayPal-7B1D2E.svg?style=flat-square)](https://paypal.me/Redsklns)
 
 **Millésime** transforme Home Assistant en gestionnaire de cave à vin complet : visualisez vos bouteilles dans une scène **3D réaliste**, scannez les étiquettes par **photo**, suivez la valeur de votre collection et tenez un **journal de dégustation**.
@@ -99,6 +99,17 @@ L'intégralité de Millésime a été conçue et développée en collaboration a
 ---
 
 ## 📝 Changelog
+
+### [6.3.4] — 2026-06
+Affinages d'interface et suivi des cadeaux.
+
+- **En-tête** : l'icône du journal de dégustation passe en bas à droite, sous le bouton options ; les trois premières colonnes des deux rangées sont désormais alignées et de taille identique
+- **Recherche d'une bouteille** : la mise en surbrillance conserve la vue en cours (la vue 3D n'est plus forcée vers la 2D)
+- **Icône tire-bouchon** colorée (manche bois, mèche métallique)
+- **Compléter les fiches** : une barre affiche la progression en pourcentage pendant la mise à jour
+- **Ligne température / hygrométrie / à ouvrir** : les trois boutons ont une taille harmonisée
+- **Bouton « À ouvrir »** : ouvre désormais une fenêtre dédiée (comme la liste des bouteilles) ; on y choisit une occasion, la fenêtre se ferme et les bouteilles concernées s'affichent en surbrillance
+- **Nouvelle occasion « Cadeau »** : lorsqu'elle est sélectionnée, un champ « De la part de » permet de noter qui a offert la bouteille (avec suggestions des noms déjà saisis) ; l'information apparaît sur la fiche du vin
 
 ### [6.3.3] — 2026-06
 Réorganisation de l'en-tête et filtres par occasion.
