@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.3.3
+ * Millésime Card v6.3.4
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.3.3";
+const MILLESIME_CARD_VERSION = "6.3.4";
 
 const DOMAIN = "millesime";
 
@@ -26,6 +26,7 @@ const EVENT_TYPES = [
   { v: "special",       l: "Grande occasion",  emoji: "🎉" },
   { v: "small_occasion",l: "Petite Occasion",   emoji: "🥂" },
   { v: "table",         l: "Vin de table",     emoji: "🍽️" },
+  { v: "gift",          l: "Cadeau",           emoji: "🎁" },
 ];
 const EVENT_LABEL = Object.fromEntries(EVENT_TYPES.map(e => [e.v, e]));
 
@@ -328,12 +329,13 @@ const GLASS_SVG = `<svg viewBox="0 0 40 56" xmlns="http://www.w3.org/2000/svg">
   <ellipse cx="20" cy="48" rx="8" ry="2.2" fill="#6E2118"/>
 </svg>`;
 
-// Icône tire-bouchon (manche + mèche en spirale) pour le bouton « À ouvrir »
-const CORKSCREW_SVG = `<svg class="cork-icon" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="7" y="2" width="10" height="3.2" rx="1.4" fill="currentColor" stroke="none"/>
-  <line x1="12" y1="5.2" x2="12" y2="9"/>
-  <path d="M12 9c2.2 0 2.2 2 0 2s-2.2 2 0 2 2.2 2 0 2 -2.2 2 0 2 2.2 2 0 2"/>
-  <path d="M12 22.5l-1.4-2h2.8z" fill="currentColor" stroke="none"/>
+// Icône tire-bouchon colorée (manche bois + spirale métal) pour le bouton « À ouvrir »
+const CORKSCREW_SVG = `<svg class="cork-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="6.5" y="2" width="11" height="3.4" rx="1.5" fill="#8B5A2B" stroke="#6b4420" stroke-width="0.6"/>
+  <rect x="7.2" y="2.5" width="3" height="2.4" rx="0.8" fill="#A6713A"/>
+  <line x1="12" y1="5.4" x2="12" y2="9" stroke="#B8B8C0" stroke-width="1.7"/>
+  <path d="M12 9c2.3 0 2.3 2 0 2s-2.3 2 0 2 2.3 2 0 2 -2.3 2 0 2 2.3 2 0 2" stroke="#C9CAD2" stroke-width="1.6"/>
+  <path d="M12 22.6l-1.5-2.2h3z" fill="#9A9BA4"/>
 </svg>`;
 
 // ── Classe principale ──────────────────────────────────────────────────────────
@@ -528,6 +530,30 @@ class MillesimeCard extends HTMLElement {
     this._hass.connection
       .subscribeEvents(() => this._fetchData(), `${DOMAIN}_updated`)
       .then((u) => { if (this.isConnected) this._unsubs.push(u); else u(); });
+    // Progression du rafraîchissement des fiches (pourcentage)
+    this._hass.connection
+      .subscribeEvents((ev) => this._onRefreshProgress(ev.data || {}), `${DOMAIN}_refresh_progress`)
+      .then((u) => { if (this.isConnected) this._unsubs.push(u); else u(); });
+  }
+
+  _onRefreshProgress(data) {
+    const { done = 0, total = 0, finished = false } = data;
+    if (!total) return;
+    const pct = Math.round((done / total) * 100);
+    let bar = this.shadowRoot.getElementById("refresh-progress");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "refresh-progress";
+      bar.className = "refresh-progress";
+      bar.innerHTML = `<div class="rp-label"></div><div class="rp-track"><div class="rp-fill"></div></div>`;
+      this.shadowRoot.appendChild(bar);
+    }
+    bar.querySelector(".rp-label").textContent = `♻️ Complétion des fiches… ${done}/${total} (${pct} %)`;
+    bar.querySelector(".rp-fill").style.width = `${pct}%`;
+    if (finished) {
+      bar.querySelector(".rp-label").textContent = `✓ Fiches complétées (${total})`;
+      setTimeout(() => bar.remove(), 2500);
+    }
   }
 
   async _callService(service, data) {
@@ -727,6 +753,7 @@ class MillesimeCard extends HTMLElement {
     if (type === "journal")   box.innerHTML = this._journalHTML();
     if (type === "search")    box.innerHTML = this._searchModalHTML();
     if (type === "bottlelist") box.innerHTML = this._bottleListHTML();
+    if (type === "openpage")  box.innerHTML = this._openPageHTML();
     if (type === "moverack") box.innerHTML = this._moveRackHTML(opts.rack);
     if (type === "sensors")   box.innerHTML = this._sensorsHTML();
     if (type === "envhistory") box.innerHTML = this._envHistoryHTML(opts.entity, opts.kind);
@@ -750,6 +777,7 @@ class MillesimeCard extends HTMLElement {
     if (type === "journal")   this._bindJournal(box);
     if (type === "search")    this._bindSearchModal(box);
     if (type === "bottlelist") this._bindBottleList(box);
+    if (type === "openpage")  this._bindOpenPage(box);
     if (type === "moverack") this._bindMoveRack(box, opts.rack);
     if (type === "sensors")   this._bindSensors(box);
     if (type === "envhistory") this._bindEnvHistory(box, opts.entity, opts.kind);
@@ -1047,6 +1075,14 @@ class MillesimeCard extends HTMLElement {
             </select>
           </div>
         </div>
+        <div class="mm-field" id="bt-gift-field" style="${(b.event === "gift") ? "" : "display:none"}">
+          <label class="mm-label">🎁 De la part de</label>
+          <input class="mm-input" id="bt-gifted-by" list="bt-donors" autocomplete="off"
+            value="${esc(b.gifted_by || "")}" placeholder="Qui vous a offert cette bouteille ?">
+          <datalist id="bt-donors">
+            ${this._donorSuggestions().map(n => `<option value="${esc(n)}"></option>`).join("")}
+          </datalist>
+        </div>
 
         <div class="mm-field">
           <label class="mm-label">Notes personnelles</label>
@@ -1078,6 +1114,13 @@ class MillesimeCard extends HTMLElement {
     const banner   = box.querySelector("#search-banner");
     const btnPhoto = box.querySelector("#btn-photo");
     const fileInput= box.querySelector("#photo-input");
+
+    // Champ « De la part de » visible uniquement si l'événement = Cadeau
+    const evSel = box.querySelector("#bt-event");
+    const giftField = box.querySelector("#bt-gift-field");
+    evSel?.addEventListener("change", () => {
+      if (giftField) giftField.style.display = evSel.value === "gift" ? "" : "none";
+    });
 
     // ── Auto-remplissage depuis un résultat ──────────────────────────────────
     const fillFrom = (w) => {
@@ -1290,6 +1333,7 @@ class MillesimeCard extends HTMLElement {
         food_pairing:  txt("bt-pairing"),
         vivino_rating: num("bt-vrating"),
         event:         box.querySelector("#bt-event")?.value || "",
+        gifted_by:     box.querySelector("#bt-gifted-by")?.value?.trim() || "",
         image_url:     txt("bt-image_url"),
         vivino_url:    txt("bt-vivino_url"),
       };
@@ -1472,6 +1516,8 @@ class MillesimeCard extends HTMLElement {
                                 ? (b.drink_from || "?") + " — " + (b.drink_until || "?") : "")}
           ${_drow("Ajouté le",  b.added_date || "")}
           ${b.event && EVENT_LABEL[b.event]?.l ? _drow("Événement", EVENT_LABEL[b.event].emoji + " " + EVENT_LABEL[b.event].l) : ""}
+          ${b.gifted_by ? _drow("De la part de", "🎁 " + b.gifted_by) : ""}
+          ${b.event === "gift" && b.gifted_by ? _drow("De la part de", "🎁 " + esc(b.gifted_by)) : ""}
         </div>
         ${b.tasting_notes ? `<div class="mm-notes mm-tasting">🍷 ${esc(b.tasting_notes)}</div>` : ""}
         ${b.food_pairing  ? `<div class="mm-notes mm-pairing">🍽️ ${esc(b.food_pairing)}</div>`  : ""}
@@ -1982,19 +2028,14 @@ class MillesimeCard extends HTMLElement {
     }
   }
 
-  // Ferme la liste, sélectionne le vin, bascule en vue 2D et défile jusqu'à la bouteille
+  // Ferme la liste, sélectionne le vin et met la bouteille en surbrillance
+  // dans la vue ACTUELLE (3D, pastilles ou 2D — sans forcer de changement de vue)
   _locateBottle(wine) {
     const slot = (wine.slots || [])[0];
     this._closeModal();
     this._selected = wine.id;
-    // La surbrillance (halo) est fiable en vue 2D → on y bascule
-    if (this._view !== "2d") {
-      this._view = "2d";
-      this._viewTouched = true;
-      try { localStorage.setItem("millesime-view", this._view); } catch (err) {}
-    }
     this._render();
-    // Défilement vers la bouteille après le rendu
+    // Défilement vers la bouteille (utile en 2D / pastilles ; en 3D le halo suffit)
     setTimeout(() => {
       const sel = slot
         ? this.shadowRoot.querySelector(`[data-wine-id="${wine.id}"][data-rack-id="${slot.rack_id}"]`)
@@ -2664,12 +2705,10 @@ class MillesimeCard extends HTMLElement {
             <button class="btn-icon btn-options-top" id="btn-options" title="Options" aria-label="Options">⚙️</button>
           </div>
           <div class="header-actions">
-            <div class="ha-icons">
-              ${viewSel}
-              <button class="btn-icon" id="btn-journal" title="Journal de dégustation">📓</button>
-            </div>
+            ${viewSel}
             <button class="btn-rack" id="btn-add-rack" title="Ajouter un casier">➕ Casier</button>
             <button class="btn-primary" id="btn-add-bottle">+ Vin</button>
+            <button class="btn-icon btn-journal-top" id="btn-journal" title="Journal de dégustation">📓</button>
           </div>
         </div>
       </div>
@@ -2684,6 +2723,16 @@ class MillesimeCard extends HTMLElement {
           </div>
         </div>
       </div>`;
+  }
+
+  _donorSuggestions() {
+    // Noms de donateurs déjà saisis (champ « De la part de »), pour l'autocomplétion
+    const set = new Set();
+    for (const w of (this._data?.wines || [])) {
+      const g = (w.gifted_by || "").trim();
+      if (g) set.add(g);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
   }
 
   _sensorVal(entityId) {
@@ -2703,31 +2752,37 @@ class MillesimeCard extends HTMLElement {
     const cellar = this._data?.cellar || {};
     const temp = this._sensorVal(cellar.temp_entity);
     const humid = this._sensorVal(cellar.humid_entity);
-    const tab = this._filterTab || "occasions";
-
-    const tempBox = `
-      <div class="env-box ${cellar.temp_entity ? "env-clickable" : "env-empty"}" id="env-temp" title="Température">
-        <span class="env-value">🌡️ ${temp ? `${temp.value}${temp.unit || "°"}` : "—"}</span>
-      </div>`;
-    const humidBox = `
-      <div class="env-box ${cellar.humid_entity ? "env-clickable" : "env-empty"}" id="env-humid" title="Hygrométrie">
-        <span class="env-value">💧 ${humid ? `${humid.value}${humid.unit || "%"}` : "—"}</span>
-      </div>`;
-
-    // Onglet Occasions : un bouton par événement (sélection unique) → surbrillance cave
-    const occBtns = EVENT_TYPES.filter(e => e.v).map(e =>
-      `<button class="occ-btn ${this._occasionFilter === e.v ? "active" : ""}" data-occ="${e.v}">${e.emoji} ${e.l}</button>`
-    ).join("");
+    const occActive = !!this._occasionFilter;
+    const occLabel = occActive
+      ? esc((EVENT_TYPES.find(e => e.v === this._occasionFilter) || {}).l || "À ouvrir")
+      : "À ouvrir…";
 
     return `
       <div class="env-row">
-        ${tempBox}
-        ${humidBox}
-        <button class="env-filter-toggle ${this._filtersOpen ? "open" : ""}" id="btn-filters-toggle" title="À ouvrir : filtrer par occasion">
-          ${CORKSCREW_SVG}<span class="cork-label">À ouvrir…</span>
+        <div class="env-box ${cellar.temp_entity ? "env-clickable" : "env-empty"}" id="env-temp" title="Température">
+          <span class="env-value">🌡️ ${temp ? `${temp.value}${temp.unit || "°"}` : "—"}</span>
+        </div>
+        <div class="env-box ${cellar.humid_entity ? "env-clickable" : "env-empty"}" id="env-humid" title="Hygrométrie">
+          <span class="env-value">💧 ${humid ? `${humid.value}${humid.unit || "%"}` : "—"}</span>
+        </div>
+        <button class="env-box env-clickable env-open ${occActive ? "env-open-active" : ""}" id="btn-open-page" title="À ouvrir : filtrer par occasion">
+          ${CORKSCREW_SVG}<span class="env-open-label">${occLabel}</span>
         </button>
+      </div>`;
+  }
+
+  // Page "À ouvrir" : sous-menu 3 onglets dans un modal (comme la liste des bouteilles)
+  _openPageHTML() {
+    const tab = this._filterTab || "occasions";
+    const occBtns = EVENT_TYPES.filter(e => e.v).map(e =>
+      `<button class="occ-btn ${this._occasionFilter === e.v ? "active" : ""}" data-occ="${e.v}">${e.emoji} ${e.l}</button>`
+    ).join("");
+    return `
+      <div class="mm-header">
+        <span class="mm-title">🍷 À ouvrir</span>
+        <button class="mm-close" data-close>✕</button>
       </div>
-      <div class="filters-collapse ${this._filtersOpen ? "open" : ""}" id="filters-collapse">
+      <div class="mm-body">
         <div class="sub-tabs">
           <button class="sub-tab ${tab === "accords" ? "active" : ""}" data-tab="accords">🍽️ Accords mets/vin</button>
           <button class="sub-tab ${tab === "apogee" ? "active" : ""}" data-tab="apogee">🕐 Apogée</button>
@@ -2740,13 +2795,36 @@ class MillesimeCard extends HTMLElement {
           <div class="sub-soon">🕐 Apogée — bientôt disponible</div>
         </div>
         <div class="sub-panel ${tab === "occasions" ? "active" : ""}" data-panel="occasions">
-          <div class="occ-hint">Sélectionnez une occasion pour mettre les bouteilles en surbrillance dans la cave :</div>
+          <div class="occ-hint">Choisissez une occasion : la fenêtre se ferme et les bouteilles concernées s'affichent en surbrillance dans la cave.</div>
           <div class="occ-btns">
             <button class="occ-btn ${!this._occasionFilter ? "active" : ""}" data-occ="">Tout afficher</button>
             ${occBtns}
           </div>
         </div>
       </div>`;
+  }
+
+  _bindOpenPage(box) {
+    box.querySelectorAll(".sub-tab").forEach((t) =>
+      t.addEventListener("click", () => {
+        this._filterTab = t.dataset.tab;
+        box.querySelectorAll(".sub-tab").forEach(x => x.classList.toggle("active", x === t));
+        box.querySelectorAll(".sub-panel").forEach(p =>
+          p.classList.toggle("active", p.dataset.panel === this._filterTab));
+      })
+    );
+    // Occasion : sélection unique → ferme la page + surbrillance dans la cave
+    box.querySelectorAll(".occ-btn").forEach((b) =>
+      b.addEventListener("click", () => {
+        this._occasionFilter = b.dataset.occ || "";
+        this._closeModal();
+        this._render();
+        if (this._occasionFilter) {
+          const lbl = (EVENT_TYPES.find(e => e.v === this._occasionFilter) || {}).l || "";
+          this._showToast("info", `Surbrillance : ${lbl}`);
+        }
+      })
+    );
   }
 
   _renderEmpty() {
@@ -4074,34 +4152,10 @@ class MillesimeCard extends HTMLElement {
   _bindCardListeners(data, wines) {
     const s = this.shadowRoot;
 
-    // Filtres par type et événement (selects)
-    // Sous-menu : onglets (Accords / Apogée / Occasions)
-    s.querySelectorAll(".sub-tab").forEach((t) =>
-      t.addEventListener("click", () => {
-        this._filterTab = t.dataset.tab;
-        s.querySelectorAll(".sub-tab").forEach(x => x.classList.toggle("active", x === t));
-        s.querySelectorAll(".sub-panel").forEach(p =>
-          p.classList.toggle("active", p.dataset.panel === this._filterTab));
-      })
-    );
-    // Occasions : sélection unique → surbrillance des bouteilles concernées dans la cave
-    s.querySelectorAll(".occ-btn").forEach((b) =>
-      b.addEventListener("click", () => {
-        this._occasionFilter = b.dataset.occ || "";
-        this._render();
-      })
-    );
-
     s.getElementById("btn-history")?.addEventListener("click", () => this._openModal("history"));
 
-    // Zones environnement : repli des filtres + clic vers l'historique du capteur
-    s.getElementById("btn-filters-toggle")?.addEventListener("click", () => {
-      this._filtersOpen = !this._filtersOpen;
-      const c = this.shadowRoot.getElementById("filters-collapse");
-      const b = this.shadowRoot.getElementById("btn-filters-toggle");
-      if (c) c.classList.toggle("open", this._filtersOpen);
-      if (b) b.classList.toggle("open", this._filtersOpen);
-    });
+    // Bouton « À ouvrir » → ouvre la page modale de sélection d'occasion
+    s.getElementById("btn-open-page")?.addEventListener("click", () => this._openModal("openpage"));
     s.getElementById("env-temp")?.addEventListener("click", () => {
       const ent = this._data?.cellar?.temp_entity;
       if (ent) this._openModal("envhistory", { entity: ent, kind: "temperature" });
@@ -4155,9 +4209,8 @@ class MillesimeCard extends HTMLElement {
         { checkbox: "💰 Mettre à jour les prix (prix moyen constaté par Gemini)" }
       );
       if (!res) return;
-      this._showToast("info", "Rafraîchissement lancé — la cave se mettra à jour à la fin…");
-      if (await this._callService("refresh_wines", { update_prices: !!res.checked }))
-        this._showToast("success", "Fiches rafraîchies ✓");
+      this._showToast("info", "Rafraîchissement lancé — suivez la progression en bas…");
+      await this._callService("refresh_wines", { update_prices: !!res.checked });
     });
     s.getElementById("btn-add-rack")?.addEventListener("click",   () => this._openModal("rack"));
     s.getElementById("btn-sensors")?.addEventListener("click",    () => this._openModal("sensors"));
@@ -4314,7 +4367,7 @@ function _drow(label, value) {
 
 const CARD_CSS = `<style>
 :host {
-  display: block; font-size: var(--fs-base, 13px);
+  display: block; position: relative; font-size: var(--fs-base, 13px);
   --red:#C0392B; --red-h:#E74C3C; --gold:#C9A84C;
   --accent: var(--primary-color, #C0392B);
   --accent-h: var(--secondary-color, #E74C3C);
@@ -4363,11 +4416,10 @@ const CARD_CSS = `<style>
 .header-tagline { font-size:0.54em; color:var(--red); text-transform:uppercase; letter-spacing:1.5px; margin-top:1px; }
 /* Colonne droite : stats en haut, boutons en dessous */
 .header-right { display:flex; flex-direction:column; gap:7px; flex:1; min-width:0; }
-/* Stats (4 cellules : 3 indicateurs + bouton options) */
-.header-stats   { display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:5px; align-items:stretch; }
-.header-actions { display:grid; grid-template-columns:repeat(4, 1fr); gap:5px; align-items:stretch; }
-.header-actions .ha-icons { display:contents; }
-.btn-options-top { width:38px; height:auto; align-self:stretch; display:flex; align-items:center; justify-content:center; font-size:1.05em; }
+/* Stats et actions : MÊME grille (3 colonnes égales + colonne icône à droite) → alignement parfait */
+.header-stats   { display:grid; grid-template-columns:1fr 1fr 1fr 40px; gap:5px; align-items:stretch; }
+.header-actions { display:grid; grid-template-columns:1fr 1fr 1fr 40px; gap:5px; align-items:stretch; }
+.btn-options-top, .btn-journal-top { width:40px; height:auto; align-self:stretch; display:flex; align-items:center; justify-content:center; font-size:1.05em; }
 .stat { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:5px 6px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border); }
 .stat-value { font-size:1.08em; font-weight:700; color:var(--cream); font-family:var(--font-serif); line-height:1; }
 .stat-label { font-size:0.54em; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-top:2px; }
@@ -4383,7 +4435,7 @@ const CARD_CSS = `<style>
   transition:filter 0.15s;
 }
 .btn-rack:hover { filter:brightness(1.1); }
-/* La rangée d'icônes (vue + 📓) */
+/* Boutons de la rangée actions (vue + casier + vin) */
 .header-actions .btn-icon, .header-actions .view-select, .header-actions .btn-primary {
   height:38px; box-sizing:border-box; width:100%; min-width:0;
 }
@@ -4460,52 +4512,21 @@ const CARD_CSS = `<style>
   background:var(--bg-1); border-bottom:1px solid var(--border);
 }
 .env-box {
-  flex:1; display:flex; align-items:center; justify-content:center;
-  padding:5px 8px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border);
+  flex:1; display:flex; align-items:center; justify-content:center; gap:5px;
+  padding:7px 8px; min-height:34px; box-sizing:border-box;
+  background:var(--bg-2); border-radius:8px; border:1px solid var(--border);
 }
-.env-value { font-size:0.94em; font-weight:700; color:var(--cream); font-family:var(--font-serif); line-height:1; white-space:nowrap; }
+.env-value { font-size:0.92em; font-weight:700; color:var(--cream); font-family:var(--font-serif); line-height:1; white-space:nowrap; }
 .env-clickable { cursor:pointer; transition:all 0.15s; }
 .env-clickable:hover { background:var(--bg-3); border-color:var(--header-accent,var(--red)); }
 .env-clickable:active { transform:scale(0.97); }
 .env-empty { opacity:0.5; }
-.env-filter-toggle {
-  flex:0 0 auto; display:flex; align-items:center; gap:6px; padding:5px 12px;
-  background:var(--bg-2); border:1px solid var(--border); border-radius:8px; cursor:pointer;
-  color:var(--muted); transition:all 0.15s;
-}
-.env-filter-toggle .cork-icon { flex-shrink:0; }
-.env-filter-toggle .cork-label {
-  font-size:0.78em; font-weight:600; white-space:nowrap;
-}
-.env-filter-toggle:hover { background:var(--bg-3); color:var(--cream); }
-.env-filter-toggle.open { background:var(--accent); color:#fff; border-color:var(--accent); }
-.filters-collapse {
-  max-height:0; overflow:hidden; padding:0 14px;
-  background:var(--bg-1); transition:max-height 0.3s ease, padding 0.3s ease;
-}
-.filters-collapse.open { max-height:340px; padding:10px 14px 12px; border-bottom:1px solid var(--border); }
-/* Sous-onglets (Accords / Apogée / Occasions) */
-.sub-tabs { display:flex; gap:5px; margin-bottom:10px; }
-.sub-tab {
-  flex:1; padding:7px 4px; border-radius:7px; border:1px solid var(--border);
-  background:var(--bg-2); color:var(--muted); font-size:0.74em; font-weight:600;
-  cursor:pointer; transition:all 0.13s; white-space:nowrap;
-}
-.sub-tab:hover { background:var(--bg-3); color:var(--cream); }
-.sub-tab.active { background:var(--accent); color:#fff; border-color:var(--accent); }
-.sub-panel { display:none; }
-.sub-panel.active { display:block; animation:mm-fade 0.2s ease; }
-.sub-soon { text-align:center; padding:18px 8px; color:var(--muted); font-size:0.82em; font-style:italic; }
-.occ-hint { font-size:0.74em; color:var(--muted); margin-bottom:8px; }
-.occ-btns { display:flex; flex-wrap:wrap; gap:6px; }
-.occ-btn {
-  padding:6px 12px; border-radius:16px; border:1px solid var(--border);
-  background:var(--bg-2); color:var(--cream); font-size:0.78em; font-weight:500;
-  cursor:pointer; transition:all 0.13s;
-}
-.occ-btn:hover { background:var(--bg-3); border-color:var(--accent); }
-.occ-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
-@keyframes mm-fade { from { opacity:0; } to { opacity:1; } }
+/* Bouton « À ouvrir » (même gabarit que les zones T°/hygro) */
+.env-open { border:none; }
+.env-open .cork-icon { flex-shrink:0; }
+.env-open-label { font-size:0.84em; font-weight:600; color:var(--cream); white-space:nowrap; }
+.env-open-active { background:var(--accent); }
+.env-open-active .env-open-label { color:#fff; }
 .filters {
   display:flex; gap:10px; padding:8px 14px;
   background:var(--bg-1); border-bottom:1px solid var(--border);
@@ -4559,6 +4580,15 @@ const CARD_CSS = `<style>
   50% { filter:drop-shadow(0 0 14px var(--gold)) drop-shadow(0 0 22px var(--gold)); }
 }
 .bottle-flash { animation:bottle-flash 0.5s ease-in-out 4; z-index:5; }
+/* Barre de progression « Compléter les fiches » (en bas de la carte) */
+.refresh-progress {
+  position:absolute; left:12px; right:12px; bottom:12px; z-index:50;
+  background:var(--bg-2); border:1px solid var(--border); border-radius:10px;
+  padding:10px 12px; box-shadow:0 6px 20px rgba(0,0,0,0.4);
+}
+.rp-label { font-size:0.8em; color:var(--cream); margin-bottom:6px; font-weight:600; }
+.rp-track { height:7px; background:var(--bg-1); border-radius:4px; overflow:hidden; }
+.rp-fill { height:100%; width:0; background:linear-gradient(90deg,#2BA5C7,#1E88C7); border-radius:4px; transition:width 0.3s ease; }
 .dot--alt { transform:rotate(180deg); }
 .dot--alt:hover { transform:rotate(180deg) scale(1.12) translateY(2px); }
 .dot--alt.dot--selected { transform:rotate(180deg) scale(1.1); }
@@ -4732,6 +4762,27 @@ const MODAL_CSS = `
 }
 .vlist-search:focus { border-color:var(--mm-accent); }
 .vlist-search::placeholder { color:var(--mm-muted); }
+/* Page « À ouvrir » : sous-onglets + boutons occasion (dans le modal) */
+.sub-tabs { display:flex; gap:5px; margin-bottom:14px; }
+.sub-tab {
+  flex:1; padding:9px 4px; border-radius:8px; border:1px solid var(--mm-border);
+  background:var(--mm-bg2); color:var(--mm-muted); font-size:0.78em; font-weight:600;
+  cursor:pointer; transition:all 0.13s; white-space:nowrap;
+}
+.sub-tab:hover { color:var(--mm-text); }
+.sub-tab.active { background:var(--mm-accent); color:#fff; border-color:var(--mm-accent); }
+.sub-panel { display:none; }
+.sub-panel.active { display:block; }
+.sub-soon { text-align:center; padding:30px 8px; color:var(--mm-muted); font-size:0.9em; font-style:italic; }
+.occ-hint { font-size:0.82em; color:var(--mm-muted); margin-bottom:12px; line-height:1.4; }
+.occ-btns { display:flex; flex-wrap:wrap; gap:8px; }
+.occ-btn {
+  padding:10px 16px; border-radius:18px; border:1px solid var(--mm-border);
+  background:var(--mm-bg2); color:var(--mm-text); font-size:0.86em; font-weight:500;
+  cursor:pointer; transition:all 0.13s;
+}
+.occ-btn:hover { border-color:var(--mm-accent); }
+.occ-btn.active { background:var(--mm-accent); color:#fff; border-color:var(--mm-accent); }
 /* Description sous les menus (disposition, orientation) : petit, gris clair, italique */
 .mm-hint { font-size:0.74em; font-style:italic; color:#c8c8c8; margin-top:7px; line-height:1.4; }
 .mm-header {
