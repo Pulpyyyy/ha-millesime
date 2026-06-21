@@ -1,7 +1,7 @@
 # 🍷 Millésime — Cave à vin pour Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-6.3.2-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
+[![version](https://img.shields.io/badge/version-6.3.3-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
 [![Offrir un verre de vin](https://img.shields.io/badge/🍷_Offrir_un_verre_de_vin-PayPal-7B1D2E.svg?style=flat-square)](https://paypal.me/Redsklns)
 
 **Millésime** transforme Home Assistant en gestionnaire de cave à vin complet : visualisez vos bouteilles dans une scène **3D réaliste**, scannez les étiquettes par **photo**, suivez la valeur de votre collection et tenez un **journal de dégustation**.
@@ -99,6 +99,15 @@ L'intégralité de Millésime a été conçue et développée en collaboration a
 ---
 
 ## 📝 Changelog
+
+### [6.3.3] — 2026-06
+Réorganisation de l'en-tête et filtres par occasion.
+
+- **Bouton options** déplacé en haut à droite, à côté de l'indicateur de valeur
+- **Liste des vins** : suppression du nom de château répété (doublon avec le titre) dans la ligne d'informations
+- **Bouton « Casier »** affiché en bleu, distinct du bouton « + Vin »
+- **Bouton « À ouvrir… »** avec une véritable icône tire-bouchon
+- **Sous-menu à trois onglets** : Accords mets/vin, Apogée (à venir) et Occasions ; pour les occasions, une sélection met directement les bouteilles concernées en surbrillance dans la cave
 
 ### [6.3.2] — 2026-06
 Réorganisation de l'interface et clés Gemini.
