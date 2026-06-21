@@ -1,4 +1,4 @@
-"""Millésime v6.3.3 — Cave à Vin pour Home Assistant.
+"""Millésime v6.3.4 — Cave à Vin pour Home Assistant.
 
 Recherche texte : gemini-3.1-flash-lite (tier gratuit)
 Lecture photo   : gemini-3-flash (tier gratuit)
@@ -34,7 +34,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN    = "millesime"
 PLATFORMS = ["sensor"]
 DATA_FILE = "millesime_data.json"
-VERSION   = "6.3.3"
+VERSION   = "6.3.4"
 
 OFF_UA       = f"Millesime-HA/{VERSION} (github.com/Redsklns/ha-millesime)"
 # Deux modèles séparés = deux pools de quota indépendants (free tier)
@@ -1109,6 +1109,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "image_url":    call.data.get("image_url", ""),
             "vivino_url":   call.data.get("vivino_url", ""),
             "event":        call.data.get("event", ""),
+            "gifted_by":    call.data.get("gifted_by", ""),
             "size":         call.data.get("size") or "75cl",
             "favorite":     bool(call.data.get("favorite", False)),
             "added_date":   call.data.get("added_date") or datetime.now().strftime("%Y-%m-%d"),
@@ -1123,7 +1124,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "name", "vintage", "type", "appellation", "region", "producer",
             "country", "price", "drink_from", "drink_until", "notes",
             "tasting_notes", "food_pairing", "event", "vivino_rating",
-            "image_url", "vivino_url", "size", "favorite", "shape",
+            "image_url", "vivino_url", "size", "favorite", "shape", "gifted_by",
         ]
         for w in d["wines"]:
             if w["id"] == call.data["wine_id"]:
@@ -1458,7 +1459,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # constaté par Gemini — opt-in car elle écrase un prix déjà saisi
         update_prices = bool(call.data.get("update_prices", False))
         updated = 0
+        total = len(d["wines"])
+        done = 0
+        hass.bus.async_fire(f"{DOMAIN}_refresh_progress", {"done": 0, "total": total})
         for w in d["wines"]:
+            done += 1
+            hass.bus.async_fire(f"{DOMAIN}_refresh_progress", {"done": done, "total": total})
             if not update_prices and not any(not w.get(f) for f in FIELDS):
                 continue                        # fiche déjà complète
             query = " ".join(filter(None, [w.get("name", ""), str(w.get("vintage", ""))]))
@@ -1485,6 +1491,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if changed:
                 updated += 1
             await asyncio.sleep(0.3)            # ménage le quota Gemini
+        hass.bus.async_fire(f"{DOMAIN}_refresh_progress", {"done": total, "total": total, "finished": True})
         await _persist(d)
         _LOGGER.info("Millésime — refresh : %d doublon(s) fusionné(s), %d fiche(s) complétée(s)", merged, updated)
 
