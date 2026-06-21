@@ -1,7 +1,7 @@
 # 🍷 Millésime — Cave à vin pour Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-6.3.4-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
+[![version](https://img.shields.io/badge/version-6.3.5-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
 [![Offrir un verre de vin](https://img.shields.io/badge/🍷_Offrir_un_verre_de_vin-PayPal-7B1D2E.svg?style=flat-square)](https://paypal.me/Redsklns)
 
 **Millésime** transforme Home Assistant en gestionnaire de cave à vin complet : visualisez vos bouteilles dans une scène **3D réaliste**, scannez les étiquettes par **photo**, suivez la valeur de votre collection et tenez un **journal de dégustation**.
@@ -99,6 +99,13 @@ L'intégralité de Millésime a été conçue et développée en collaboration a
 ---
 
 ## 📝 Changelog
+
+### [6.3.5] — 2026-06
+Affinages d'interface.
+
+- **Liste des bouteilles** : apogée, occasion et quantité sont désormais alignés en colonnes verticales d'une ligne à l'autre, pour une lecture plus claire
+- **Compléter les fiches** : la barre de progression n'est plus collée en bas de l'écran ; elle s'affiche dans le menu options (qui s'ouvre automatiquement le temps de l'opération)
+- **Panneau d'informations** : au survol de la souris (ordinateur) ou par appui long (iPhone) sur une bouteille, un petit panneau détaillé apparaît (producteur, appellation, région, note, apogée, occasion, format, prix, quantité)
 
 ### [6.3.4] — 2026-06
 Affinages d'interface et suivi des cadeaux.
