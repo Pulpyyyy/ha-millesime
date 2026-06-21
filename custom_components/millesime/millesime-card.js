@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.3.2
+ * Millésime Card v6.3.3
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.3.2";
+const MILLESIME_CARD_VERSION = "6.3.3";
 
 const DOMAIN = "millesime";
 
@@ -328,6 +328,14 @@ const GLASS_SVG = `<svg viewBox="0 0 40 56" xmlns="http://www.w3.org/2000/svg">
   <ellipse cx="20" cy="48" rx="8" ry="2.2" fill="#6E2118"/>
 </svg>`;
 
+// Icône tire-bouchon (manche + mèche en spirale) pour le bouton « À ouvrir »
+const CORKSCREW_SVG = `<svg class="cork-icon" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="7" y="2" width="10" height="3.2" rx="1.4" fill="currentColor" stroke="none"/>
+  <line x1="12" y1="5.2" x2="12" y2="9"/>
+  <path d="M12 9c2.2 0 2.2 2 0 2s-2.2 2 0 2 2.2 2 0 2 -2.2 2 0 2 2.2 2 0 2"/>
+  <path d="M12 22.5l-1.4-2h2.8z" fill="currentColor" stroke="none"/>
+</svg>`;
+
 // ── Classe principale ──────────────────────────────────────────────────────────
 
 class MillesimeCard extends HTMLElement {
@@ -346,7 +354,9 @@ class MillesimeCard extends HTMLElement {
     this._view       = "2d";  // "2d" | "dot" | "3d"
     this._viewTouched = false; // l'utilisateur a basculé manuellement (prime sur default_view)
     this._optionsOpen = false; // ligne d'options repliable (sous le verre du logo)
-    this._filtersOpen = false; // sous-menu Type/Événement repliable
+    this._filtersOpen = false; // sous-menu repliable
+    this._filterTab = "occasions"; // onglet actif du sous-menu
+    this._occasionFilter = "";     // occasion sélectionnée (surbrillance cave)
     let lblMode = "both";
     try { lblMode = localStorage.getItem("millesime-labelmode") || "both"; } catch (e) {}
     this._labelMode = ["plate", "bubble", "both"].includes(lblMode) ? lblMode : "both"; // repères 3D
@@ -1894,7 +1904,6 @@ class MillesimeCard extends HTMLElement {
                   ? `${esc(w.drink_from || "?")}–${esc(w.drink_until || "?")}` : "";
                 const meta = [];
                 if (w.appellation) meta.push(`<span class="vm">📍 ${esc(w.appellation)}</span>`);
-                if (w.producer)    meta.push(`<span class="vm">🏭 ${esc(w.producer)}</span>`);
                 if (w.vivino_rating) meta.push(`<span class="vm">★ ${w.vivino_rating}</span>`);
                 if (apo)           meta.push(`<span class="vm">🕐 ${apo}</span>`);
                 if (w.event)       meta.push(`<span class="vm">📅 ${esc(fmtEvent(w.event))}</span>`);
@@ -2652,14 +2661,14 @@ class MillesimeCard extends HTMLElement {
             <div class="stat stat-clickable" id="btn-history" title="Évolution de la valeur de la cave">
               <span class="stat-value">${value > 0 ? Math.round(value) + "€" : "—"}</span><span class="stat-label">Valeur</span>
             </div>
+            <button class="btn-icon btn-options-top" id="btn-options" title="Options" aria-label="Options">⚙️</button>
           </div>
           <div class="header-actions">
             <div class="ha-icons">
               ${viewSel}
               <button class="btn-icon" id="btn-journal" title="Journal de dégustation">📓</button>
-              <button class="btn-icon" id="btn-options" title="Options" aria-label="Options">⚙️</button>
             </div>
-            <button class="btn-secondary" id="btn-add-rack" title="Ajouter un casier">➕ Casier</button>
+            <button class="btn-rack" id="btn-add-rack" title="Ajouter un casier">➕ Casier</button>
             <button class="btn-primary" id="btn-add-bottle">+ Vin</button>
           </div>
         </div>
@@ -2694,6 +2703,7 @@ class MillesimeCard extends HTMLElement {
     const cellar = this._data?.cellar || {};
     const temp = this._sensorVal(cellar.temp_entity);
     const humid = this._sensorVal(cellar.humid_entity);
+    const tab = this._filterTab || "occasions";
 
     const tempBox = `
       <div class="env-box ${cellar.temp_entity ? "env-clickable" : "env-empty"}" id="env-temp" title="Température">
@@ -2704,32 +2714,37 @@ class MillesimeCard extends HTMLElement {
         <span class="env-value">💧 ${humid ? `${humid.value}${humid.unit || "%"}` : "—"}</span>
       </div>`;
 
+    // Onglet Occasions : un bouton par événement (sélection unique) → surbrillance cave
+    const occBtns = EVENT_TYPES.filter(e => e.v).map(e =>
+      `<button class="occ-btn ${this._occasionFilter === e.v ? "active" : ""}" data-occ="${e.v}">${e.emoji} ${e.l}</button>`
+    ).join("");
+
     return `
       <div class="env-row">
         ${tempBox}
         ${humidBox}
-        <button class="env-filter-toggle ${this._filtersOpen ? "open" : ""}" id="btn-filters-toggle" title="Filtres par type et occasion">
-          <svg class="cork-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 2v3M10.5 5h3M11 8c-1 1-1 2 0 3s1 2 0 3 1 2 0 3M13 8c1 1 1 2 0 3s-1 2 0 3-1 2 0 3M12 20v2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="cork-label">Occasion</span>
+        <button class="env-filter-toggle ${this._filtersOpen ? "open" : ""}" id="btn-filters-toggle" title="À ouvrir : filtrer par occasion">
+          ${CORKSCREW_SVG}<span class="cork-label">À ouvrir…</span>
         </button>
       </div>
       <div class="filters-collapse ${this._filtersOpen ? "open" : ""}" id="filters-collapse">
-        <div class="filter-group">
-          <span class="filter-label">Type</span>
-          <select class="filter-select" id="sel-type">
-            <option value="all" ${this._filter === "all" ? "selected" : ""}>Tous les vins</option>
-            ${Object.entries(WINE_TYPES).map(([v, t]) =>
-              `<option value="${v}" ${this._filter === v ? "selected" : ""}>${t.emoji} ${t.label}</option>`
-            ).join("")}
-          </select>
+        <div class="sub-tabs">
+          <button class="sub-tab ${tab === "accords" ? "active" : ""}" data-tab="accords">🍽️ Accords mets/vin</button>
+          <button class="sub-tab ${tab === "apogee" ? "active" : ""}" data-tab="apogee">🕐 Apogée</button>
+          <button class="sub-tab ${tab === "occasions" ? "active" : ""}" data-tab="occasions">🥂 Occasions</button>
         </div>
-        <div class="filter-group">
-          <span class="filter-label">Événement</span>
-          <select class="filter-select" id="sel-event">
-            <option value="all" ${this._filterEvent === "all" ? "selected" : ""}>Tous</option>
-            ${EVENT_TYPES.filter(e => e.v).map(e =>
-              `<option value="${e.v}" ${this._filterEvent === e.v ? "selected" : ""}>${e.emoji} ${e.l}</option>`
-            ).join("")}
-          </select>
+        <div class="sub-panel ${tab === "accords" ? "active" : ""}" data-panel="accords">
+          <div class="sub-soon">🍽️ Accords mets / vin — bientôt disponible</div>
+        </div>
+        <div class="sub-panel ${tab === "apogee" ? "active" : ""}" data-panel="apogee">
+          <div class="sub-soon">🕐 Apogée — bientôt disponible</div>
+        </div>
+        <div class="sub-panel ${tab === "occasions" ? "active" : ""}" data-panel="occasions">
+          <div class="occ-hint">Sélectionnez une occasion pour mettre les bouteilles en surbrillance dans la cave :</div>
+          <div class="occ-btns">
+            <button class="occ-btn ${!this._occasionFilter ? "active" : ""}" data-occ="">Tout afficher</button>
+            ${occBtns}
+          </div>
         </div>
       </div>`;
   }
@@ -2779,7 +2794,8 @@ class MillesimeCard extends HTMLElement {
       const slotIdx = entry?.slotIdx ?? -1;
       const filteredType  = this._filter !== "all" && wine && wine.type !== this._filter;
       const filteredEvent = this._filterEvent !== "all" && wine && (wine.event || "") !== this._filterEvent;
-      const filtered = filteredType || filteredEvent;
+      const filteredOcc   = this._occasionFilter && wine && (wine.event || "") !== this._occasionFilter;
+      const filtered = filteredType || filteredEvent || filteredOcc;
       const wt  = wine ? WINE_TYPES[wine.type] || WINE_TYPES.red : null;
       const sel = wine && wine.id === this._selected;
       const shelf2d = Math.floor(i / cols);
@@ -3538,7 +3554,8 @@ class MillesimeCard extends HTMLElement {
           const tp = WINE_TYPES[wine.type] ? wine.type : "red";
           const filtered =
             (this._filter !== "all" && wine.type !== this._filter) ||
-            (this._filterEvent !== "all" && (wine.event || "") !== this._filterEvent);
+            (this._filterEvent !== "all" && (wine.event || "") !== this._filterEvent) ||
+            (this._occasionFilter && (wine.event || "") !== this._occasionFilter);
 
           const shapeKey = (wine.shape && geoByType[wine.shape]) ? wine.shape : tp;
           const set = geoByType[shapeKey] || geoByType[tp] || setBordeaux;
@@ -4058,14 +4075,22 @@ class MillesimeCard extends HTMLElement {
     const s = this.shadowRoot;
 
     // Filtres par type et événement (selects)
-    s.getElementById("sel-type")?.addEventListener("change", (e) => {
-      this._filter = e.target.value;
-      this._render();
-    });
-    s.getElementById("sel-event")?.addEventListener("change", (e) => {
-      this._filterEvent = e.target.value;
-      this._render();
-    });
+    // Sous-menu : onglets (Accords / Apogée / Occasions)
+    s.querySelectorAll(".sub-tab").forEach((t) =>
+      t.addEventListener("click", () => {
+        this._filterTab = t.dataset.tab;
+        s.querySelectorAll(".sub-tab").forEach(x => x.classList.toggle("active", x === t));
+        s.querySelectorAll(".sub-panel").forEach(p =>
+          p.classList.toggle("active", p.dataset.panel === this._filterTab));
+      })
+    );
+    // Occasions : sélection unique → surbrillance des bouteilles concernées dans la cave
+    s.querySelectorAll(".occ-btn").forEach((b) =>
+      b.addEventListener("click", () => {
+        this._occasionFilter = b.dataset.occ || "";
+        this._render();
+      })
+    );
 
     s.getElementById("btn-history")?.addEventListener("click", () => this._openModal("history"));
 
@@ -4338,17 +4363,27 @@ const CARD_CSS = `<style>
 .header-tagline { font-size:0.54em; color:var(--red); text-transform:uppercase; letter-spacing:1.5px; margin-top:1px; }
 /* Colonne droite : stats en haut, boutons en dessous */
 .header-right { display:flex; flex-direction:column; gap:7px; flex:1; min-width:0; }
-/* Stats et actions partagent la MÊME grille 3 colonnes → alignement parfait */
-.header-stats   { display:grid; grid-template-columns:1fr 1fr 1fr; gap:5px; align-items:stretch; }
-.header-actions { display:grid; grid-template-columns:repeat(5, 1fr); gap:5px; align-items:stretch; }
-.header-actions .ha-icons { display:contents; }  /* les 4 icônes deviennent 4 cellules égales de la grille */
+/* Stats (4 cellules : 3 indicateurs + bouton options) */
+.header-stats   { display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:5px; align-items:stretch; }
+.header-actions { display:grid; grid-template-columns:repeat(4, 1fr); gap:5px; align-items:stretch; }
+.header-actions .ha-icons { display:contents; }
+.btn-options-top { width:38px; height:auto; align-self:stretch; display:flex; align-items:center; justify-content:center; font-size:1.05em; }
 .stat { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:5px 6px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border); }
 .stat-value { font-size:1.08em; font-weight:700; color:var(--cream); font-family:var(--font-serif); line-height:1; }
 .stat-label { font-size:0.54em; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-top:2px; }
 .stat-clickable { cursor:pointer; transition:all 0.15s; }
 .stat-clickable:hover { background:var(--bg-3); border-color:var(--header-accent,var(--red)); }
 .stat-clickable:active { transform:scale(0.97); }
-/* La rangée d'icônes (vue + 🔍 + 📓) occupe la colonne "Bouteilles" */
+/* Bouton "Casier" : bleu distinct de "+Vin" (plus clair/cyan) */
+.btn-rack {
+  height:38px; box-sizing:border-box; width:100%; min-width:0;
+  display:flex; align-items:center; justify-content:center; gap:3px;
+  background:#2BA5C7; color:#fff; border:none; border-radius:8px;
+  font-size:0.86em; font-weight:600; padding:0 6px; white-space:nowrap; cursor:pointer;
+  transition:filter 0.15s;
+}
+.btn-rack:hover { filter:brightness(1.1); }
+/* La rangée d'icônes (vue + 📓) */
 .header-actions .btn-icon, .header-actions .view-select, .header-actions .btn-primary {
   height:38px; box-sizing:border-box; width:100%; min-width:0;
 }
@@ -4434,25 +4469,43 @@ const CARD_CSS = `<style>
 .env-clickable:active { transform:scale(0.97); }
 .env-empty { opacity:0.5; }
 .env-filter-toggle {
-  flex:0 0 auto; display:flex; align-items:center; gap:5px; padding:5px 11px;
+  flex:0 0 auto; display:flex; align-items:center; gap:6px; padding:5px 12px;
   background:var(--bg-2); border:1px solid var(--border); border-radius:8px; cursor:pointer;
   color:var(--muted); transition:all 0.15s;
 }
 .env-filter-toggle .cork-icon { flex-shrink:0; }
 .env-filter-toggle .cork-label {
-  font-size:0.76em; font-weight:600; max-width:0; overflow:hidden; white-space:nowrap;
-  opacity:0; transition:max-width 0.22s ease, opacity 0.18s ease;
+  font-size:0.78em; font-weight:600; white-space:nowrap;
 }
 .env-filter-toggle:hover { background:var(--bg-3); color:var(--cream); }
-.env-filter-toggle:hover .cork-label,
-.env-filter-toggle.open .cork-label { max-width:70px; opacity:1; }
 .env-filter-toggle.open { background:var(--accent); color:#fff; border-color:var(--accent); }
 .filters-collapse {
-  display:grid; grid-template-columns:1fr 1fr; gap:10px;
   max-height:0; overflow:hidden; padding:0 14px;
-  background:var(--bg-1); transition:max-height 0.25s ease, padding 0.25s ease;
+  background:var(--bg-1); transition:max-height 0.3s ease, padding 0.3s ease;
 }
-.filters-collapse.open { max-height:120px; padding:0 14px 10px; border-bottom:1px solid var(--border); }
+.filters-collapse.open { max-height:340px; padding:10px 14px 12px; border-bottom:1px solid var(--border); }
+/* Sous-onglets (Accords / Apogée / Occasions) */
+.sub-tabs { display:flex; gap:5px; margin-bottom:10px; }
+.sub-tab {
+  flex:1; padding:7px 4px; border-radius:7px; border:1px solid var(--border);
+  background:var(--bg-2); color:var(--muted); font-size:0.74em; font-weight:600;
+  cursor:pointer; transition:all 0.13s; white-space:nowrap;
+}
+.sub-tab:hover { background:var(--bg-3); color:var(--cream); }
+.sub-tab.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+.sub-panel { display:none; }
+.sub-panel.active { display:block; animation:mm-fade 0.2s ease; }
+.sub-soon { text-align:center; padding:18px 8px; color:var(--muted); font-size:0.82em; font-style:italic; }
+.occ-hint { font-size:0.74em; color:var(--muted); margin-bottom:8px; }
+.occ-btns { display:flex; flex-wrap:wrap; gap:6px; }
+.occ-btn {
+  padding:6px 12px; border-radius:16px; border:1px solid var(--border);
+  background:var(--bg-2); color:var(--cream); font-size:0.78em; font-weight:500;
+  cursor:pointer; transition:all 0.13s;
+}
+.occ-btn:hover { background:var(--bg-3); border-color:var(--accent); }
+.occ-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+@keyframes mm-fade { from { opacity:0; } to { opacity:1; } }
 .filters {
   display:flex; gap:10px; padding:8px 14px;
   background:var(--bg-1); border-bottom:1px solid var(--border);
