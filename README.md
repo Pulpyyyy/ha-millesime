@@ -1,7 +1,7 @@
 # 🍷 Millésime — Cave à vin pour Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-6.3.7-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
+[![version](https://img.shields.io/badge/version-6.4.0-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
 [![Offrir un verre de vin](https://img.shields.io/badge/🍷_Offrir_un_verre_de_vin-PayPal-7B1D2E.svg?style=flat-square)](https://paypal.me/Redsklns)
 
 **Millésime** transforme Home Assistant en gestionnaire de cave à vin complet : visualisez vos bouteilles dans une scène **3D réaliste**, scannez les étiquettes par **photo**, suivez la valeur de votre collection et tenez un **journal de dégustation**.
@@ -99,6 +99,17 @@ L'intégralité de Millésime a été conçue et développée en collaboration a
 ---
 
 ## 📝 Changelog
+
+### [6.4.0] — 2026-06
+Interaction tactile repensée et photos de bouteilles.
+
+- **Aperçu sur iPhone (plus de superposition)** : un premier toucher sur une bouteille affiche l'aperçu détaillé ; toucher l'aperçu ouvre la fiche complète ; toucher ailleurs le referme. Fini l'aperçu et la fiche qui s'empilaient. Sur ordinateur, le survol et le clic restent inchangés. Valable en vue 3D, 2D et pastilles
+- **Photo de la bouteille** :
+  - La photo s'affiche en haut de la fiche quand elle existe
+  - Récupération automatique pendant « Compléter les fiches » quand une source en propose une
+  - Dans le formulaire Ajouter/Modifier : un bloc photo permet de prendre une photo, d'en choisir une dans la galerie, ou de coller un lien d'image
+  - La photo prise pour scanner l'étiquette devient aussi la photo affichée
+  - Les photos prises sont automatiquement compressées pour ne pas alourdir Home Assistant
 
 ### [6.3.7] — 2026-06
 Mise en valeur des bouteilles et liste des casiers.
