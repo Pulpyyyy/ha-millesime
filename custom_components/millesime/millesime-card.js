@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.3.7
+ * Millésime Card v6.4.0
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.3.7";
+const MILLESIME_CARD_VERSION = "6.4.0";
 
 const DOMAIN = "millesime";
 
@@ -1103,6 +1103,23 @@ class MillesimeCard extends HTMLElement {
             placeholder="Impressions, occasion...">${esc(b.notes || "")}</textarea>
         </div>
 
+        <!-- Photo de la bouteille (prise / galerie / URL) -->
+        <div class="mm-field">
+          <label class="mm-label">📷 Photo de la bouteille</label>
+          <div class="mm-photo-box" id="bt-photo-box">
+            <div class="mm-photo-thumb ${b.image_url ? "" : "empty"}" id="bt-photo-thumb">
+              ${b.image_url ? `<img src="${esc(b.image_url)}" alt="">` : `<span class="mm-photo-ph">Aucune photo</span>`}
+            </div>
+            <div class="mm-photo-actions">
+              <button type="button" class="mm-photo-btn" id="bt-photo-pick">📷 Prendre / choisir</button>
+              <button type="button" class="mm-photo-btn mm-photo-btn-rm ${b.image_url ? "" : "hidden"}" id="bt-photo-rm">🗑️ Retirer</button>
+            </div>
+          </div>
+          <input type="file" id="bt-photo-file" accept="image/*" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
+          <input class="mm-input mm-photo-url" id="bt-photo-url" placeholder="… ou coller un lien d'image (https://…)" autocomplete="off" value="${(b.image_url && /^https?:/i.test(b.image_url)) ? esc(b.image_url) : ""}">
+          <div class="mm-photo-hint">La photo prise pour scanner l'étiquette devient aussi la photo affichée.</div>
+        </div>
+
         <!-- Champs cachés remplis par Gemini -->
         <input type="hidden" id="bt-image_url"   value="${esc(b.image_url    || "")}">
         <input type="hidden" id="bt-vivino_url"  value="${esc(b.vivino_url   || "")}">
@@ -1135,6 +1152,40 @@ class MillesimeCard extends HTMLElement {
       if (giftField) giftField.style.display = evSel.value === "gift" ? "" : "none";
     });
 
+    // ── Photo de la bouteille : preview + prise/galerie + URL + retrait ──
+    const photoHidden = box.querySelector("#bt-image_url");
+    const photoThumb  = box.querySelector("#bt-photo-thumb");
+    const photoFile   = box.querySelector("#bt-photo-file");
+    const photoUrl    = box.querySelector("#bt-photo-url");
+    const photoRm     = box.querySelector("#bt-photo-rm");
+    const setPhoto = (src) => {
+      if (photoHidden) photoHidden.value = src || "";
+      if (photoThumb) {
+        photoThumb.classList.toggle("empty", !src);
+        photoThumb.innerHTML = src ? `<img src="${esc(src)}" alt="">` : `<span class="mm-photo-ph">Aucune photo</span>`;
+      }
+      if (photoRm) photoRm.classList.toggle("hidden", !src);
+    };
+    box.querySelector("#bt-photo-pick")?.addEventListener("click", () => photoFile?.click());
+    photoFile?.addEventListener("change", async () => {
+      const file = photoFile.files?.[0];
+      if (!file) return;
+      try {
+        const compressed = await this._compressImage(file);
+        setPhoto(compressed);
+        if (photoUrl) photoUrl.value = "";   // on privilégie la photo prise
+        this._showToast("success", "Photo ajoutée");
+      } catch (e) {
+        this._showToast("error", "Impossible de lire cette image");
+      }
+    });
+    photoUrl?.addEventListener("change", () => {
+      const v = (photoUrl.value || "").trim();
+      if (v && /^https?:/i.test(v)) setPhoto(v);
+      else if (!v) setPhoto("");
+    });
+    photoRm?.addEventListener("click", () => { setPhoto(""); if (photoUrl) photoUrl.value = ""; });
+
     // ── Auto-remplissage depuis un résultat ──────────────────────────────────
     const fillFrom = (w) => {
       const set = (id, val) => {
@@ -1149,7 +1200,15 @@ class MillesimeCard extends HTMLElement {
       set("bt-until",       w.drink_until || "");
       set("bt-vrating",     w.vivino_rating || "");
       if (w.price > 0) { const el = box.querySelector("#bt-price"); if (el) el.value = w.price; }
-      set("bt-image_url",   w.image_url   || "");
+      // N'écrase l'image que si l'utilisateur n'a pas déjà mis sa propre photo
+      const imgEl = box.querySelector("#bt-image_url");
+      if (imgEl && !imgEl.value && w.image_url) {
+        imgEl.value = w.image_url;
+        const th = box.querySelector("#bt-photo-thumb");
+        const rm = box.querySelector("#bt-photo-rm");
+        if (th) { th.classList.remove("empty"); th.innerHTML = `<img src="${esc(w.image_url)}" alt="">`; }
+        if (rm) rm.classList.remove("hidden");
+      }
       set("bt-vivino_url",  w.vivino_url  || "");
       set("bt-region",      w.region      || "");
       set("bt-country",     w.country     || "");
@@ -1280,6 +1339,16 @@ class MillesimeCard extends HTMLElement {
       }
 
       const mimeType = file.type || "image/jpeg";
+      // La photo scannée devient aussi la photo affichée de la bouteille (compressée)
+      try {
+        const compressed = await this._compressImage(file);
+        const ph = box.querySelector("#bt-image_url");
+        const th = box.querySelector("#bt-photo-thumb");
+        const rm = box.querySelector("#bt-photo-rm");
+        if (ph) ph.value = compressed;
+        if (th) { th.classList.remove("empty"); th.innerHTML = `<img src="${esc(compressed)}" alt="">`; }
+        if (rm) rm.classList.remove("hidden");
+      } catch (e) { /* la compression échoue → on garde au moins l'analyse */ }
       const response = await this._analyzePhoto(b64, mimeType);
       URL.revokeObjectURL(url);
 
@@ -1507,7 +1576,7 @@ class MillesimeCard extends HTMLElement {
         <span style="color:${t.color};font-size:0.77em;font-weight:700;text-transform:uppercase;letter-spacing:1.5px">${t.label}</span>
       </div>
       <div class="mm-body">
-        ${b.image_url ? `<img src="${esc(b.image_url)}" style="width:64px;display:block;margin:0 auto 16px;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,0.6)">` : ""}
+        ${b.image_url ? `<div class="mm-detail-photo"><img src="${esc(b.image_url)}" alt="Photo de ${esc(b.name || "la bouteille")}"></div>` : ""}
         <div class="mm-detail-hero">
           <div class="mm-detail-name">${b.favorite ? "⭐ " : ""}${esc(b.name)}</div>
           <div class="mm-detail-sub">${[b.producer, b.appellation].filter(Boolean).map(esc).join(" · ")}</div>
@@ -2160,7 +2229,7 @@ class MillesimeCard extends HTMLElement {
   }
 
   // ── Panneau d'infos au survol (souris) / appui long (tactile iPhone) ────────
-  _showBottlePanel(wine, anchorEl) {
+  _showBottlePanel(wine, anchorEl, pinned = false) {
     this._hideBottlePanel();
     if (!wine) return;
     // CSS injecté une fois dans document.head (le panneau vit hors shadow DOM, comme le toast)
@@ -2189,6 +2258,12 @@ class MillesimeCard extends HTMLElement {
         .mm-bottle-panel .bp-foot {
           display:flex; justify-content:space-between; margin-top:8px; padding-top:7px;
           border-top:1px solid #2E2620; font-size:0.84em; font-weight:600; color:#C9A84C;
+        }
+        .mm-bottle-panel.pinned { border-color:#7B1D2E; }
+        .mm-bottle-panel.pinned:active { transform:scale(0.98); }
+        .mm-bottle-panel .bp-tap {
+          margin-top:9px; padding-top:8px; border-top:1px dashed #3a302a;
+          text-align:center; font-size:0.78em; font-weight:600; color:#E0A85A;
         }
       `;
       document.head.appendChild(st);
@@ -2232,9 +2307,31 @@ class MillesimeCard extends HTMLElement {
     panel.style.left = left + "px";
     panel.style.top = top + "px";
     requestAnimationFrame(() => panel.classList.add("show"));
+
+    // Mode épinglé (tactile) : l'aperçu reste, devient cliquable → ouvre la fiche,
+    // et un toucher en dehors le referme.
+    if (pinned) {
+      panel.classList.add("pinned");
+      panel.style.pointerEvents = "auto";
+      panel.style.cursor = "pointer";
+      const hint = document.createElement("div");
+      hint.className = "bp-tap";
+      hint.textContent = "Toucher pour la fiche →";
+      panel.appendChild(hint);
+      panel.addEventListener("click", () => {
+        this._hideBottlePanel();
+        this._openModal("detail", { wine });
+      });
+      // Referme si on touche ailleurs (le geste courant est déjà passé : on écoute le suivant)
+      this._panelDismiss = (ev) => {
+        if (this._bottlePanel && !this._bottlePanel.contains(ev.target)) this._hideBottlePanel();
+      };
+      document.addEventListener("pointerdown", this._panelDismiss, true);
+    }
   }
 
   _hideBottlePanel() {
+    if (this._panelDismiss) { document.removeEventListener("pointerdown", this._panelDismiss, true); this._panelDismiss = null; }
     if (this._bottlePanel) { this._bottlePanel.remove(); this._bottlePanel = null; }
     if (this._lpTimer) { clearTimeout(this._lpTimer); this._lpTimer = null; }
     if (this._lp3Timer) { clearTimeout(this._lp3Timer); this._lp3Timer = null; }
@@ -2934,6 +3031,34 @@ class MillesimeCard extends HTMLElement {
           </div>
         </div>
       </div>`;
+  }
+
+  // Compresse une image (File ou data URL) : redimensionne à ~600px max,
+  // JPEG qualité 0.7 → ~40-80 Ko, pour ne pas alourdir le stockage HA.
+  _compressImage(fileOrDataUrl, maxSize = 600, quality = 0.7) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width: w, height: h } = img;
+        if (w > h && w > maxSize) { h = Math.round(h * maxSize / w); w = maxSize; }
+        else if (h > maxSize)     { w = Math.round(w * maxSize / h); h = maxSize; }
+        const cv = document.createElement("canvas");
+        cv.width = w; cv.height = h;
+        const ctx = cv.getContext("2d");
+        ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        try { resolve(cv.toDataURL("image/jpeg", quality)); }
+        catch (e) { reject(e); }
+      };
+      img.onerror = () => reject(new Error("Image illisible"));
+      if (typeof fileOrDataUrl === "string") img.src = fileOrDataUrl;
+      else {
+        const r = new FileReader();
+        r.onload = () => { img.src = r.result; };
+        r.onerror = () => reject(new Error("Lecture fichier impossible"));
+        r.readAsDataURL(fileOrDataUrl);
+      }
+    });
   }
 
   _donorSuggestions() {
@@ -4157,18 +4282,23 @@ class MillesimeCard extends HTMLElement {
       if (this._t3Suppress) return;            // un drag vient de se terminer
       const hit = pickAt(e, pickables);
       if (!hit) {
-        // Clic dans le vide : si une bouteille était mise en valeur, on l'efface
-        if (this._selected) { this._selected = null; this._render(); }
+        // Toucher/clic dans le vide : referme l'aperçu épinglé éventuel
+        if (this._bottlePanel) this._hideBottlePanel();
         return;
       }
       const u = hit.object.userData;
       if (u.empty) {
         this._openModal("bottle", { slot: { rack_id: u.rackId, slot: u.slot } });
+        return;
+      }
+      const wine = wines.find((w) => w.id === u.wineId);
+      if (!wine) return;
+      if (this._lastPT === "touch") {
+        // Tactile : 1er tap → aperçu épinglé (la fiche s'ouvre en touchant l'aperçu)
+        this._showBottlePanel(wine, anchorFromEvent(e), true);
       } else {
-        const wine = wines.find((w) => w.id === u.wineId);
-        if (!wine) return;
-        this._selected = wine.id;               // mise en valeur (grise les autres)
-        this._openModal("detail", { wine });    // ouverture directe, sans re-render
+        // Souris : ouverture directe de la fiche
+        this._openModal("detail", { wine });
       }
     };
     renderer.domElement.addEventListener("click", onPick);
@@ -4329,9 +4459,10 @@ class MillesimeCard extends HTMLElement {
         top: e.clientY, bottom: e.clientY, height: 0,
       }),
     });
-    // Souris : afficher/masquer au déplacement (sans interférer avec le drag)
+    // Survol SOURIS uniquement : aperçu qui suit le curseur (sans gêner le drag)
     let hoverWineId = null;
     renderer.domElement.addEventListener("mousemove", (e) => {
+      if (this._lastPT === "touch") return;           // le tactile passe par onPick (aperçu épinglé)
       if (drag && drag.active) { this._hideBottlePanel(); hoverWineId = null; return; }
       const wine = wineAt(e);
       if (wine) {
@@ -4347,27 +4478,9 @@ class MillesimeCard extends HTMLElement {
         }
       } else { hoverWineId = null; this._hideBottlePanel(); }
     });
-    renderer.domElement.addEventListener("mouseleave", () => { hoverWineId = null; this._hideBottlePanel(); });
-    // Tactile : appui long ~450 ms → panneau (annulé si on bouge = scroll/drag)
-    renderer.domElement.addEventListener("touchstart", (e) => {
-      if (e.touches.length !== 1) return;
-      const t = e.touches[0];
-      this._lp3Moved = false;
-      this._lp3Timer = setTimeout(() => {
-        if (this._lp3Moved) return;
-        const wine = wineAt(t);
-        if (wine) this._showBottlePanel(wine, anchorFromEvent(t));
-      }, 450);
-    }, { passive: true });
-    renderer.domElement.addEventListener("touchmove", () => {
-      this._lp3Moved = true;
-      if (this._lp3Timer) { clearTimeout(this._lp3Timer); this._lp3Timer = null; }
-      this._hideBottlePanel();
-    }, { passive: true });
-    renderer.domElement.addEventListener("touchend", () => {
-      if (this._lp3Timer) { clearTimeout(this._lp3Timer); this._lp3Timer = null; }
-      // Laisse le panneau visible un court instant après le relâchement, puis le retire
-      if (this._bottlePanel) setTimeout(() => this._hideBottlePanel(), 1800);
+    renderer.domElement.addEventListener("mouseleave", () => {
+      if (this._lastPT === "touch") return;
+      hoverWineId = null; this._hideBottlePanel();
     });
 
     // ── Redimensionnement (largeur uniquement) ──
@@ -4426,6 +4539,10 @@ class MillesimeCard extends HTMLElement {
 
   _bindCardListeners(data, wines) {
     const s = this.shadowRoot;
+
+    // Mémorise le type de pointeur (souris vs tactile) pour adapter le comportement
+    // des bouteilles : tactile = aperçu épinglé, souris = survol + clic direct.
+    s.addEventListener("pointerdown", (e) => { this._lastPT = e.pointerType || "mouse"; }, true);
 
     s.getElementById("btn-history")?.addEventListener("click", () => this._openModal("history"));
 
@@ -4500,39 +4617,28 @@ class MillesimeCard extends HTMLElement {
     });
 
     s.querySelectorAll(".dot").forEach((dot) => {
+      const wineId = dot.dataset.wineId;
+      const wine = wineId ? wines.find(w => w.id === wineId) : null;
+      const slot   = parseInt(dot.dataset.slot);
+      const rackId = dot.dataset.rackId;
+
       dot.addEventListener("click", () => {
-        const slot    = parseInt(dot.dataset.slot);
-        const rackId = dot.dataset.rackId;
-        const wineId  = dot.dataset.wineId;
-        const wine    = wineId ? wines.find(w => w.id === wineId) : null;
-        if (wine) {
-          if (this._selected === wine.id) {
-            this._selected = null;
-            this._openModal("detail", { wine });
-          } else {
-            this._selected = wine.id;
-            this._render();
-          }
+        // Case vide → formulaire d'ajout (souris comme tactile)
+        if (!wine) { this._openModal("bottle", { slot: { rack_id: rackId, slot } }); return; }
+        if (this._lastPT === "touch") {
+          // Tactile : 1er tap → aperçu épinglé (la fiche s'ouvre en touchant l'aperçu)
+          this._showBottlePanel(wine, dot, true);
         } else {
-          this._openModal("bottle", { slot: { rack_id: rackId, slot } });
+          // Souris : ouvre la fiche directement
+          this._openModal("detail", { wine });
         }
       });
 
-      // Panneau d'infos : survol (desktop) + appui long (iPhone). Cases vides ignorées.
-      const wineId = dot.dataset.wineId;
-      const wine = wineId ? wines.find(w => w.id === wineId) : null;
+      // Survol souris (desktop uniquement) → aperçu non épinglé
       if (wine) {
-        // Le title natif ferait doublon avec le panneau → on le retire
-        dot.removeAttribute("title");
-        dot.addEventListener("mouseenter", () => this._showBottlePanel(wine, dot));
-        dot.addEventListener("mouseleave", () => this._hideBottlePanel());
-        // Tactile : appui long ~450 ms ouvre le panneau ; un déplacement l'annule
-        dot.addEventListener("touchstart", () => {
-          this._lpTimer = setTimeout(() => { this._lpMoved || this._showBottlePanel(wine, dot); }, 450);
-          this._lpMoved = false;
-        }, { passive: true });
-        dot.addEventListener("touchmove", () => { this._lpMoved = true; this._hideBottlePanel(); }, { passive: true });
-        dot.addEventListener("touchend", () => { if (this._lpTimer) { clearTimeout(this._lpTimer); this._lpTimer = null; } });
+        dot.removeAttribute("title");   // évite le doublon avec le panneau
+        dot.addEventListener("mouseenter", () => { if (this._lastPT !== "touch") this._showBottlePanel(wine, dot); });
+        dot.addEventListener("mouseleave", () => { if (this._lastPT !== "touch") this._hideBottlePanel(); });
       }
     });
 
@@ -5249,6 +5355,34 @@ const MODAL_CSS = `
 .mm-detail-hero  { text-align:center; margin-bottom:18px; }
 .mm-detail-name  { font-family:var(--font-serif); font-size:1.54em; color:var(--mm-text); margin-bottom:4px; }
 .mm-detail-sub   { font-size:0.92em; color:var(--mm-muted); }
+/* Photo de la bouteille — bandeau en haut de la fiche */
+.mm-detail-photo {
+  margin:0 auto 18px; max-width:200px; border-radius:14px; overflow:hidden;
+  background:linear-gradient(180deg,#241b16,#15100d);
+  box-shadow:0 6px 22px rgba(0,0,0,0.55); border:1px solid #2E2620;
+}
+.mm-detail-photo img { display:block; width:100%; max-height:340px; object-fit:contain; }
+/* Bloc photo dans le formulaire */
+.mm-photo-box { display:flex; gap:12px; align-items:center; margin-bottom:8px; }
+.mm-photo-thumb {
+  width:64px; height:64px; flex-shrink:0; border-radius:10px; overflow:hidden;
+  background:var(--mm-bg2); border:1px solid var(--mm-border);
+  display:flex; align-items:center; justify-content:center;
+}
+.mm-photo-thumb img { width:100%; height:100%; object-fit:cover; }
+.mm-photo-thumb.empty { border-style:dashed; }
+.mm-photo-ph { font-size:0.62em; color:var(--mm-muted); text-align:center; padding:4px; }
+.mm-photo-actions { display:flex; flex-direction:column; gap:6px; }
+.mm-photo-btn {
+  padding:8px 12px; border-radius:8px; border:1px solid var(--mm-border);
+  background:var(--mm-bg2); color:var(--mm-text); font-size:0.82em; cursor:pointer;
+  white-space:nowrap; transition:border-color 0.13s;
+}
+.mm-photo-btn:hover { border-color:var(--mm-accent); }
+.mm-photo-btn-rm { color:#E06B6B; }
+.mm-photo-url { margin-top:4px; font-size:0.84em; }
+.mm-photo-hint { font-size:0.72em; color:var(--mm-muted); margin-top:5px; line-height:1.35; }
+.hidden { display:none !important; }
 .mm-vivino-link  { display:inline-block; margin-top:8px; color:var(--mm-red); font-size:0.85em; text-decoration:none; border:1px solid rgba(192,57,43,0.3); padding:3px 10px; border-radius:20px; }
 .mm-detail-grid  { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-bottom:10px; }
 .mm-drow         { background:var(--mm-bg2); border-radius:8px; padding:9px 11px; border:1px solid var(--mm-border); }
