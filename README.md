@@ -1,7 +1,7 @@
 # 🍷 Millésime — Cave à vin pour Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-6.3.5-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
+[![version](https://img.shields.io/badge/version-6.3.7-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
 [![Offrir un verre de vin](https://img.shields.io/badge/🍷_Offrir_un_verre_de_vin-PayPal-7B1D2E.svg?style=flat-square)](https://paypal.me/Redsklns)
 
 **Millésime** transforme Home Assistant en gestionnaire de cave à vin complet : visualisez vos bouteilles dans une scène **3D réaliste**, scannez les étiquettes par **photo**, suivez la valeur de votre collection et tenez un **journal de dégustation**.
@@ -99,6 +99,20 @@ L'intégralité de Millésime a été conçue et développée en collaboration a
 ---
 
 ## 📝 Changelog
+
+### [6.3.7] — 2026-06
+Mise en valeur des bouteilles et liste des casiers.
+
+- **Sélection d'un vin depuis la liste** : la bouteille choisie ressort désormais nettement, toutes les autres sont grisées (même mécanique que le filtre par occasion), en vue 3D comme en 2D et pastilles. La mise en valeur reste affichée jusqu'au clic suivant (un clic dans le vide la retire)
+- **Bouton « Casiers »** : ouvre une fenêtre listant chaque casier et les bouteilles qu'il contient (avec numéro d'emplacement, prix et taux de remplissage), dotée d'un champ de recherche — sur le même modèle que la liste des vins. Un clic sur une bouteille la localise dans la cave
+
+### [6.3.6] — 2026-06
+Affinages d'affichage et compatibilité iPhone.
+
+- **Panneau d'informations en vue 3D** : au survol de la souris ou par appui long (iPhone) sur une bouteille en 3D, le panneau détaillé s'affiche également (comme en vues 2D et pastilles)
+- **Liste des bouteilles** : la quantité est désormais affichée juste avant le prix sur la même ligne (et non plus en bas de la fiche)
+- **Liste des bouteilles sur iPhone** : correction de la hauteur de la fenêtre (prise en compte des barres Safari et des zones sûres) pour pouvoir faire défiler toute la liste
+- **En-tête** : le logo « Millésime / Cave à vin » est désormais centré verticalement sur la hauteur des deux rangées
 
 ### [6.3.5] — 2026-06
 Affinages d'interface.
