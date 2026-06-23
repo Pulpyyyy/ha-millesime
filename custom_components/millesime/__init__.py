@@ -1,4 +1,4 @@
-"""Millésime v6.6.0 — Cave à Vin pour Home Assistant.
+"""Millésime v6.7.1 — Cave à Vin pour Home Assistant.
 
 Recherche texte : gemini-3.1-flash-lite (tier gratuit)
 Lecture photo   : gemini-3-flash (tier gratuit)
@@ -34,7 +34,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN    = "millesime"
 PLATFORMS = ["sensor"]
 DATA_FILE = "millesime_data.json"
-VERSION   = "6.6.0"
+VERSION   = "6.7.1"
 
 OFF_UA       = f"Millesime-HA/{VERSION} (github.com/Redsklns/ha-millesime)"
 # Deux modèles séparés = deux pools de quota indépendants (free tier)
@@ -514,6 +514,87 @@ async def _gemini_analyze_photo(
     return results, err
 
 
+# ── Accords mets/vin par IA : Gemini choisit parmi les vins de la cave ────────
+
+async def _gemini_pair_food(
+    hass: HomeAssistant, dish: str, wines: list[dict], api_key: str
+) -> tuple[list[dict], str | None]:
+    """Demande à Gemini de choisir, PARMI les vins fournis, les meilleurs accords
+    pour un plat donné. Retourne ([{id, reason, rank}], code_erreur_ou_None)."""
+    session = async_get_clientsession(hass)
+    # On envoie une liste compacte des vins de la cave (id + infos utiles)
+    catalogue = []
+    for w in wines:
+        catalogue.append({
+            "id":          w.get("id"),
+            "name":        w.get("name", ""),
+            "type":        w.get("type", ""),
+            "vintage":     w.get("vintage", ""),
+            "region":      w.get("region", ""),
+            "appellation": w.get("appellation", ""),
+            "food_pairing":w.get("food_pairing", ""),
+        })
+    sys = (
+        "Tu es sommelier. On te donne un plat et une liste de vins disponibles (avec leur id). "
+        "Choisis UNIQUEMENT parmi ces vins ceux qui s'accordent le mieux avec le plat. "
+        "Classe-les du meilleur au moins bon (max 8). Pour chacun, donne une raison courte (une phrase). "
+        "Réponds STRICTEMENT en JSON : "
+        '{"results":[{"id":"...","reason":"...","rank":1}]} '
+        "N'invente aucun vin : n'utilise que les id fournis. Si rien ne convient vraiment, "
+        "propose quand même les moins mauvais."
+    )
+    body = {
+        "system_instruction": {"parts": [{"text": sys}]},
+        "contents": [{"parts": [{"text": (
+            f'Plat : "{dish}"\n\n'
+            f"Vins disponibles (JSON) :\n{json.dumps(catalogue, ensure_ascii=False)}"
+        )}]}],
+        "generationConfig": {
+            "temperature":      0.3,
+            "maxOutputTokens":  2048,
+            "responseMimeType": "application/json",
+        },
+    }
+    data = None
+    for _model in (GEMINI_TEXT_MODEL, GEMINI_TEXT_FALLBACK):
+        try:
+            async with session.post(
+                f"{GEMINI_BASE_URL}{_model}:generateContent",
+                params={"key": api_key},
+                json=body,
+                headers={"Content-Type": "application/json"},
+                timeout=20,
+            ) as resp:
+                if resp.status == 404:
+                    continue
+                if resp.status != 200:
+                    return [], _gemini_error_code(resp.status)
+                data = await resp.json(content_type=None)
+                break
+        except asyncio.TimeoutError:
+            _LOGGER.warning("Gemini accords timeout (%s) pour '%s'", _model, dish)
+        except Exception as exc:
+            _LOGGER.warning("Gemini accords erreur (%s): %s", _model, exc)
+    if data is None:
+        return [], ERR_UNAVAILABLE
+    try:
+        raw = (
+            data.get("candidates", [{}])[0]
+            .get("content", {})
+            .get("parts", [{}])[0]
+            .get("text", "")
+        )
+        parsed = json.loads(raw)
+        results = parsed.get("results", []) if isinstance(parsed, dict) else []
+        # garde uniquement les id réellement présents dans la cave
+        valid_ids = {w.get("id") for w in wines}
+        clean = [r for r in results if isinstance(r, dict) and r.get("id") in valid_ids]
+        _LOGGER.info("Gemini accords : %d vin(s) pour '%s'", len(clean), dish)
+        return clean, None
+    except Exception as exc:
+        _LOGGER.warning("Gemini accords parse erreur pour '%s': %s", dish, exc)
+        return [], ERR_PARSE_ERROR
+
 
 
 # ── Open Food Facts (fallback texte) ─────────────────────────────────────────
@@ -974,6 +1055,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         })
 
     websocket_api.async_register_command(hass, ws_analyze_photo)
+
+    # ── WebSocket : accords mets/vin par IA ───────────────────────────────────
+
+    @websocket_api.websocket_command({
+        vol.Required("type"): "millesime/pair_food",
+        vol.Required("dish"): str,
+    })
+    @websocket_api.async_response
+    async def ws_pair_food(hass: HomeAssistant, connection, msg: dict) -> None:
+        gkey = hass.data[DOMAIN][entry.entry_id]["gemini_key"]
+        if not gkey:
+            connection.send_result(msg["id"], {"results": [], "error": ERR_INVALID_KEY})
+            return
+        d = _load(hass)
+        wines = d.get("wines", [])
+        results, err = await _gemini_pair_food(hass, msg["dish"], wines, gkey)
+        connection.send_result(msg["id"], {"results": results, "error": err})
+
+    websocket_api.async_register_command(hass, ws_pair_food)
 
     # ── WebSocket : estimate_price ────────────────────────────────────────────
     @websocket_api.websocket_command({
