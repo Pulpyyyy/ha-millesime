@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.6.0
+ * Millésime Card v6.7.1
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.6.0";
+const MILLESIME_CARD_VERSION = "6.7.1";
 
 const DOMAIN = "millesime";
 
@@ -169,7 +169,85 @@ const FOOD_LIBRARY = {
   },
 };
 
-
+// ── Table d'ingrédients / préparations / cuisines → profil de vin ─────────────
+// Sert à la RECHERCHE LIBRE : on découpe le texte saisi, on reconnaît ces mots,
+// et on agrège un profil de vin idéal. Couvre des milliers de plats sans les lister.
+// Chaque entrée : [ [synonymes], { types:[...], notes:[...] } ]
+const PAIR_KEYWORDS = [
+  // Viandes
+  [["boeuf","bœuf","steak","entrecôte","bavette","rumsteck","faux-filet","tournedos","chateaubriand"], { types:["red"], notes:["tannique","corsé","charpenté"] }],
+  [["agneau","gigot","mouton","souris d'agneau"], { types:["red"], notes:["tannique","épicé","corsé"] }],
+  [["veau","escalope","osso buco","blanquette"], { types:["white","red"], notes:["rond","souple"] }],
+  [["porc","échine","filet mignon","rôti de porc","travers","jambon"], { types:["red","white","rose"], notes:["fruité","souple"] }],
+  [["canard","magret","confit","cuisse de canard"], { types:["red"], notes:["fruité","épicé","corsé"] }],
+  [["poulet","volaille","poule","chapon","pintade","coquelet"], { types:["white","red"], notes:["souple","fruité"] }],
+  [["dinde","oie"], { types:["white","red"], notes:["rond","souple"] }],
+  [["lapin"], { types:["white","red"], notes:["souple","fruité"] }],
+  [["gibier","chevreuil","sanglier","biche","venaison","faisan","perdrix"], { types:["red"], notes:["puissant","épicé","corsé"] }],
+  [["saucisse","merguez","chipolata","andouillette","boudin","saucisson"], { types:["red","white"], notes:["fruité","vif"] }],
+  [["charcuterie","jambon","pâté","terrine","rillettes","chorizo","salami"], { types:["red","white","rose"], notes:["fruité","vif"] }],
+  [["tartare","carpaccio","viande crue"], { types:["red","white"], notes:["fruité","léger"] }],
+  [["bœuf bourguignon","boeuf bourguignon","daube","ragoût","pot-au-feu","braisé","mijoté","navarin","goulash"], { types:["red"], notes:["corsé","charpenté"] }],
+  [["cassoulet","choucroute","potée","confit"], { types:["red","white"], notes:["corsé","rustique"] }],
+  // Poissons & mer
+  [["poisson","cabillaud","bar","loup","dorade","sole","colin","merlu","lieu","églefin","limande"], { types:["white"], notes:["vif","frais","minéral"] }],
+  [["saumon","truite","thon","maquereau","sardine","hareng","anguille"], { types:["white","rose"], notes:["gras","rond","fruité"] }],
+  [["fumé","saumon fumé","truite fumée","haddock"], { types:["white","sparkling"], notes:["vif","minéral"] }],
+  [["huître","huitre","coquillage","bulot","bigorneau"], { types:["white","sparkling"], notes:["minéral","vif","iodé"] }],
+  [["homard","langouste","crabe","tourteau","écrevisse","langoustine"], { types:["white","sparkling"], notes:["rond","gras","minéral"] }],
+  [["crevette","gambas","scampi"], { types:["white","rose"], notes:["vif","frais"] }],
+  [["saint-jacques","coquille saint-jacques","noix de saint-jacques","pétoncle"], { types:["white","sparkling"], notes:["rond","beurré","minéral"] }],
+  [["moule","palourde","praire"], { types:["white"], notes:["vif","minéral"] }],
+  [["calamar","calmar","poulpe","seiche","encornet"], { types:["white","rose"], notes:["vif","frais"] }],
+  [["sushi","sashimi","maki","poisson cru","ceviche","tartare de poisson","poke"], { types:["white","sparkling"], notes:["vif","minéral","frais"] }],
+  [["bouillabaisse","soupe de poisson","paella","fruits de mer","plateau de fruits de mer"], { types:["white","rose"], notes:["vif","aromatique"] }],
+  // Fromages
+  [["comté","gruyère","emmental","beaufort","cantal","pâte dure","tomme","abondance"], { types:["white","red"], notes:["rond","fruité"] }],
+  [["camembert","brie","coulommiers","pâte molle","brillat-savarin"], { types:["red","white"], notes:["souple","fruité"] }],
+  [["bleu","roquefort","gorgonzola","fourme","stilton","persillé"], { types:["dessert","red"], notes:["liquoreux","puissant"] }],
+  [["chèvre","chevre","crottin","sainte-maure","bûche de chèvre"], { types:["white","rose"], notes:["vif","frais","minéral"] }],
+  [["munster","époisses","maroilles","langres","croûte lavée","reblochon"], { types:["white","dessert"], notes:["aromatique","puissant"] }],
+  [["raclette","fondue","tartiflette","fromage fondu","mont d'or"], { types:["white","red"], notes:["vif","minéral"] }],
+  // Desserts & sucré
+  [["chocolat","fondant","mousse au chocolat","brownie","truffe en chocolat","forêt-noire"], { types:["dessert","red"], notes:["liquoreux","puissant"] }],
+  [["tarte","tatin","tarte aux pommes","tarte aux fruits","clafoutis","crumble"], { types:["dessert","sparkling"], notes:["liquoreux","fruité","sucré"] }],
+  [["crème","crème brûlée","flan","panna cotta","île flottante","mille-feuille","éclair"], { types:["dessert"], notes:["liquoreux","sucré"] }],
+  [["fruits rouges","fraise","framboise","cerise","myrtille"], { types:["dessert","sparkling","rose"], notes:["fruité","sucré"] }],
+  [["citron","agrume","tarte au citron","lemon"], { types:["dessert","sparkling"], notes:["vif","sucré"] }],
+  [["foie gras"], { types:["dessert","white"], notes:["liquoreux","rond","gras"] }],
+  [["macaron","pâtisserie","gâteau","cake","biscuit"], { types:["dessert","sparkling"], notes:["sucré","fruité"] }],
+  // Bases / préparations
+  [["sauce","mijoté","crème","beurre blanc","velouté"], { types:["red","white"], notes:["rond","charpenté"] }],
+  [["grillade","grillé","barbecue","bbq","plancha","brochette"], { types:["red","rose"], notes:["fruité","épicé"] }],
+  [["rôti","roti","au four"], { types:["red","white"], notes:["souple","fruité"] }],
+  [["friture","frit","tempura","beignet"], { types:["white","sparkling"], notes:["vif","frais"] }],
+  [["champignon","cèpe","girolle","morille","truffe","pleurote"], { types:["red","white"], notes:["terreux","rond","puissant"] }],
+  [["truffe"], { types:["red","white"], notes:["puissant","aromatique"] }],
+  [["œuf","oeuf","omelette","quiche","brouillade"], { types:["white","red"], notes:["souple","vif"] }],
+  [["risotto","pâtes","pasta","spaghetti","tagliatelle","gnocchi","lasagne","raviolis"], { types:["white","red"], notes:["rond","fruité"] }],
+  [["pizza","focaccia"], { types:["red","rose"], notes:["fruité","souple"] }],
+  [["tomate","ratatouille","sauce tomate","bolognaise"], { types:["red","rose"], notes:["fruité","souple"] }],
+  [["gratin","pomme de terre","dauphinois","purée","aligot"], { types:["white","red"], notes:["rond","souple"] }],
+  [["salade","crudité","vinaigrette"], { types:["white","rose"], notes:["vif","frais"] }],
+  [["soupe","potage","velouté","bouillon"], { types:["white"], notes:["rond","souple"] }],
+  [["légumes","aubergine","courgette","poivron","asperge","artichaut"], { types:["white","rose","red"], notes:["fruité","frais"] }],
+  [["végétarien","vegan","tofu","légumineuse","lentille","pois chiche","houmous"], { types:["white","rose","red"], notes:["fruité","frais"] }],
+  // Épices & cuisines du monde
+  [["épicé","piment","pimenté","relevé","harissa"], { types:["rose","white"], notes:["fruité","demi-sec","frais"] }],
+  [["curry","massala","masala","tikka","tandoori","indien"], { types:["white","rose"], notes:["aromatique","demi-sec","fruité"] }],
+  [["thaï","thai","coco","lait de coco","citronnelle","gingembre","wok"], { types:["white","rose"], notes:["aromatique","demi-sec"] }],
+  [["chinois","cantonais","aigre-doux","nem","nouilles sautées","canard laqué"], { types:["white","red"], notes:["fruité","demi-sec"] }],
+  [["japonais","ramen","yakitori","teriyaki","miso"], { types:["white","sparkling"], notes:["vif","minéral"] }],
+  [["sushi","maki","sashimi"], { types:["white","sparkling"], notes:["vif","minéral","frais"] }],
+  [["mexicain","taco","fajita","chili","guacamole","burrito"], { types:["red","rose"], notes:["fruité","épicé"] }],
+  [["libanais","mezze","taboulé","falafel","kebab"], { types:["rose","white"], notes:["vif","frais","fruité"] }],
+  [["marocain","tajine","couscous","semoule","pastilla"], { types:["red","rose"], notes:["épicé","fruité"] }],
+  [["italien","parmesan","mozzarella","burrata","antipasti","osso"], { types:["red","white"], notes:["fruité","souple"] }],
+  [["espagnol","tapas","paella","gambas","jambon serrano"], { types:["red","rose"], notes:["fruité","épicé"] }],
+  [["américain","burger","hot-dog","ribs","pulled pork","frites"], { types:["red"], notes:["fruité","corsé"] }],
+  [["vietnamien","pho","bo bun","rouleau de printemps","bobun"], { types:["white","rose"], notes:["vif","frais"] }],
+  [["apéritif","apéro","aperitif","amuse-bouche","tapas","chips","cacahuète","olive"], { types:["sparkling","white","rose"], notes:["vif","léger","frais"] }],
+];
 // Messages d'erreur affichés à l'utilisateur selon le code retourné par le backend
 const ERROR_MESSAGES = {
   quota_exceeded:      "⚠️ Quota Gemini dépassé (1 500/jour). Les résultats viennent d'Open Food Facts — ajoutez votre clé demain ou vérifiez votre quota sur aistudio.google.com.",
@@ -3392,13 +3470,91 @@ class MillesimeCard extends HTMLElement {
     const fams = Object.keys(FOOD_LIBRARY);
     const famOpts = fams.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join("");
     return `
-      <div class="acc-hint">Choisissez un plat : l'app propose les bouteilles de votre cave qui s'accordent le mieux.</div>
+      <div class="acc-hint">Tapez un plat, ou parcourez les catégories : l'app propose les bouteilles de votre cave qui s'accordent le mieux.</div>
+      <div class="acc-searchwrap">
+        <input type="text" class="mm-input acc-search" id="acc-search" placeholder="🍽️ Quel plat ? (ex. bœuf bourguignon, curry de poulet, raclette…)" autocomplete="off">
+        <button class="acc-go" id="acc-go">Trouver</button>
+      </div>
+      <div class="acc-or">— ou parcourir —</div>
       <div class="acc-selects">
         <select class="mm-input acc-sel" id="acc-fam"><option value="">— Famille —</option>${famOpts}</select>
         <select class="mm-input acc-sel" id="acc-cat" disabled><option value="">— Catégorie —</option></select>
         <select class="mm-input acc-sel" id="acc-dish" disabled><option value="">— Plat —</option></select>
       </div>
       <div class="acc-list" id="acc-list"></div>`;
+  }
+
+  // Construit un "profil de plat" depuis un texte libre via la table d'ingrédients
+  _dishFromText(text) {
+    const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const q = norm(text);
+    if (!q) return null;
+    const types = {}, notes = {}, kw = [];
+    let matched = 0;
+    for (const [syns, prof] of PAIR_KEYWORDS) {
+      if (syns.some(s => q.includes(norm(s)))) {
+        matched++;
+        kw.push(...syns);
+        for (const t of (prof.types || [])) types[t] = (types[t] || 0) + 1;
+        for (const n of (prof.notes || [])) notes[n] = (notes[n] || 0) + 1;
+      }
+    }
+    if (!matched) return { kw: [text], types: [], notes: [], unknown: true };
+    // garde les types/notes les plus fréquents
+    const top = (obj) => Object.entries(obj).sort((a, b) => b[1] - a[1]).map(e => e[0]);
+    return { kw, types: top(types), notes: top(notes), unknown: false };
+  }
+
+  // Rendu d'une liste de résultats d'accords (commun local + IA)
+  _renderAccordsResults(list, items, { approx = false, ai = false } = {}) {
+    const wines = this._data?.wines || [];
+    if (!items.length) {
+      list.innerHTML = `<div class="acc-empty">Aucune bouteille adaptée dans votre cave pour ce plat.</div>`;
+      return;
+    }
+    const badge = (s) => s >= 14 ? `<span class="acc-badge acc-top">★ idéal</span>`
+                      : s >= 10 ? `<span class="acc-badge">très bon</span>`
+                      : s >= 4  ? `<span class="acc-badge acc-ok">bon</span>` : `<span class="acc-badge acc-low">proche</span>`;
+    const head = ai ? `<div class="acc-aibadge">✨ Sélection IA selon votre cave</div>`
+              : approx ? `<div class="acc-approx">Aucun accord parfait en local — voici les plus proches :</div>` : "";
+    list.innerHTML = head + `<div class="vlist">${items.map(x => {
+      const reason = x.reason ? `<div class="acc-reason">${esc(x.reason)}</div>` : "";
+      return this._miniWineRow(x.w, ai ? "" : badge(x.s)) + reason;
+    }).join("")}</div>`;
+    list.querySelectorAll(".ap-wine[data-wine]").forEach((row) =>
+      row.addEventListener("click", () => {
+        const w = wines.find(x => x.id === row.dataset.wine);
+        if (w) this._locateBottle(w);
+      })
+    );
+  }
+
+  // Matching local pour un profil de plat → bouteilles scorées
+  _localMatch(dish) {
+    const wines = this._data?.wines || [];
+    const scored = wines.map(w => ({ w, s: this._matchScore(w, dish) })).sort((a, b) => b.s - a.s);
+    const strong = scored.filter(x => x.s >= 4);
+    if (strong.length) return { items: strong.slice(0, 30), approx: false };
+    return { items: scored.filter(x => x.s > 0).slice(0, 10), approx: true };
+  }
+
+  // Appel IA : Gemini choisit parmi la cave
+  async _aiPairing(dish, list) {
+    list.innerHTML = `<div class="acc-loading"><span class="mm-spinner"></span> L'IA choisit dans votre cave…</div>`;
+    try {
+      const res = await this._hass.connection.sendMessagePromise({ type: "millesime/pair_food", dish });
+      const wines = this._data?.wines || [];
+      if (res?.error) {
+        list.innerHTML = `<div class="acc-empty">IA indisponible (${esc(res.error)}). Réessayez plus tard.</div>`;
+        return;
+      }
+      const items = (res?.results || [])
+        .map(r => ({ w: wines.find(w => w.id === r.id), reason: r.reason }))
+        .filter(x => x.w);
+      this._renderAccordsResults(list, items, { ai: true });
+    } catch (e) {
+      list.innerHTML = `<div class="acc-empty">Erreur IA. Réessayez plus tard.</div>`;
+    }
   }
 
   _bindApogee(box) {
@@ -3428,57 +3584,60 @@ class MillesimeCard extends HTMLElement {
     const selFam  = box.querySelector("#acc-fam");
     const selCat  = box.querySelector("#acc-cat");
     const selDish = box.querySelector("#acc-dish");
+    const search  = box.querySelector("#acc-search");
+    const goBtn   = box.querySelector("#acc-go");
     const list    = box.querySelector("#acc-list");
-    const wines = this._data?.wines || [];
 
     const fill = (sel, items, placeholder) => {
       sel.innerHTML = `<option value="">${placeholder}</option>` +
         items.map(i => `<option value="${esc(i)}">${esc(i)}</option>`).join("");
     };
+
+    // Affiche un résultat local + propose/bascule vers l'IA
+    const runDish = (dish, label, { fromText = false } = {}) => {
+      if (!list) return;
+      // Plat inconnu de la table locale → on passe directement à l'IA
+      if (fromText && dish.unknown) { this._aiPairing(label, list); return; }
+      const { items, approx } = this._localMatch(dish);
+      this._renderAccordsResults(list, items, { approx });
+      // Toujours offrir l'IA en renfort (surtout si résultat approximatif ou peu fourni)
+      const ai = document.createElement("button");
+      ai.className = "acc-ai-btn";
+      ai.textContent = approx ? "✨ Demander à l'IA (plus précis)" : "✨ Affiner avec l'IA";
+      ai.addEventListener("click", () => this._aiPairing(label, list));
+      list.appendChild(ai);
+    };
+
+    // ── Recherche libre ──
+    const doSearch = () => {
+      const txt = (search?.value || "").trim();
+      if (!txt) return;
+      const dish = this._dishFromText(txt);
+      runDish(dish, txt, { fromText: true });
+    };
+    goBtn?.addEventListener("click", doSearch);
+    search?.addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
+
+    // ── Déroulants ──
     selFam?.addEventListener("change", () => {
       const fam = selFam.value;
-      if (fam && FOOD_LIBRARY[fam]) {
-        fill(selCat, Object.keys(FOOD_LIBRARY[fam]), "— Catégorie —");
-        selCat.disabled = false;
-      } else { selCat.innerHTML = `<option value="">— Catégorie —</option>`; selCat.disabled = true; }
+      if (fam && FOOD_LIBRARY[fam]) { fill(selCat, Object.keys(FOOD_LIBRARY[fam]), "— Catégorie —"); selCat.disabled = false; }
+      else { selCat.innerHTML = `<option value="">— Catégorie —</option>`; selCat.disabled = true; }
       selDish.innerHTML = `<option value="">— Plat —</option>`; selDish.disabled = true;
       if (list) list.innerHTML = "";
     });
     selCat?.addEventListener("change", () => {
       const fam = selFam.value, cat = selCat.value;
-      if (fam && cat && FOOD_LIBRARY[fam]?.[cat]) {
-        fill(selDish, Object.keys(FOOD_LIBRARY[fam][cat]), "— Plat —");
-        selDish.disabled = false;
-      } else { selDish.innerHTML = `<option value="">— Plat —</option>`; selDish.disabled = true; }
+      if (fam && cat && FOOD_LIBRARY[fam]?.[cat]) { fill(selDish, Object.keys(FOOD_LIBRARY[fam][cat]), "— Plat —"); selDish.disabled = false; }
+      else { selDish.innerHTML = `<option value="">— Plat —</option>`; selDish.disabled = true; }
       if (list) list.innerHTML = "";
     });
     selDish?.addEventListener("change", () => {
       const fam = selFam.value, cat = selCat.value, dishName = selDish.value;
       const dish = FOOD_LIBRARY[fam]?.[cat]?.[dishName];
-      if (!dish || !list) { if (list) list.innerHTML = ""; return; }
-      // Score chaque bouteille, trie, garde les meilleures
-      const scored = wines.map(w => ({ w, s: this._matchScore(w, dish) }))
-        .sort((a, b) => b.s - a.s);
-      const strong = scored.filter(x => x.s >= 4);   // bon accord (type ok ou mot-clé trouvé)
-      let shown, approx = false;
-      if (strong.length) { shown = strong.slice(0, 30); }
-      else { shown = scored.filter(x => x.s > 0).slice(0, 10); approx = true; }  // au mieux
-      if (!shown.length) {
-        list.innerHTML = `<div class="acc-empty">Aucune bouteille adaptée dans votre cave pour ce plat.</div>`;
-        return;
-      }
-      const badge = (s) => s >= 14 ? `<span class="acc-badge acc-top">★ idéal</span>`
-                        : s >= 10 ? `<span class="acc-badge">très bon</span>`
-                        : s >= 4  ? `<span class="acc-badge acc-ok">bon</span>` : `<span class="acc-badge acc-low">proche</span>`;
-      list.innerHTML =
-        (approx ? `<div class="acc-approx">Aucun accord parfait — voici les plus proches :</div>` : "") +
-        `<div class="vlist">${shown.map(x => this._miniWineRow(x.w, badge(x.s))).join("")}</div>`;
-      list.querySelectorAll(".ap-wine[data-wine]").forEach((row) =>
-        row.addEventListener("click", () => {
-          const w = wines.find(x => x.id === row.dataset.wine);
-          if (w) this._locateBottle(w);
-        })
-      );
+      if (!dish) { if (list) list.innerHTML = ""; return; }
+      if (search) search.value = "";   // les deux modes ne se mélangent pas
+      runDish(dish, dishName);
     });
   }
 
@@ -5575,6 +5734,24 @@ const MODAL_CSS = `
 .acc-badge.acc-top { background:#C9A84C; color:#1a1206; }
 .acc-badge.acc-ok  { background:#3a6b4a; color:#fff; }
 .acc-badge.acc-low { background:var(--mm-bg2); color:var(--mm-muted); }
+/* Recherche libre + IA */
+.acc-searchwrap { display:flex; gap:8px; margin-bottom:10px; }
+.acc-search { flex:1; }
+.acc-go {
+  padding:0 16px; border-radius:10px; border:none; background:var(--mm-accent);
+  color:#fff; font-size:0.86em; font-weight:600; cursor:pointer; white-space:nowrap;
+}
+.acc-go:hover { filter:brightness(1.1); }
+.acc-or { text-align:center; font-size:0.72em; color:var(--mm-muted); margin:4px 0 10px; letter-spacing:1px; }
+.acc-ai-btn {
+  display:block; width:100%; margin-top:12px; padding:11px;
+  border-radius:10px; border:1px solid #C9A84C; background:transparent;
+  color:#C9A84C; font-size:0.86em; font-weight:600; cursor:pointer; transition:all 0.13s;
+}
+.acc-ai-btn:hover { background:#C9A84C; color:#1a1206; }
+.acc-aibadge { font-size:0.78em; color:#C9A84C; font-weight:600; margin-bottom:10px; }
+.acc-reason { font-size:0.74em; color:var(--mm-muted); font-style:italic; margin:-4px 0 8px 4px; line-height:1.35; }
+.acc-loading { display:flex; align-items:center; gap:10px; justify-content:center; padding:24px 8px; color:var(--mm-muted); font-size:0.86em; }
 /* Description sous les menus (disposition, orientation) : petit, gris clair, italique */
 .mm-hint { font-size:0.74em; font-style:italic; color:#c8c8c8; margin-top:7px; line-height:1.4; }
 .mm-header {
@@ -5734,7 +5911,7 @@ const MODAL_CSS = `
 }
 .mm-detail-photo img { display:block; width:100%; max-height:340px; object-fit:contain; }
 /* Étiquette générée sur la fiche (grand format) */
-.mm-detail-label { max-width:230px; margin:0 auto 18px; font-size:15px; }
+.mm-detail-label { max-width:165px; margin:0 auto 16px; font-size:11px; }
 /* Bloc photo dans le formulaire */
 .mm-photo-box { display:flex; gap:12px; align-items:center; margin-bottom:8px; }
 .mm-photo-thumb {
