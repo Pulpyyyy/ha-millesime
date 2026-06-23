@@ -1,7 +1,7 @@
 # 🍷 Millésime — Cave à vin pour Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-6.6.0-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
+[![version](https://img.shields.io/badge/version-6.7.1-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
 [![Offrir un verre de vin](https://img.shields.io/badge/🍷_Offrir_un_verre_de_vin-PayPal-7B1D2E.svg?style=flat-square)](https://paypal.me/Redsklns)
 
 **Millésime** transforme Home Assistant en gestionnaire de cave à vin complet : visualisez vos bouteilles dans une scène **3D réaliste**, scannez les étiquettes par **photo**, suivez la valeur de votre collection et tenez un **journal de dégustation**.
@@ -99,6 +99,19 @@ L'intégralité de Millésime a été conçue et développée en collaboration a
 ---
 
 ## 📝 Changelog
+
+### [6.7.1] — 2026-06
+Correctif d'affichage.
+
+- **Étiquette générée** : taille réduite sur la fiche du vin (elle était trop grande et occupait une trop grande partie de l'écran)
+
+### [6.7.0] — 2026-06
+Accords mets/vin : recherche libre et renfort par IA.
+
+- **Recherche libre** : un champ permet de taper n'importe quel plat (« bœuf bourguignon », « curry de poulet au lait de coco », « raclette »…). Une table d'ingrédients et de préparations reconnaît le plat et propose les bouteilles de la cave qui s'accordent — couverture quasi illimitée, instantanée et hors-ligne
+- **Renfort par IA** : si le plat n'est pas reconnu localement, ou pour affiner un résultat, l'IA est sollicitée. Elle reçoit la cave et choisit directement parmi les bouteilles disponibles, avec une courte justification pour chacune. L'IA n'est appelée qu'à la demande, ce qui ménage le quota
+- Les menus déroulants par catégories restent disponibles pour parcourir
+- Un clic sur une bouteille proposée la localise dans la cave
 
 ### [6.6.0] — 2026-06
 Étiquette de vin générée.
