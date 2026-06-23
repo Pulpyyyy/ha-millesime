@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.4.0
+ * Millésime Card v6.6.0
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.4.0";
+const MILLESIME_CARD_VERSION = "6.6.0";
 
 const DOMAIN = "millesime";
 
@@ -29,6 +29,146 @@ const EVENT_TYPES = [
   { v: "gift",          l: "Cadeau",           emoji: "🎁" },
 ];
 const EVENT_LABEL = Object.fromEntries(EVENT_TYPES.map(e => [e.v, e]));
+
+// ── Bibliothèque d'accords mets/vin (locale, hors-ligne) ─────────────────────
+// 3 grandes familles → catégories → plats. Pour chaque plat :
+//   kw    = mots-clés cherchés dans le champ food_pairing (généré par l'IA à l'ajout)
+//   types = types de vin idéaux (red/white/rose/sparkling/dessert)
+//   notes = mots-clés cherchés dans les notes de dégustation (caractéristiques)
+const FOOD_LIBRARY = {
+  "Aliments": {
+    "Viandes rouges": {
+      "Bœuf grillé / steak":   { kw:["boeuf","bœuf","steak","entrecôte","grillade","viande rouge","bavette","côte de bœuf"], types:["red"], notes:["tannique","corsé","puissant"] },
+      "Agneau":                { kw:["agneau","gigot","mouton"], types:["red"], notes:["tannique","épicé","corsé"] },
+      "Gibier":                { kw:["gibier","chevreuil","sanglier","venaison","biche"], types:["red"], notes:["puissant","épicé","corsé"] },
+      "Viande en sauce":       { kw:["sauce","mijoté","mijotée","daube","bourguignon","ragoût","ragout"], types:["red"], notes:["charpenté","corsé"] },
+      "Bœuf cru (tartare/carpaccio)": { kw:["tartare","carpaccio","cru","boeuf","bœuf"], types:["red","white"], notes:["fruité","léger"] },
+    },
+    "Volailles": {
+      "Poulet rôti":           { kw:["poulet","volaille","poule","rôti","roti"], types:["white","red"], notes:["souple","fruité"] },
+      "Canard":                { kw:["canard","magret","confit"], types:["red"], notes:["fruité","épicé"] },
+      "Dinde / chapon":        { kw:["dinde","chapon","volaille"], types:["white","red"], notes:["rond","souple"] },
+      "Volaille à la crème":   { kw:["crème","creme","blanquette","fricassée","volaille"], types:["white"], notes:["rond","gras","beurré"] },
+    },
+    "Porc & charcuterie": {
+      "Porc / rôti de porc":   { kw:["porc","rôti","échine","filet mignon"], types:["red","white","rose"], notes:["fruité","souple"] },
+      "Charcuterie":           { kw:["charcuterie","saucisson","jambon","pâté","terrine","rillettes"], types:["red","white","rose"], notes:["fruité","vif"] },
+      "Saucisse / andouillette":{ kw:["saucisse","andouillette","boudin"], types:["red","white"], notes:["vif","fruité"] },
+    },
+    "Poissons": {
+      "Poisson blanc":         { kw:["poisson blanc","cabillaud","bar","sole","dorade","colin","merlu","poisson"], types:["white"], notes:["vif","frais","minéral"] },
+      "Poisson gras / saumon": { kw:["saumon","thon","maquereau","sardine","poisson gras"], types:["white","rose"], notes:["gras","rond","fruité"] },
+      "Poisson fumé":          { kw:["fumé","saumon fumé","truite fumée"], types:["white","sparkling"], notes:["vif","minéral"] },
+      "Poisson en sauce":      { kw:["poisson","sauce","beurre blanc"], types:["white"], notes:["rond","gras","beurré"] },
+    },
+    "Fruits de mer": {
+      "Huîtres":               { kw:["huître","huitre","coquillage"], types:["white","sparkling"], notes:["minéral","vif","iodé"] },
+      "Crustacés (homard, crabe)": { kw:["homard","crabe","langouste","crustacé","crustace","écrevisse"], types:["white","sparkling"], notes:["rond","gras","minéral"] },
+      "Crevettes / gambas":    { kw:["crevette","gambas","scampi"], types:["white","rose"], notes:["vif","frais"] },
+      "Coquilles Saint-Jacques":{ kw:["saint-jacques","noix de saint-jacques","coquille"], types:["white","sparkling"], notes:["rond","beurré","minéral"] },
+      "Moules":                { kw:["moule","moules"], types:["white"], notes:["vif","minéral"] },
+    },
+    "Fromages": {
+      "Pâte dure (comté, gruyère)": { kw:["comté","gruyère","pâte dure","pâte pressée","cantal","beaufort"], types:["white","red"], notes:["rond","fruité"] },
+      "Pâte molle (camembert, brie)": { kw:["camembert","brie","pâte molle","coulommiers","croûte fleurie"], types:["red","white"], notes:["souple","fruité"] },
+      "Fromage bleu":          { kw:["bleu","roquefort","gorgonzola","fourme","persillé"], types:["dessert","red"], notes:["liquoreux","puissant"] },
+      "Chèvre":                { kw:["chèvre","chevre","crottin"], types:["white","rose"], notes:["vif","frais","minéral"] },
+      "Fromage à croûte lavée (munster)": { kw:["munster","époisses","maroilles","croûte lavée"], types:["white","dessert"], notes:["aromatique","puissant"] },
+    },
+    "Desserts": {
+      "Dessert au chocolat":   { kw:["chocolat","fondant","mousse au chocolat","brownie"], types:["dessert","red"], notes:["liquoreux","puissant","fruité"] },
+      "Tarte aux fruits":      { kw:["tarte","fruits","pomme","poire","abricot","tatin"], types:["dessert","sparkling"], notes:["liquoreux","fruité","sucré"] },
+      "Pâtisserie crémeuse":   { kw:["crème","crème brûlée","flan","pâtisserie","mille-feuille"], types:["dessert"], notes:["liquoreux","sucré"] },
+      "Fruits rouges":         { kw:["fruits rouges","fraise","framboise"], types:["dessert","sparkling","rose"], notes:["fruité","sucré"] },
+      "Foie gras (dessert sucré)": { kw:["foie gras"], types:["dessert"], notes:["liquoreux","sucré","gras"] },
+    },
+    "Apéritif & entrées": {
+      "Apéritif / amuse-bouches": { kw:["apéritif","aperitif","amuse-bouche","apéro","tapas"], types:["sparkling","white","rose"], notes:["vif","léger","frais"] },
+      "Salade / crudités":     { kw:["salade","crudité","légumes crus","vinaigrette"], types:["white","rose"], notes:["vif","frais"] },
+      "Foie gras (entrée)":    { kw:["foie gras","terrine de foie"], types:["dessert","white"], notes:["liquoreux","rond"] },
+      "Soupe / velouté":       { kw:["soupe","velouté","potage"], types:["white"], notes:["rond","souple"] },
+      "Quiche / tarte salée":  { kw:["quiche","tarte salée","tarte aux légumes"], types:["white","rose"], notes:["vif","rond"] },
+    },
+    "Végétarien & légumes": {
+      "Légumes grillés":       { kw:["légumes grillés","aubergine","courgette","ratatouille","poivron"], types:["rose","red","white"], notes:["fruité","souple"] },
+      "Champignons":           { kw:["champignon","cèpe","girolle","morille"], types:["red","white"], notes:["terreux","rond"] },
+      "Truffe":                { kw:["truffe"], types:["red","white"], notes:["puissant","aromatique"] },
+      "Plats à base d'œuf":    { kw:["œuf","oeuf","omelette","quiche"], types:["white","red"], notes:["souple","vif"] },
+      "Risotto / pâtes":       { kw:["risotto","pâtes","pasta","gnocchi"], types:["white","red"], notes:["rond","fruité"] },
+    },
+  },
+  "Recettes": {
+    "Plats mijotés français": {
+      "Bœuf bourguignon":      { kw:["boeuf","bœuf","bourguignon","mijoté","sauce","vin rouge"], types:["red"], notes:["corsé","charpenté"] },
+      "Coq au vin":            { kw:["coq","volaille","vin rouge","sauce","mijoté"], types:["red"], notes:["corsé","fruité"] },
+      "Daube provençale":      { kw:["daube","boeuf","bœuf","mijoté","provençal"], types:["red"], notes:["épicé","corsé"] },
+      "Pot-au-feu":            { kw:["pot-au-feu","boeuf","bœuf","bouilli","légumes"], types:["red","white"], notes:["souple","fruité"] },
+      "Blanquette de veau":    { kw:["blanquette","veau","crème","sauce blanche"], types:["white"], notes:["rond","gras","beurré"] },
+      "Cassoulet":             { kw:["cassoulet","haricot","confit","saucisse"], types:["red"], notes:["corsé","rustique","puissant"] },
+      "Pot-au-feu / bœuf braisé": { kw:["braisé","boeuf","bœuf","mijoté"], types:["red"], notes:["corsé"] },
+    },
+    "Rôtis & grillades": {
+      "Magret de canard":      { kw:["magret","canard"], types:["red"], notes:["fruité","épicé","corsé"] },
+      "Confit de canard":      { kw:["confit","canard"], types:["red"], notes:["corsé","fruité"] },
+      "Steak frites":          { kw:["steak","frites","boeuf","bœuf","grillade"], types:["red"], notes:["tannique","fruité"] },
+      "Côte de bœuf":          { kw:["côte de bœuf","boeuf","bœuf","grillade"], types:["red"], notes:["tannique","puissant"] },
+      "Gigot d'agneau":        { kw:["gigot","agneau"], types:["red"], notes:["tannique","épicé"] },
+      "Poulet rôti":           { kw:["poulet","rôti","volaille"], types:["white","red"], notes:["souple","fruité"] },
+      "Barbecue / grillades":  { kw:["barbecue","bbq","grillade","grillé"], types:["red","rose"], notes:["fruité","épicé"] },
+    },
+    "Plats régionaux & montagne": {
+      "Raclette":              { kw:["raclette","fromage fondu","charcuterie"], types:["white","red"], notes:["vif","fruité"] },
+      "Fondue savoyarde":      { kw:["fondue","fromage fondu"], types:["white"], notes:["vif","minéral"] },
+      "Tartiflette":           { kw:["tartiflette","reblochon","pomme de terre"], types:["white","red"], notes:["vif","fruité"] },
+      "Choucroute":            { kw:["choucroute","chou","saucisse","porc"], types:["white"], notes:["vif","aromatique"] },
+      "Aligot":                { kw:["aligot","fromage","pomme de terre"], types:["red","white"], notes:["fruité","souple"] },
+    },
+    "Pâtes, pizza & gratins": {
+      "Lasagnes / bolognaise": { kw:["lasagne","bolognaise","tomate","viande","pâtes"], types:["red"], notes:["fruité","souple"] },
+      "Pizza":                 { kw:["pizza","tomate","mozzarella"], types:["red","rose"], notes:["fruité","souple"] },
+      "Pâtes à la carbonara":  { kw:["carbonara","pâtes","crème","lard"], types:["white","red"], notes:["rond","vif"] },
+      "Gratin dauphinois":     { kw:["gratin","pomme de terre","crème"], types:["white","red"], notes:["rond","souple"] },
+      "Risotto":               { kw:["risotto","riz","parmesan"], types:["white"], notes:["rond","gras"] },
+    },
+    "Mer & iodé": {
+      "Plateau de fruits de mer": { kw:["fruits de mer","huître","huitre","crustacé","coquillage"], types:["white","sparkling"], notes:["minéral","vif","iodé"] },
+      "Bouillabaisse":         { kw:["bouillabaisse","poisson","soupe de poisson"], types:["white","rose"], notes:["vif","aromatique"] },
+      "Moules-frites":         { kw:["moule","frites"], types:["white"], notes:["vif","minéral"] },
+      "Paella":                { kw:["paella","riz","fruits de mer","safran"], types:["rose","white"], notes:["fruité","vif"] },
+      "Sushi / sashimi":       { kw:["sushi","sashimi","poisson cru","riz"], types:["white","sparkling"], notes:["vif","minéral","frais"] },
+    },
+    "Desserts": {
+      "Fondant au chocolat":   { kw:["chocolat","fondant"], types:["dessert","red"], notes:["liquoreux","puissant"] },
+      "Tarte Tatin":           { kw:["tatin","pomme","tarte"], types:["dessert"], notes:["liquoreux","sucré"] },
+      "Crème brûlée":          { kw:["crème brûlée","crème","vanille"], types:["dessert"], notes:["liquoreux","sucré"] },
+      "Salade de fruits":      { kw:["fruits","salade de fruits"], types:["dessert","sparkling"], notes:["fruité","frais"] },
+    },
+  },
+  "Styles de cuisine": {
+    "Cuisines du monde": {
+      "Italienne":             { kw:["italien","pâtes","pizza","tomate","parmesan","risotto"], types:["red","white"], notes:["fruité","souple"] },
+      "Française traditionnelle": { kw:["sauce","mijoté","crème","beurre","terroir"], types:["red","white"], notes:["charpenté","rond"] },
+      "Méditerranéenne":       { kw:["méditerranéen","huile d'olive","légumes","herbes","tomate"], types:["rose","white","red"], notes:["fruité","frais"] },
+      "Espagnole / tapas":     { kw:["tapas","chorizo","paella","jambon","espagnol"], types:["red","rose"], notes:["fruité","épicé"] },
+      "Américaine / BBQ":      { kw:["barbecue","bbq","burger","ribs","grillé"], types:["red"], notes:["fruité","corsé"] },
+    },
+    "Cuisine asiatique": {
+      "Japonaise":             { kw:["sushi","sashimi","japonais","soja","poisson cru"], types:["white","sparkling"], notes:["vif","minéral","frais"] },
+      "Thaïe":                 { kw:["thaï","thai","curry","coco","citronnelle","épicé"], types:["white","rose"], notes:["aromatique","fruité","demi-sec"] },
+      "Chinoise":              { kw:["chinois","wok","aigre-doux","nouilles","soja"], types:["white","red"], notes:["fruité","souple","demi-sec"] },
+      "Indienne / curry":      { kw:["indien","curry","épices","tandoori","masala","épicé"], types:["white","rose"], notes:["aromatique","fruité","demi-sec"] },
+      "Vietnamienne":          { kw:["vietnamien","pho","bo bun","nem","herbes"], types:["white","rose"], notes:["vif","frais"] },
+    },
+    "Autres": {
+      "Marocaine / tajine":    { kw:["tajine","couscous","marocain","épices","semoule"], types:["red","rose"], notes:["épicé","fruité"] },
+      "Libanaise / mezze":     { kw:["mezze","libanais","houmous","taboulé","grillade"], types:["rose","white"], notes:["vif","frais","fruité"] },
+      "Mexicaine":             { kw:["mexicain","chili","piment","tacos","haricot","épicé"], types:["red","rose"], notes:["fruité","épicé"] },
+      "Végétarienne":          { kw:["végétarien","légumes","tofu","céréales"], types:["white","rose","red"], notes:["fruité","frais"] },
+      "Cuisine épicée (général)": { kw:["épicé","piment","relevé","pimenté"], types:["rose","white"], notes:["fruité","demi-sec","frais"] },
+    },
+  },
+};
+
 
 // Messages d'erreur affichés à l'utilisateur selon le code retourné par le backend
 const ERROR_MESSAGES = {
@@ -1576,7 +1716,9 @@ class MillesimeCard extends HTMLElement {
         <span style="color:${t.color};font-size:0.77em;font-weight:700;text-transform:uppercase;letter-spacing:1.5px">${t.label}</span>
       </div>
       <div class="mm-body">
-        ${b.image_url ? `<div class="mm-detail-photo"><img src="${esc(b.image_url)}" alt="Photo de ${esc(b.name || "la bouteille")}"></div>` : ""}
+        ${b.image_url
+          ? `<div class="mm-detail-photo"><img src="${esc(b.image_url)}" alt="Photo de ${esc(b.name || "la bouteille")}"></div>`
+          : `<div class="mm-detail-label">${this._wineLabelHTML(b)}</div>`}
         <div class="mm-detail-hero">
           <div class="mm-detail-name">${b.favorite ? "⭐ " : ""}${esc(b.name)}</div>
           <div class="mm-detail-sub">${[b.producer, b.appellation].filter(Boolean).map(esc).join(" · ")}</div>
@@ -2265,6 +2407,9 @@ class MillesimeCard extends HTMLElement {
           margin-top:9px; padding-top:8px; border-top:1px dashed #3a302a;
           text-align:center; font-size:0.78em; font-weight:600; color:#E0A85A;
         }
+        .mm-bottle-panel .bp-label { font-size:7px; max-width:128px; margin:0 auto 9px; }
+        .mm-bottle-panel .bp-photo { max-width:120px; margin:0 auto 9px; border-radius:8px; overflow:hidden; background:#15110d; }
+        .mm-bottle-panel .bp-photo img { display:block; width:100%; max-height:150px; object-fit:contain; }
       `;
       document.head.appendChild(st);
     }
@@ -2278,6 +2423,9 @@ class MillesimeCard extends HTMLElement {
     const panel = document.createElement("div");
     panel.className = "mm-bottle-panel";
     panel.innerHTML = `
+      ${wine.image_url
+        ? `<div class="bp-photo"><img src="${esc(wine.image_url)}" alt=""></div>`
+        : `<div class="bp-label">${this._wineLabelHTML(wine)}</div>`}
       <div class="bp-head" style="border-color:${t.color}">
         <span class="bp-name">${wine.favorite ? "⭐ " : ""}${esc(wine.name || "Sans nom")}${wine.vintage ? ` <i>${esc(wine.vintage)}</i>` : ""}</span>
         <span class="bp-type" style="color:${t.color}">${t.emoji} ${t.label}</span>
@@ -3125,10 +3273,10 @@ class MillesimeCard extends HTMLElement {
           <button class="sub-tab ${tab === "occasions" ? "active" : ""}" data-tab="occasions">🥂 Occasions</button>
         </div>
         <div class="sub-panel ${tab === "accords" ? "active" : ""}" data-panel="accords">
-          <div class="sub-soon">🍽️ Accords mets / vin — bientôt disponible</div>
+          ${this._accordsHTML()}
         </div>
         <div class="sub-panel ${tab === "apogee" ? "active" : ""}" data-panel="apogee">
-          <div class="sub-soon">🕐 Apogée — bientôt disponible</div>
+          ${this._apogeeHTML()}
         </div>
         <div class="sub-panel ${tab === "occasions" ? "active" : ""}" data-panel="occasions">
           <div class="occ-hint">Choisissez une occasion : la fenêtre se ferme et les bouteilles concernées s'affichent en surbrillance dans la cave.</div>
@@ -3140,6 +3288,200 @@ class MillesimeCard extends HTMLElement {
       </div>`;
   }
 
+  // ── APOGÉE : état d'une bouteille selon ses dates et l'année courante ──
+  _apogeeState(w) {
+    const now = new Date().getFullYear();
+    const from = parseInt(w.drink_from) || 0;
+    const until = parseInt(w.drink_until) || 0;
+    if (!from && !until) return "none";
+    if (until && until < now) return "past";                       // apogée dépassée
+    if (from && from > now) return (from <= now + 2) ? "soon" : "keep"; // pas encore / bientôt
+    // dans la fenêtre : "bientôt" si elle se termine d'ici 1 an, sinon "maintenant"
+    if (until && until <= now + 1) return "soon";
+    return "now";
+  }
+
+  // Rendu d'une bouteille pour une liste (réutilisé Apogée + Accords)
+  // ── Étiquette de vin générée (style « vraie étiquette », sobre) ──
+  // Styles inline en em → autonome et scalable (la taille est pilotée par le conteneur).
+  // Affichée en grand sur la fiche et en miniature sur l'aperçu. S'adapte si des infos manquent.
+  _wineLabelHTML(w) {
+    const producer = (w.producer || "").trim();
+    const name = (w.name || "Sans nom").trim();
+    const showProducer = producer && producer.toLowerCase() !== name.toLowerCase();
+    const appellation = (w.appellation || "").trim();
+    const vintage = (w.vintage || "").toString().trim();
+    const regionLine = [w.region, w.country].filter(Boolean).map(s => String(s).trim()).filter(Boolean).join(" · ");
+    return `
+      <div class="mm-wlabel" style="background:linear-gradient(180deg,#f7f1e6,#ece2cf);border:0.09em solid #b9ab8f;border-radius:0.45em;padding:1.1em 1em;box-shadow:0 0.4em 1.2em rgba(0,0,0,0.45);">
+        <div style="border:0.09em solid #bfa04f;border-radius:0.25em;padding:1em 0.8em;text-align:center;">
+          ${showProducer ? `<div style="font-size:0.8em;letter-spacing:0.18em;color:#5a4632;text-transform:uppercase;line-height:1.25;">${esc(producer)}</div>
+          <div style="height:0.07em;width:55%;margin:0.45em auto 0.55em;background:#bfa04f;opacity:0.55;"></div>` : ""}
+          <div style="font-family:Georgia,'Times New Roman',serif;font-size:1.65em;font-weight:bold;color:#241a12;line-height:1.12;">${esc(name)}</div>
+          ${appellation ? `<div style="font-size:0.85em;font-style:italic;color:#4a3826;margin-top:0.4em;line-height:1.2;">${esc(appellation)}</div>` : ""}
+          ${vintage ? `<div style="font-family:Georgia,serif;font-size:1.9em;font-weight:bold;color:#3a2a1c;letter-spacing:0.08em;margin-top:0.5em;">${esc(vintage)}</div>` : ""}
+          ${regionLine ? `<div style="font-size:0.64em;letter-spacing:0.13em;color:#6a5946;text-transform:uppercase;margin-top:0.45em;line-height:1.2;">${esc(regionLine)}</div>` : ""}
+          <div style="font-size:0.58em;color:#9c8a6a;opacity:0.75;margin-top:0.75em;letter-spacing:0.02em;">🍷 Millésime</div>
+        </div>
+      </div>`;
+  }
+
+  _miniWineRow(w, extra = "") {
+    const t = WINE_TYPES[w.type] || WINE_TYPES.red;
+    const n = (w.slots || []).length;
+    const apo = (w.drink_from || w.drink_until)
+      ? `${esc(w.drink_from || "?")}–${esc(w.drink_until || "?")}` : "";
+    const sub = [w.appellation, w.region].filter(Boolean).map(esc).join(" · ");
+    return `
+      <div class="vlist-wine ap-wine" data-wine="${esc(w.id)}">
+        <div class="vlist-wine-top">
+          <span class="vlist-wine-name"><span class="rk-dot" style="background:${t.color}"></span>${esc(w.name || "Sans nom")}${w.vintage ? ` <i>${esc(w.vintage)}</i>` : ""}</span>
+          <span class="vlist-wine-tail">
+            ${extra}
+            <span class="rk-slot">×${n}</span>
+            <span class="vlist-wine-price">${w.price ? Math.round(w.price) + "€" : ""}</span>
+          </span>
+        </div>
+        ${(sub || apo) ? `<div class="vlist-wine-meta">${sub ? `<span class="vm">📍 ${sub}</span>` : ""}${apo ? `<span class="vm">🕐 ${apo}</span>` : ""}</div>` : ""}
+      </div>`;
+  }
+
+  _apogeeHTML() {
+    const wines = this._data?.wines || [];
+    const groups = { now: [], soon: [], keep: [], past: [], none: [] };
+    for (const w of wines) groups[this._apogeeState(w)].push(w);
+    const states = [
+      { k: "now",  emoji: "🟢", label: "À boire maintenant" },
+      { k: "soon", emoji: "🟠", label: "Bientôt / à surveiller" },
+      { k: "keep", emoji: "🔵", label: "À garder" },
+      { k: "past", emoji: "🔴", label: "Apogée dépassée" },
+    ];
+    const btns = states.map(s => {
+      const c = groups[s.k].reduce((a, w) => a + (w.slots || []).length, 0);
+      return `<button class="apo-state" data-apo="${s.k}">
+        <span class="apo-emoji">${s.emoji}</span>
+        <span class="apo-label">${s.label}</span>
+        <span class="apo-count">${c}</span>
+      </button>`;
+    }).join("");
+    const noneCount = groups.none.reduce((a, w) => a + (w.slots || []).length, 0);
+    return `
+      <div class="apo-hint">Cliquez un état pour voir les bouteilles, puis une bouteille pour la localiser dans la cave.</div>
+      <div class="apo-states">${btns}</div>
+      ${noneCount ? `<div class="apo-none-note">${noneCount} bouteille${noneCount > 1 ? "s" : ""} sans dates d'apogée renseignées.</div>` : ""}
+      <div class="apo-list" id="apo-list"></div>`;
+  }
+
+  // ── ACCORDS : score d'une bouteille pour un plat donné ──
+  _matchScore(w, dish) {
+    const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    let score = 0;
+    const pairing = norm(w.food_pairing);
+    // 1) Correspondance avec les accords générés par l'IA (le plus fiable)
+    for (const k of (dish.kw || [])) { if (pairing && pairing.includes(norm(k))) score += 10; }
+    // 2) Type de vin idéal
+    if ((dish.types || []).includes(w.type)) score += 4;
+    // 3) Caractéristiques (notes de dégustation)
+    const notes = norm(w.tasting_notes);
+    for (const n of (dish.notes || [])) { if (notes && notes.includes(norm(n))) score += 2; }
+    return score;
+  }
+
+  _accordsHTML() {
+    // Liste déroulante : famille → catégorie → plat
+    const fams = Object.keys(FOOD_LIBRARY);
+    const famOpts = fams.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join("");
+    return `
+      <div class="acc-hint">Choisissez un plat : l'app propose les bouteilles de votre cave qui s'accordent le mieux.</div>
+      <div class="acc-selects">
+        <select class="mm-input acc-sel" id="acc-fam"><option value="">— Famille —</option>${famOpts}</select>
+        <select class="mm-input acc-sel" id="acc-cat" disabled><option value="">— Catégorie —</option></select>
+        <select class="mm-input acc-sel" id="acc-dish" disabled><option value="">— Plat —</option></select>
+      </div>
+      <div class="acc-list" id="acc-list"></div>`;
+  }
+
+  _bindApogee(box) {
+    const list = box.querySelector("#apo-list");
+    const wines = this._data?.wines || [];
+    box.querySelectorAll(".apo-state").forEach((b) =>
+      b.addEventListener("click", () => {
+        box.querySelectorAll(".apo-state").forEach(x => x.classList.toggle("active", x === b));
+        const k = b.dataset.apo;
+        const items = wines.filter(w => this._apogeeState(w) === k)
+          .sort((a, c) => (parseInt(a.drink_until) || 9999) - (parseInt(c.drink_until) || 9999));
+        if (!list) return;
+        list.innerHTML = items.length
+          ? `<div class="vlist">${items.map(w => this._miniWineRow(w)).join("")}</div>`
+          : `<div class="acc-empty">Aucune bouteille dans cet état.</div>`;
+        list.querySelectorAll(".ap-wine[data-wine]").forEach((row) =>
+          row.addEventListener("click", () => {
+            const w = wines.find(x => x.id === row.dataset.wine);
+            if (w) this._locateBottle(w);
+          })
+        );
+      })
+    );
+  }
+
+  _bindAccords(box) {
+    const selFam  = box.querySelector("#acc-fam");
+    const selCat  = box.querySelector("#acc-cat");
+    const selDish = box.querySelector("#acc-dish");
+    const list    = box.querySelector("#acc-list");
+    const wines = this._data?.wines || [];
+
+    const fill = (sel, items, placeholder) => {
+      sel.innerHTML = `<option value="">${placeholder}</option>` +
+        items.map(i => `<option value="${esc(i)}">${esc(i)}</option>`).join("");
+    };
+    selFam?.addEventListener("change", () => {
+      const fam = selFam.value;
+      if (fam && FOOD_LIBRARY[fam]) {
+        fill(selCat, Object.keys(FOOD_LIBRARY[fam]), "— Catégorie —");
+        selCat.disabled = false;
+      } else { selCat.innerHTML = `<option value="">— Catégorie —</option>`; selCat.disabled = true; }
+      selDish.innerHTML = `<option value="">— Plat —</option>`; selDish.disabled = true;
+      if (list) list.innerHTML = "";
+    });
+    selCat?.addEventListener("change", () => {
+      const fam = selFam.value, cat = selCat.value;
+      if (fam && cat && FOOD_LIBRARY[fam]?.[cat]) {
+        fill(selDish, Object.keys(FOOD_LIBRARY[fam][cat]), "— Plat —");
+        selDish.disabled = false;
+      } else { selDish.innerHTML = `<option value="">— Plat —</option>`; selDish.disabled = true; }
+      if (list) list.innerHTML = "";
+    });
+    selDish?.addEventListener("change", () => {
+      const fam = selFam.value, cat = selCat.value, dishName = selDish.value;
+      const dish = FOOD_LIBRARY[fam]?.[cat]?.[dishName];
+      if (!dish || !list) { if (list) list.innerHTML = ""; return; }
+      // Score chaque bouteille, trie, garde les meilleures
+      const scored = wines.map(w => ({ w, s: this._matchScore(w, dish) }))
+        .sort((a, b) => b.s - a.s);
+      const strong = scored.filter(x => x.s >= 4);   // bon accord (type ok ou mot-clé trouvé)
+      let shown, approx = false;
+      if (strong.length) { shown = strong.slice(0, 30); }
+      else { shown = scored.filter(x => x.s > 0).slice(0, 10); approx = true; }  // au mieux
+      if (!shown.length) {
+        list.innerHTML = `<div class="acc-empty">Aucune bouteille adaptée dans votre cave pour ce plat.</div>`;
+        return;
+      }
+      const badge = (s) => s >= 14 ? `<span class="acc-badge acc-top">★ idéal</span>`
+                        : s >= 10 ? `<span class="acc-badge">très bon</span>`
+                        : s >= 4  ? `<span class="acc-badge acc-ok">bon</span>` : `<span class="acc-badge acc-low">proche</span>`;
+      list.innerHTML =
+        (approx ? `<div class="acc-approx">Aucun accord parfait — voici les plus proches :</div>` : "") +
+        `<div class="vlist">${shown.map(x => this._miniWineRow(x.w, badge(x.s))).join("")}</div>`;
+      list.querySelectorAll(".ap-wine[data-wine]").forEach((row) =>
+        row.addEventListener("click", () => {
+          const w = wines.find(x => x.id === row.dataset.wine);
+          if (w) this._locateBottle(w);
+        })
+      );
+    });
+  }
+
   _bindOpenPage(box) {
     box.querySelectorAll(".sub-tab").forEach((t) =>
       t.addEventListener("click", () => {
@@ -3149,6 +3491,8 @@ class MillesimeCard extends HTMLElement {
           p.classList.toggle("active", p.dataset.panel === this._filterTab));
       })
     );
+    this._bindApogee(box);
+    this._bindAccords(box);
     // Occasion : sélection unique → ferme la page + surbrillance dans la cave
     box.querySelectorAll(".occ-btn").forEach((b) =>
       b.addEventListener("click", () => {
@@ -5204,6 +5548,33 @@ const MODAL_CSS = `
 }
 .occ-btn:hover { border-color:var(--mm-accent); }
 .occ-btn.active { background:var(--mm-accent); color:#fff; border-color:var(--mm-accent); }
+/* Apogée */
+.apo-hint, .acc-hint { font-size:0.82em; color:var(--mm-muted); margin-bottom:12px; line-height:1.4; }
+.apo-states { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.apo-state {
+  display:flex; align-items:center; gap:8px; padding:12px 10px;
+  border-radius:10px; border:1px solid var(--mm-border); background:var(--mm-bg2);
+  color:var(--mm-text); font-size:0.86em; cursor:pointer; transition:all 0.13s; text-align:left;
+}
+.apo-state:hover { border-color:var(--mm-accent); }
+.apo-state.active { background:var(--mm-accent); color:#fff; border-color:var(--mm-accent); }
+.apo-emoji { font-size:1.1em; }
+.apo-label { flex:1; font-weight:600; line-height:1.2; }
+.apo-count { font-weight:700; font-variant-numeric:tabular-nums; min-width:1.5em; text-align:right; }
+.apo-none-note, .acc-approx { font-size:0.76em; color:var(--mm-muted); font-style:italic; margin-top:10px; }
+.apo-list, .acc-list { margin-top:6px; }
+.ap-wine { cursor:pointer; }
+/* Accords */
+.acc-selects { display:flex; flex-direction:column; gap:8px; }
+.acc-sel { width:100%; }
+.acc-empty { text-align:center; padding:20px 8px; color:var(--mm-muted); font-style:italic; font-size:0.85em; }
+.acc-badge {
+  font-size:0.66em; font-weight:700; padding:2px 7px; border-radius:10px;
+  background:var(--mm-bg3); color:var(--mm-text); white-space:nowrap;
+}
+.acc-badge.acc-top { background:#C9A84C; color:#1a1206; }
+.acc-badge.acc-ok  { background:#3a6b4a; color:#fff; }
+.acc-badge.acc-low { background:var(--mm-bg2); color:var(--mm-muted); }
 /* Description sous les menus (disposition, orientation) : petit, gris clair, italique */
 .mm-hint { font-size:0.74em; font-style:italic; color:#c8c8c8; margin-top:7px; line-height:1.4; }
 .mm-header {
@@ -5362,6 +5733,8 @@ const MODAL_CSS = `
   box-shadow:0 6px 22px rgba(0,0,0,0.55); border:1px solid #2E2620;
 }
 .mm-detail-photo img { display:block; width:100%; max-height:340px; object-fit:contain; }
+/* Étiquette générée sur la fiche (grand format) */
+.mm-detail-label { max-width:230px; margin:0 auto 18px; font-size:15px; }
 /* Bloc photo dans le formulaire */
 .mm-photo-box { display:flex; gap:12px; align-items:center; margin-bottom:8px; }
 .mm-photo-thumb {
