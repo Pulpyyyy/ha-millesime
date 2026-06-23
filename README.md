@@ -1,7 +1,7 @@
 # 🍷 Millésime — Cave à vin pour Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-6.4.0-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
+[![version](https://img.shields.io/badge/version-6.6.0-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
 [![Offrir un verre de vin](https://img.shields.io/badge/🍷_Offrir_un_verre_de_vin-PayPal-7B1D2E.svg?style=flat-square)](https://paypal.me/Redsklns)
 
 **Millésime** transforme Home Assistant en gestionnaire de cave à vin complet : visualisez vos bouteilles dans une scène **3D réaliste**, scannez les étiquettes par **photo**, suivez la valeur de votre collection et tenez un **journal de dégustation**.
@@ -99,6 +99,20 @@ L'intégralité de Millésime a été conçue et développée en collaboration a
 ---
 
 ## 📝 Changelog
+
+### [6.6.0] — 2026-06
+Étiquette de vin générée.
+
+- **Étiquette générée** : pour les bouteilles sans photo, une étiquette sobre est dessinée automatiquement à partir des informations du vin (domaine, cuvée, millésime, appellation, région). Style « vraie étiquette » : papier crème, cadre doré discret, typographie serif. Sans note ni couleur, avec une signature « 🍷 Millésime » discrète en bas
+- Elle s'affiche en grand en haut de la fiche et en miniature sur l'aperçu d'une bouteille
+- Quand une vraie photo a été ajoutée, c'est la photo qui s'affiche ; l'étiquette générée sert sinon de visuel par défaut
+- L'étiquette s'adapte automatiquement quand certaines informations manquent (pas de cuvée distincte, pas de millésime, etc.)
+
+### [6.5.0] — 2026-06
+Onglets Apogée et Accords mets/vin (page « À ouvrir »).
+
+- **Apogée** : les bouteilles sont classées en quatre états selon leurs dates et l'année en cours — 🟢 À boire maintenant, 🟠 Bientôt / à surveiller, 🔵 À garder, 🔴 Apogée dépassée (avec le nombre de bouteilles par état). Un clic sur un état affiche la liste des bouteilles concernées ; un clic sur une bouteille la met en valeur dans la cave (les autres grisées)
+- **Accords mets/vin** : une bibliothèque de près de 90 plats, organisée en trois familles (aliments, recettes, styles de cuisine) et navigable par menus déroulants. Le choix d'un plat propose les bouteilles de la cave qui s'accordent le mieux, en exploitant les accords renseignés à l'ajout et le profil du vin (type, caractéristiques). Si aucun accord parfait n'existe, les bouteilles les plus proches sont proposées. Un clic sur une bouteille la localise dans la cave
 
 ### [6.4.0] — 2026-06
 Interaction tactile repensée et photos de bouteilles.
