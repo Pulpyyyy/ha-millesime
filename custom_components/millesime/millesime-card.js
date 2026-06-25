@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.2.1
+ * Millésime Card v6.7.1
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.2.1";
+const MILLESIME_CARD_VERSION = "6.7.1";
 
 const DOMAIN = "millesime";
 
@@ -26,9 +26,228 @@ const EVENT_TYPES = [
   { v: "special",       l: "Grande occasion",  emoji: "🎉" },
   { v: "small_occasion",l: "Petite Occasion",   emoji: "🥂" },
   { v: "table",         l: "Vin de table",     emoji: "🍽️" },
+  { v: "gift",          l: "Cadeau",           emoji: "🎁" },
 ];
 const EVENT_LABEL = Object.fromEntries(EVENT_TYPES.map(e => [e.v, e]));
 
+// ── Bibliothèque d'accords mets/vin (locale, hors-ligne) ─────────────────────
+// 3 grandes familles → catégories → plats. Pour chaque plat :
+//   kw    = mots-clés cherchés dans le champ food_pairing (généré par l'IA à l'ajout)
+//   types = types de vin idéaux (red/white/rose/sparkling/dessert)
+//   notes = mots-clés cherchés dans les notes de dégustation (caractéristiques)
+const FOOD_LIBRARY = {
+  "Aliments": {
+    "Viandes rouges": {
+      "Bœuf grillé / steak":   { kw:["boeuf","bœuf","steak","entrecôte","grillade","viande rouge","bavette","côte de bœuf"], types:["red"], notes:["tannique","corsé","puissant"] },
+      "Agneau":                { kw:["agneau","gigot","mouton"], types:["red"], notes:["tannique","épicé","corsé"] },
+      "Gibier":                { kw:["gibier","chevreuil","sanglier","venaison","biche"], types:["red"], notes:["puissant","épicé","corsé"] },
+      "Viande en sauce":       { kw:["sauce","mijoté","mijotée","daube","bourguignon","ragoût","ragout"], types:["red"], notes:["charpenté","corsé"] },
+      "Bœuf cru (tartare/carpaccio)": { kw:["tartare","carpaccio","cru","boeuf","bœuf"], types:["red","white"], notes:["fruité","léger"] },
+    },
+    "Volailles": {
+      "Poulet rôti":           { kw:["poulet","volaille","poule","rôti","roti"], types:["white","red"], notes:["souple","fruité"] },
+      "Canard":                { kw:["canard","magret","confit"], types:["red"], notes:["fruité","épicé"] },
+      "Dinde / chapon":        { kw:["dinde","chapon","volaille"], types:["white","red"], notes:["rond","souple"] },
+      "Volaille à la crème":   { kw:["crème","creme","blanquette","fricassée","volaille"], types:["white"], notes:["rond","gras","beurré"] },
+    },
+    "Porc & charcuterie": {
+      "Porc / rôti de porc":   { kw:["porc","rôti","échine","filet mignon"], types:["red","white","rose"], notes:["fruité","souple"] },
+      "Charcuterie":           { kw:["charcuterie","saucisson","jambon","pâté","terrine","rillettes"], types:["red","white","rose"], notes:["fruité","vif"] },
+      "Saucisse / andouillette":{ kw:["saucisse","andouillette","boudin"], types:["red","white"], notes:["vif","fruité"] },
+    },
+    "Poissons": {
+      "Poisson blanc":         { kw:["poisson blanc","cabillaud","bar","sole","dorade","colin","merlu","poisson"], types:["white"], notes:["vif","frais","minéral"] },
+      "Poisson gras / saumon": { kw:["saumon","thon","maquereau","sardine","poisson gras"], types:["white","rose"], notes:["gras","rond","fruité"] },
+      "Poisson fumé":          { kw:["fumé","saumon fumé","truite fumée"], types:["white","sparkling"], notes:["vif","minéral"] },
+      "Poisson en sauce":      { kw:["poisson","sauce","beurre blanc"], types:["white"], notes:["rond","gras","beurré"] },
+    },
+    "Fruits de mer": {
+      "Huîtres":               { kw:["huître","huitre","coquillage"], types:["white","sparkling"], notes:["minéral","vif","iodé"] },
+      "Crustacés (homard, crabe)": { kw:["homard","crabe","langouste","crustacé","crustace","écrevisse"], types:["white","sparkling"], notes:["rond","gras","minéral"] },
+      "Crevettes / gambas":    { kw:["crevette","gambas","scampi"], types:["white","rose"], notes:["vif","frais"] },
+      "Coquilles Saint-Jacques":{ kw:["saint-jacques","noix de saint-jacques","coquille"], types:["white","sparkling"], notes:["rond","beurré","minéral"] },
+      "Moules":                { kw:["moule","moules"], types:["white"], notes:["vif","minéral"] },
+    },
+    "Fromages": {
+      "Pâte dure (comté, gruyère)": { kw:["comté","gruyère","pâte dure","pâte pressée","cantal","beaufort"], types:["white","red"], notes:["rond","fruité"] },
+      "Pâte molle (camembert, brie)": { kw:["camembert","brie","pâte molle","coulommiers","croûte fleurie"], types:["red","white"], notes:["souple","fruité"] },
+      "Fromage bleu":          { kw:["bleu","roquefort","gorgonzola","fourme","persillé"], types:["dessert","red"], notes:["liquoreux","puissant"] },
+      "Chèvre":                { kw:["chèvre","chevre","crottin"], types:["white","rose"], notes:["vif","frais","minéral"] },
+      "Fromage à croûte lavée (munster)": { kw:["munster","époisses","maroilles","croûte lavée"], types:["white","dessert"], notes:["aromatique","puissant"] },
+    },
+    "Desserts": {
+      "Dessert au chocolat":   { kw:["chocolat","fondant","mousse au chocolat","brownie"], types:["dessert","red"], notes:["liquoreux","puissant","fruité"] },
+      "Tarte aux fruits":      { kw:["tarte","fruits","pomme","poire","abricot","tatin"], types:["dessert","sparkling"], notes:["liquoreux","fruité","sucré"] },
+      "Pâtisserie crémeuse":   { kw:["crème","crème brûlée","flan","pâtisserie","mille-feuille"], types:["dessert"], notes:["liquoreux","sucré"] },
+      "Fruits rouges":         { kw:["fruits rouges","fraise","framboise"], types:["dessert","sparkling","rose"], notes:["fruité","sucré"] },
+      "Foie gras (dessert sucré)": { kw:["foie gras"], types:["dessert"], notes:["liquoreux","sucré","gras"] },
+    },
+    "Apéritif & entrées": {
+      "Apéritif / amuse-bouches": { kw:["apéritif","aperitif","amuse-bouche","apéro","tapas"], types:["sparkling","white","rose"], notes:["vif","léger","frais"] },
+      "Salade / crudités":     { kw:["salade","crudité","légumes crus","vinaigrette"], types:["white","rose"], notes:["vif","frais"] },
+      "Foie gras (entrée)":    { kw:["foie gras","terrine de foie"], types:["dessert","white"], notes:["liquoreux","rond"] },
+      "Soupe / velouté":       { kw:["soupe","velouté","potage"], types:["white"], notes:["rond","souple"] },
+      "Quiche / tarte salée":  { kw:["quiche","tarte salée","tarte aux légumes"], types:["white","rose"], notes:["vif","rond"] },
+    },
+    "Végétarien & légumes": {
+      "Légumes grillés":       { kw:["légumes grillés","aubergine","courgette","ratatouille","poivron"], types:["rose","red","white"], notes:["fruité","souple"] },
+      "Champignons":           { kw:["champignon","cèpe","girolle","morille"], types:["red","white"], notes:["terreux","rond"] },
+      "Truffe":                { kw:["truffe"], types:["red","white"], notes:["puissant","aromatique"] },
+      "Plats à base d'œuf":    { kw:["œuf","oeuf","omelette","quiche"], types:["white","red"], notes:["souple","vif"] },
+      "Risotto / pâtes":       { kw:["risotto","pâtes","pasta","gnocchi"], types:["white","red"], notes:["rond","fruité"] },
+    },
+  },
+  "Recettes": {
+    "Plats mijotés français": {
+      "Bœuf bourguignon":      { kw:["boeuf","bœuf","bourguignon","mijoté","sauce","vin rouge"], types:["red"], notes:["corsé","charpenté"] },
+      "Coq au vin":            { kw:["coq","volaille","vin rouge","sauce","mijoté"], types:["red"], notes:["corsé","fruité"] },
+      "Daube provençale":      { kw:["daube","boeuf","bœuf","mijoté","provençal"], types:["red"], notes:["épicé","corsé"] },
+      "Pot-au-feu":            { kw:["pot-au-feu","boeuf","bœuf","bouilli","légumes"], types:["red","white"], notes:["souple","fruité"] },
+      "Blanquette de veau":    { kw:["blanquette","veau","crème","sauce blanche"], types:["white"], notes:["rond","gras","beurré"] },
+      "Cassoulet":             { kw:["cassoulet","haricot","confit","saucisse"], types:["red"], notes:["corsé","rustique","puissant"] },
+      "Pot-au-feu / bœuf braisé": { kw:["braisé","boeuf","bœuf","mijoté"], types:["red"], notes:["corsé"] },
+    },
+    "Rôtis & grillades": {
+      "Magret de canard":      { kw:["magret","canard"], types:["red"], notes:["fruité","épicé","corsé"] },
+      "Confit de canard":      { kw:["confit","canard"], types:["red"], notes:["corsé","fruité"] },
+      "Steak frites":          { kw:["steak","frites","boeuf","bœuf","grillade"], types:["red"], notes:["tannique","fruité"] },
+      "Côte de bœuf":          { kw:["côte de bœuf","boeuf","bœuf","grillade"], types:["red"], notes:["tannique","puissant"] },
+      "Gigot d'agneau":        { kw:["gigot","agneau"], types:["red"], notes:["tannique","épicé"] },
+      "Poulet rôti":           { kw:["poulet","rôti","volaille"], types:["white","red"], notes:["souple","fruité"] },
+      "Barbecue / grillades":  { kw:["barbecue","bbq","grillade","grillé"], types:["red","rose"], notes:["fruité","épicé"] },
+    },
+    "Plats régionaux & montagne": {
+      "Raclette":              { kw:["raclette","fromage fondu","charcuterie"], types:["white","red"], notes:["vif","fruité"] },
+      "Fondue savoyarde":      { kw:["fondue","fromage fondu"], types:["white"], notes:["vif","minéral"] },
+      "Tartiflette":           { kw:["tartiflette","reblochon","pomme de terre"], types:["white","red"], notes:["vif","fruité"] },
+      "Choucroute":            { kw:["choucroute","chou","saucisse","porc"], types:["white"], notes:["vif","aromatique"] },
+      "Aligot":                { kw:["aligot","fromage","pomme de terre"], types:["red","white"], notes:["fruité","souple"] },
+    },
+    "Pâtes, pizza & gratins": {
+      "Lasagnes / bolognaise": { kw:["lasagne","bolognaise","tomate","viande","pâtes"], types:["red"], notes:["fruité","souple"] },
+      "Pizza":                 { kw:["pizza","tomate","mozzarella"], types:["red","rose"], notes:["fruité","souple"] },
+      "Pâtes à la carbonara":  { kw:["carbonara","pâtes","crème","lard"], types:["white","red"], notes:["rond","vif"] },
+      "Gratin dauphinois":     { kw:["gratin","pomme de terre","crème"], types:["white","red"], notes:["rond","souple"] },
+      "Risotto":               { kw:["risotto","riz","parmesan"], types:["white"], notes:["rond","gras"] },
+    },
+    "Mer & iodé": {
+      "Plateau de fruits de mer": { kw:["fruits de mer","huître","huitre","crustacé","coquillage"], types:["white","sparkling"], notes:["minéral","vif","iodé"] },
+      "Bouillabaisse":         { kw:["bouillabaisse","poisson","soupe de poisson"], types:["white","rose"], notes:["vif","aromatique"] },
+      "Moules-frites":         { kw:["moule","frites"], types:["white"], notes:["vif","minéral"] },
+      "Paella":                { kw:["paella","riz","fruits de mer","safran"], types:["rose","white"], notes:["fruité","vif"] },
+      "Sushi / sashimi":       { kw:["sushi","sashimi","poisson cru","riz"], types:["white","sparkling"], notes:["vif","minéral","frais"] },
+    },
+    "Desserts": {
+      "Fondant au chocolat":   { kw:["chocolat","fondant"], types:["dessert","red"], notes:["liquoreux","puissant"] },
+      "Tarte Tatin":           { kw:["tatin","pomme","tarte"], types:["dessert"], notes:["liquoreux","sucré"] },
+      "Crème brûlée":          { kw:["crème brûlée","crème","vanille"], types:["dessert"], notes:["liquoreux","sucré"] },
+      "Salade de fruits":      { kw:["fruits","salade de fruits"], types:["dessert","sparkling"], notes:["fruité","frais"] },
+    },
+  },
+  "Styles de cuisine": {
+    "Cuisines du monde": {
+      "Italienne":             { kw:["italien","pâtes","pizza","tomate","parmesan","risotto"], types:["red","white"], notes:["fruité","souple"] },
+      "Française traditionnelle": { kw:["sauce","mijoté","crème","beurre","terroir"], types:["red","white"], notes:["charpenté","rond"] },
+      "Méditerranéenne":       { kw:["méditerranéen","huile d'olive","légumes","herbes","tomate"], types:["rose","white","red"], notes:["fruité","frais"] },
+      "Espagnole / tapas":     { kw:["tapas","chorizo","paella","jambon","espagnol"], types:["red","rose"], notes:["fruité","épicé"] },
+      "Américaine / BBQ":      { kw:["barbecue","bbq","burger","ribs","grillé"], types:["red"], notes:["fruité","corsé"] },
+    },
+    "Cuisine asiatique": {
+      "Japonaise":             { kw:["sushi","sashimi","japonais","soja","poisson cru"], types:["white","sparkling"], notes:["vif","minéral","frais"] },
+      "Thaïe":                 { kw:["thaï","thai","curry","coco","citronnelle","épicé"], types:["white","rose"], notes:["aromatique","fruité","demi-sec"] },
+      "Chinoise":              { kw:["chinois","wok","aigre-doux","nouilles","soja"], types:["white","red"], notes:["fruité","souple","demi-sec"] },
+      "Indienne / curry":      { kw:["indien","curry","épices","tandoori","masala","épicé"], types:["white","rose"], notes:["aromatique","fruité","demi-sec"] },
+      "Vietnamienne":          { kw:["vietnamien","pho","bo bun","nem","herbes"], types:["white","rose"], notes:["vif","frais"] },
+    },
+    "Autres": {
+      "Marocaine / tajine":    { kw:["tajine","couscous","marocain","épices","semoule"], types:["red","rose"], notes:["épicé","fruité"] },
+      "Libanaise / mezze":     { kw:["mezze","libanais","houmous","taboulé","grillade"], types:["rose","white"], notes:["vif","frais","fruité"] },
+      "Mexicaine":             { kw:["mexicain","chili","piment","tacos","haricot","épicé"], types:["red","rose"], notes:["fruité","épicé"] },
+      "Végétarienne":          { kw:["végétarien","légumes","tofu","céréales"], types:["white","rose","red"], notes:["fruité","frais"] },
+      "Cuisine épicée (général)": { kw:["épicé","piment","relevé","pimenté"], types:["rose","white"], notes:["fruité","demi-sec","frais"] },
+    },
+  },
+};
+
+// ── Table d'ingrédients / préparations / cuisines → profil de vin ─────────────
+// Sert à la RECHERCHE LIBRE : on découpe le texte saisi, on reconnaît ces mots,
+// et on agrège un profil de vin idéal. Couvre des milliers de plats sans les lister.
+// Chaque entrée : [ [synonymes], { types:[...], notes:[...] } ]
+const PAIR_KEYWORDS = [
+  // Viandes
+  [["boeuf","bœuf","steak","entrecôte","bavette","rumsteck","faux-filet","tournedos","chateaubriand"], { types:["red"], notes:["tannique","corsé","charpenté"] }],
+  [["agneau","gigot","mouton","souris d'agneau"], { types:["red"], notes:["tannique","épicé","corsé"] }],
+  [["veau","escalope","osso buco","blanquette"], { types:["white","red"], notes:["rond","souple"] }],
+  [["porc","échine","filet mignon","rôti de porc","travers","jambon"], { types:["red","white","rose"], notes:["fruité","souple"] }],
+  [["canard","magret","confit","cuisse de canard"], { types:["red"], notes:["fruité","épicé","corsé"] }],
+  [["poulet","volaille","poule","chapon","pintade","coquelet"], { types:["white","red"], notes:["souple","fruité"] }],
+  [["dinde","oie"], { types:["white","red"], notes:["rond","souple"] }],
+  [["lapin"], { types:["white","red"], notes:["souple","fruité"] }],
+  [["gibier","chevreuil","sanglier","biche","venaison","faisan","perdrix"], { types:["red"], notes:["puissant","épicé","corsé"] }],
+  [["saucisse","merguez","chipolata","andouillette","boudin","saucisson"], { types:["red","white"], notes:["fruité","vif"] }],
+  [["charcuterie","jambon","pâté","terrine","rillettes","chorizo","salami"], { types:["red","white","rose"], notes:["fruité","vif"] }],
+  [["tartare","carpaccio","viande crue"], { types:["red","white"], notes:["fruité","léger"] }],
+  [["bœuf bourguignon","boeuf bourguignon","daube","ragoût","pot-au-feu","braisé","mijoté","navarin","goulash"], { types:["red"], notes:["corsé","charpenté"] }],
+  [["cassoulet","choucroute","potée","confit"], { types:["red","white"], notes:["corsé","rustique"] }],
+  // Poissons & mer
+  [["poisson","cabillaud","bar","loup","dorade","sole","colin","merlu","lieu","églefin","limande"], { types:["white"], notes:["vif","frais","minéral"] }],
+  [["saumon","truite","thon","maquereau","sardine","hareng","anguille"], { types:["white","rose"], notes:["gras","rond","fruité"] }],
+  [["fumé","saumon fumé","truite fumée","haddock"], { types:["white","sparkling"], notes:["vif","minéral"] }],
+  [["huître","huitre","coquillage","bulot","bigorneau"], { types:["white","sparkling"], notes:["minéral","vif","iodé"] }],
+  [["homard","langouste","crabe","tourteau","écrevisse","langoustine"], { types:["white","sparkling"], notes:["rond","gras","minéral"] }],
+  [["crevette","gambas","scampi"], { types:["white","rose"], notes:["vif","frais"] }],
+  [["saint-jacques","coquille saint-jacques","noix de saint-jacques","pétoncle"], { types:["white","sparkling"], notes:["rond","beurré","minéral"] }],
+  [["moule","palourde","praire"], { types:["white"], notes:["vif","minéral"] }],
+  [["calamar","calmar","poulpe","seiche","encornet"], { types:["white","rose"], notes:["vif","frais"] }],
+  [["sushi","sashimi","maki","poisson cru","ceviche","tartare de poisson","poke"], { types:["white","sparkling"], notes:["vif","minéral","frais"] }],
+  [["bouillabaisse","soupe de poisson","paella","fruits de mer","plateau de fruits de mer"], { types:["white","rose"], notes:["vif","aromatique"] }],
+  // Fromages
+  [["comté","gruyère","emmental","beaufort","cantal","pâte dure","tomme","abondance"], { types:["white","red"], notes:["rond","fruité"] }],
+  [["camembert","brie","coulommiers","pâte molle","brillat-savarin"], { types:["red","white"], notes:["souple","fruité"] }],
+  [["bleu","roquefort","gorgonzola","fourme","stilton","persillé"], { types:["dessert","red"], notes:["liquoreux","puissant"] }],
+  [["chèvre","chevre","crottin","sainte-maure","bûche de chèvre"], { types:["white","rose"], notes:["vif","frais","minéral"] }],
+  [["munster","époisses","maroilles","langres","croûte lavée","reblochon"], { types:["white","dessert"], notes:["aromatique","puissant"] }],
+  [["raclette","fondue","tartiflette","fromage fondu","mont d'or"], { types:["white","red"], notes:["vif","minéral"] }],
+  // Desserts & sucré
+  [["chocolat","fondant","mousse au chocolat","brownie","truffe en chocolat","forêt-noire"], { types:["dessert","red"], notes:["liquoreux","puissant"] }],
+  [["tarte","tatin","tarte aux pommes","tarte aux fruits","clafoutis","crumble"], { types:["dessert","sparkling"], notes:["liquoreux","fruité","sucré"] }],
+  [["crème","crème brûlée","flan","panna cotta","île flottante","mille-feuille","éclair"], { types:["dessert"], notes:["liquoreux","sucré"] }],
+  [["fruits rouges","fraise","framboise","cerise","myrtille"], { types:["dessert","sparkling","rose"], notes:["fruité","sucré"] }],
+  [["citron","agrume","tarte au citron","lemon"], { types:["dessert","sparkling"], notes:["vif","sucré"] }],
+  [["foie gras"], { types:["dessert","white"], notes:["liquoreux","rond","gras"] }],
+  [["macaron","pâtisserie","gâteau","cake","biscuit"], { types:["dessert","sparkling"], notes:["sucré","fruité"] }],
+  // Bases / préparations
+  [["sauce","mijoté","crème","beurre blanc","velouté"], { types:["red","white"], notes:["rond","charpenté"] }],
+  [["grillade","grillé","barbecue","bbq","plancha","brochette"], { types:["red","rose"], notes:["fruité","épicé"] }],
+  [["rôti","roti","au four"], { types:["red","white"], notes:["souple","fruité"] }],
+  [["friture","frit","tempura","beignet"], { types:["white","sparkling"], notes:["vif","frais"] }],
+  [["champignon","cèpe","girolle","morille","truffe","pleurote"], { types:["red","white"], notes:["terreux","rond","puissant"] }],
+  [["truffe"], { types:["red","white"], notes:["puissant","aromatique"] }],
+  [["œuf","oeuf","omelette","quiche","brouillade"], { types:["white","red"], notes:["souple","vif"] }],
+  [["risotto","pâtes","pasta","spaghetti","tagliatelle","gnocchi","lasagne","raviolis"], { types:["white","red"], notes:["rond","fruité"] }],
+  [["pizza","focaccia"], { types:["red","rose"], notes:["fruité","souple"] }],
+  [["tomate","ratatouille","sauce tomate","bolognaise"], { types:["red","rose"], notes:["fruité","souple"] }],
+  [["gratin","pomme de terre","dauphinois","purée","aligot"], { types:["white","red"], notes:["rond","souple"] }],
+  [["salade","crudité","vinaigrette"], { types:["white","rose"], notes:["vif","frais"] }],
+  [["soupe","potage","velouté","bouillon"], { types:["white"], notes:["rond","souple"] }],
+  [["légumes","aubergine","courgette","poivron","asperge","artichaut"], { types:["white","rose","red"], notes:["fruité","frais"] }],
+  [["végétarien","vegan","tofu","légumineuse","lentille","pois chiche","houmous"], { types:["white","rose","red"], notes:["fruité","frais"] }],
+  // Épices & cuisines du monde
+  [["épicé","piment","pimenté","relevé","harissa"], { types:["rose","white"], notes:["fruité","demi-sec","frais"] }],
+  [["curry","massala","masala","tikka","tandoori","indien"], { types:["white","rose"], notes:["aromatique","demi-sec","fruité"] }],
+  [["thaï","thai","coco","lait de coco","citronnelle","gingembre","wok"], { types:["white","rose"], notes:["aromatique","demi-sec"] }],
+  [["chinois","cantonais","aigre-doux","nem","nouilles sautées","canard laqué"], { types:["white","red"], notes:["fruité","demi-sec"] }],
+  [["japonais","ramen","yakitori","teriyaki","miso"], { types:["white","sparkling"], notes:["vif","minéral"] }],
+  [["sushi","maki","sashimi"], { types:["white","sparkling"], notes:["vif","minéral","frais"] }],
+  [["mexicain","taco","fajita","chili","guacamole","burrito"], { types:["red","rose"], notes:["fruité","épicé"] }],
+  [["libanais","mezze","taboulé","falafel","kebab"], { types:["rose","white"], notes:["vif","frais","fruité"] }],
+  [["marocain","tajine","couscous","semoule","pastilla"], { types:["red","rose"], notes:["épicé","fruité"] }],
+  [["italien","parmesan","mozzarella","burrata","antipasti","osso"], { types:["red","white"], notes:["fruité","souple"] }],
+  [["espagnol","tapas","paella","gambas","jambon serrano"], { types:["red","rose"], notes:["fruité","épicé"] }],
+  [["américain","burger","hot-dog","ribs","pulled pork","frites"], { types:["red"], notes:["fruité","corsé"] }],
+  [["vietnamien","pho","bo bun","rouleau de printemps","bobun"], { types:["white","rose"], notes:["vif","frais"] }],
+  [["apéritif","apéro","aperitif","amuse-bouche","tapas","chips","cacahuète","olive"], { types:["sparkling","white","rose"], notes:["vif","léger","frais"] }],
+];
 // Messages d'erreur affichés à l'utilisateur selon le code retourné par le backend
 const ERROR_MESSAGES = {
   quota_exceeded:      "⚠️ Quota Gemini dépassé (1 500/jour). Les résultats viennent d'Open Food Facts — ajoutez votre clé demain ou vérifiez votre quota sur aistudio.google.com.",
@@ -328,6 +547,15 @@ const GLASS_SVG = `<svg viewBox="0 0 40 56" xmlns="http://www.w3.org/2000/svg">
   <ellipse cx="20" cy="48" rx="8" ry="2.2" fill="#6E2118"/>
 </svg>`;
 
+// Icône tire-bouchon colorée (manche bois + spirale métal) pour le bouton « À ouvrir »
+const CORKSCREW_SVG = `<svg class="cork-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="6.5" y="2" width="11" height="3.4" rx="1.5" fill="#8B5A2B" stroke="#6b4420" stroke-width="0.6"/>
+  <rect x="7.2" y="2.5" width="3" height="2.4" rx="0.8" fill="#A6713A"/>
+  <line x1="12" y1="5.4" x2="12" y2="9" stroke="#B8B8C0" stroke-width="1.7"/>
+  <path d="M12 9c2.3 0 2.3 2 0 2s-2.3 2 0 2 2.3 2 0 2 -2.3 2 0 2 2.3 2 0 2" stroke="#C9CAD2" stroke-width="1.6"/>
+  <path d="M12 22.6l-1.5-2.2h3z" fill="#9A9BA4"/>
+</svg>`;
+
 // ── Classe principale ──────────────────────────────────────────────────────────
 
 class MillesimeCard extends HTMLElement {
@@ -346,6 +574,9 @@ class MillesimeCard extends HTMLElement {
     this._view       = "2d";  // "2d" | "dot" | "3d"
     this._viewTouched = false; // l'utilisateur a basculé manuellement (prime sur default_view)
     this._optionsOpen = false; // ligne d'options repliable (sous le verre du logo)
+    this._filtersOpen = false; // sous-menu repliable
+    this._filterTab = "occasions"; // onglet actif du sous-menu
+    this._occasionFilter = "";     // occasion sélectionnée (surbrillance cave)
     let lblMode = "both";
     try { lblMode = localStorage.getItem("millesime-labelmode") || "both"; } catch (e) {}
     this._labelMode = ["plate", "bubble", "both"].includes(lblMode) ? lblMode : "both"; // repères 3D
@@ -465,9 +696,20 @@ class MillesimeCard extends HTMLElement {
   set hass(hass) {
     const first = !this._hass;
     const themeChanged = this._hass?.themes !== hass.themes;
+    const prevHass = this._hass;
     this._hass = hass;
     if (first) { this._subscribeUpdates(); this._fetchData(); }
     if (first || themeChanged) this._applyTheme();
+    // Re-render léger si la valeur d'un capteur configuré a changé (zones T°/hygro)
+    if (!first && !this._modal && prevHass) {
+      const c = this._data?.cellar || {};
+      for (const ent of [c.temp_entity, c.humid_entity]) {
+        if (ent && prevHass.states[ent]?.state !== hass.states[ent]?.state) {
+          this._render();
+          break;
+        }
+      }
+    }
   }
 
   getCardSize() { return 8; }
@@ -506,6 +748,41 @@ class MillesimeCard extends HTMLElement {
     this._hass.connection
       .subscribeEvents(() => this._fetchData(), `${DOMAIN}_updated`)
       .then((u) => { if (this.isConnected) this._unsubs.push(u); else u(); });
+    // Progression du rafraîchissement des fiches (pourcentage)
+    this._hass.connection
+      .subscribeEvents((ev) => this._onRefreshProgress(ev.data || {}), `${DOMAIN}_refresh_progress`)
+      .then((u) => { if (this.isConnected) this._unsubs.push(u); else u(); });
+  }
+
+  _onRefreshProgress(data) {
+    const { done = 0, total = 0, finished = false } = data;
+    if (!total) return;
+    const pct = Math.round((done / total) * 100);
+    // La barre s'affiche dans le menu options (zone repliable) — pas collée en bas.
+    // On ouvre le menu options s'il est fermé, le temps de l'opération.
+    const opts = this.shadowRoot.getElementById("header-options");
+    if (opts && !this._optionsOpen && !finished) {
+      this._optionsOpen = true;
+      opts.classList.add("open");
+      this.shadowRoot.getElementById("btn-options")?.classList.add("active");
+    }
+    let bar = this.shadowRoot.getElementById("refresh-progress");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "refresh-progress";
+      bar.className = "refresh-progress";
+      bar.innerHTML = `<div class="rp-label"></div><div class="rp-track"><div class="rp-fill"></div></div>`;
+      // Insérer dans le menu options (juste après la rangée de boutons)
+      const row = opts?.querySelector(".opt-row");
+      if (row && row.parentNode) row.parentNode.insertBefore(bar, row.nextSibling);
+      else (opts || this.shadowRoot).appendChild(bar);
+    }
+    bar.querySelector(".rp-label").textContent = `♻️ Complétion des fiches… ${done}/${total} (${pct} %)`;
+    bar.querySelector(".rp-fill").style.width = `${pct}%`;
+    if (finished) {
+      bar.querySelector(".rp-label").textContent = `✓ Fiches complétées (${total})`;
+      setTimeout(() => bar.remove(), 3000);
+    }
   }
 
   async _callService(service, data) {
@@ -693,7 +970,7 @@ class MillesimeCard extends HTMLElement {
     overlay.style.fontFamily = this._fontSans || "'Inter', sans-serif";
     overlay.style.fontSize   = (this._fsBase  || 13) + 'px';
     const box = document.createElement("div");
-    box.className = "mm-box" + (type === "bottlelist" ? " mm-box-wide" : "");
+    box.className = "mm-box" + ((type === "bottlelist" || type === "racklist") ? " mm-box-wide" : "");
 
     if (type === "rack")     box.innerHTML = this._rackFormHTML(opts.rack);
     if (type === "bottle")    box.innerHTML = this._bottleFormHTML(opts.wine, opts.slot);
@@ -705,7 +982,11 @@ class MillesimeCard extends HTMLElement {
     if (type === "journal")   box.innerHTML = this._journalHTML();
     if (type === "search")    box.innerHTML = this._searchModalHTML();
     if (type === "bottlelist") box.innerHTML = this._bottleListHTML();
+    if (type === "racklist")  box.innerHTML = this._rackListHTML();
+    if (type === "openpage")  box.innerHTML = this._openPageHTML();
     if (type === "moverack") box.innerHTML = this._moveRackHTML(opts.rack);
+    if (type === "sensors")   box.innerHTML = this._sensorsHTML();
+    if (type === "envhistory") box.innerHTML = this._envHistoryHTML(opts.entity, opts.kind);
 
     overlay.appendChild(box);
     document.body.appendChild(overlay);
@@ -726,7 +1007,11 @@ class MillesimeCard extends HTMLElement {
     if (type === "journal")   this._bindJournal(box);
     if (type === "search")    this._bindSearchModal(box);
     if (type === "bottlelist") this._bindBottleList(box);
+    if (type === "racklist")  this._bindRackList(box);
+    if (type === "openpage")  this._bindOpenPage(box);
     if (type === "moverack") this._bindMoveRack(box, opts.rack);
+    if (type === "sensors")   this._bindSensors(box);
+    if (type === "envhistory") this._bindEnvHistory(box, opts.entity, opts.kind);
   }
 
   _closeModal() {
@@ -1021,11 +1306,36 @@ class MillesimeCard extends HTMLElement {
             </select>
           </div>
         </div>
+        <div class="mm-field" id="bt-gift-field" style="${(b.event === "gift") ? "" : "display:none"}">
+          <label class="mm-label">🎁 De la part de</label>
+          <input class="mm-input" id="bt-gifted-by" list="bt-donors" autocomplete="off"
+            value="${esc(b.gifted_by || "")}" placeholder="Qui vous a offert cette bouteille ?">
+          <datalist id="bt-donors">
+            ${this._donorSuggestions().map(n => `<option value="${esc(n)}"></option>`).join("")}
+          </datalist>
+        </div>
 
         <div class="mm-field">
           <label class="mm-label">Notes personnelles</label>
           <textarea class="mm-input mm-textarea" id="bt-notes"
             placeholder="Impressions, occasion...">${esc(b.notes || "")}</textarea>
+        </div>
+
+        <!-- Photo de la bouteille (prise / galerie / URL) -->
+        <div class="mm-field">
+          <label class="mm-label">📷 Photo de la bouteille</label>
+          <div class="mm-photo-box" id="bt-photo-box">
+            <div class="mm-photo-thumb ${b.image_url ? "" : "empty"}" id="bt-photo-thumb">
+              ${b.image_url ? `<img src="${esc(b.image_url)}" alt="">` : `<span class="mm-photo-ph">Aucune photo</span>`}
+            </div>
+            <div class="mm-photo-actions">
+              <button type="button" class="mm-photo-btn" id="bt-photo-pick">📷 Prendre / choisir</button>
+              <button type="button" class="mm-photo-btn mm-photo-btn-rm ${b.image_url ? "" : "hidden"}" id="bt-photo-rm">🗑️ Retirer</button>
+            </div>
+          </div>
+          <input type="file" id="bt-photo-file" accept="image/*" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
+          <input class="mm-input mm-photo-url" id="bt-photo-url" placeholder="… ou coller un lien d'image (https://…)" autocomplete="off" value="${(b.image_url && /^https?:/i.test(b.image_url)) ? esc(b.image_url) : ""}">
+          <div class="mm-photo-hint">La photo prise pour scanner l'étiquette devient aussi la photo affichée.</div>
         </div>
 
         <!-- Champs cachés remplis par Gemini -->
@@ -1053,6 +1363,47 @@ class MillesimeCard extends HTMLElement {
     const btnPhoto = box.querySelector("#btn-photo");
     const fileInput= box.querySelector("#photo-input");
 
+    // Champ « De la part de » visible uniquement si l'événement = Cadeau
+    const evSel = box.querySelector("#bt-event");
+    const giftField = box.querySelector("#bt-gift-field");
+    evSel?.addEventListener("change", () => {
+      if (giftField) giftField.style.display = evSel.value === "gift" ? "" : "none";
+    });
+
+    // ── Photo de la bouteille : preview + prise/galerie + URL + retrait ──
+    const photoHidden = box.querySelector("#bt-image_url");
+    const photoThumb  = box.querySelector("#bt-photo-thumb");
+    const photoFile   = box.querySelector("#bt-photo-file");
+    const photoUrl    = box.querySelector("#bt-photo-url");
+    const photoRm     = box.querySelector("#bt-photo-rm");
+    const setPhoto = (src) => {
+      if (photoHidden) photoHidden.value = src || "";
+      if (photoThumb) {
+        photoThumb.classList.toggle("empty", !src);
+        photoThumb.innerHTML = src ? `<img src="${esc(src)}" alt="">` : `<span class="mm-photo-ph">Aucune photo</span>`;
+      }
+      if (photoRm) photoRm.classList.toggle("hidden", !src);
+    };
+    box.querySelector("#bt-photo-pick")?.addEventListener("click", () => photoFile?.click());
+    photoFile?.addEventListener("change", async () => {
+      const file = photoFile.files?.[0];
+      if (!file) return;
+      try {
+        const compressed = await this._compressImage(file);
+        setPhoto(compressed);
+        if (photoUrl) photoUrl.value = "";   // on privilégie la photo prise
+        this._showToast("success", "Photo ajoutée");
+      } catch (e) {
+        this._showToast("error", "Impossible de lire cette image");
+      }
+    });
+    photoUrl?.addEventListener("change", () => {
+      const v = (photoUrl.value || "").trim();
+      if (v && /^https?:/i.test(v)) setPhoto(v);
+      else if (!v) setPhoto("");
+    });
+    photoRm?.addEventListener("click", () => { setPhoto(""); if (photoUrl) photoUrl.value = ""; });
+
     // ── Auto-remplissage depuis un résultat ──────────────────────────────────
     const fillFrom = (w) => {
       const set = (id, val) => {
@@ -1067,7 +1418,15 @@ class MillesimeCard extends HTMLElement {
       set("bt-until",       w.drink_until || "");
       set("bt-vrating",     w.vivino_rating || "");
       if (w.price > 0) { const el = box.querySelector("#bt-price"); if (el) el.value = w.price; }
-      set("bt-image_url",   w.image_url   || "");
+      // N'écrase l'image que si l'utilisateur n'a pas déjà mis sa propre photo
+      const imgEl = box.querySelector("#bt-image_url");
+      if (imgEl && !imgEl.value && w.image_url) {
+        imgEl.value = w.image_url;
+        const th = box.querySelector("#bt-photo-thumb");
+        const rm = box.querySelector("#bt-photo-rm");
+        if (th) { th.classList.remove("empty"); th.innerHTML = `<img src="${esc(w.image_url)}" alt="">`; }
+        if (rm) rm.classList.remove("hidden");
+      }
       set("bt-vivino_url",  w.vivino_url  || "");
       set("bt-region",      w.region      || "");
       set("bt-country",     w.country     || "");
@@ -1198,6 +1557,16 @@ class MillesimeCard extends HTMLElement {
       }
 
       const mimeType = file.type || "image/jpeg";
+      // La photo scannée devient aussi la photo affichée de la bouteille (compressée)
+      try {
+        const compressed = await this._compressImage(file);
+        const ph = box.querySelector("#bt-image_url");
+        const th = box.querySelector("#bt-photo-thumb");
+        const rm = box.querySelector("#bt-photo-rm");
+        if (ph) ph.value = compressed;
+        if (th) { th.classList.remove("empty"); th.innerHTML = `<img src="${esc(compressed)}" alt="">`; }
+        if (rm) rm.classList.remove("hidden");
+      } catch (e) { /* la compression échoue → on garde au moins l'analyse */ }
       const response = await this._analyzePhoto(b64, mimeType);
       URL.revokeObjectURL(url);
 
@@ -1264,6 +1633,7 @@ class MillesimeCard extends HTMLElement {
         food_pairing:  txt("bt-pairing"),
         vivino_rating: num("bt-vrating"),
         event:         box.querySelector("#bt-event")?.value || "",
+        gifted_by:     box.querySelector("#bt-gifted-by")?.value?.trim() || "",
         image_url:     txt("bt-image_url"),
         vivino_url:    txt("bt-vivino_url"),
       };
@@ -1424,7 +1794,9 @@ class MillesimeCard extends HTMLElement {
         <span style="color:${t.color};font-size:0.77em;font-weight:700;text-transform:uppercase;letter-spacing:1.5px">${t.label}</span>
       </div>
       <div class="mm-body">
-        ${b.image_url ? `<img src="${esc(b.image_url)}" style="width:64px;display:block;margin:0 auto 16px;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,0.6)">` : ""}
+        ${b.image_url
+          ? `<div class="mm-detail-photo"><img src="${esc(b.image_url)}" alt="Photo de ${esc(b.name || "la bouteille")}"></div>`
+          : `<div class="mm-detail-label">${this._wineLabelHTML(b)}</div>`}
         <div class="mm-detail-hero">
           <div class="mm-detail-name">${b.favorite ? "⭐ " : ""}${esc(b.name)}</div>
           <div class="mm-detail-sub">${[b.producer, b.appellation].filter(Boolean).map(esc).join(" · ")}</div>
@@ -1446,6 +1818,8 @@ class MillesimeCard extends HTMLElement {
                                 ? (b.drink_from || "?") + " — " + (b.drink_until || "?") : "")}
           ${_drow("Ajouté le",  b.added_date || "")}
           ${b.event && EVENT_LABEL[b.event]?.l ? _drow("Événement", EVENT_LABEL[b.event].emoji + " " + EVENT_LABEL[b.event].l) : ""}
+          ${b.gifted_by ? _drow("De la part de", "🎁 " + b.gifted_by) : ""}
+          ${b.event === "gift" && b.gifted_by ? _drow("De la part de", "🎁 " + esc(b.gifted_by)) : ""}
         </div>
         ${b.tasting_notes ? `<div class="mm-notes mm-tasting">🍷 ${esc(b.tasting_notes)}</div>` : ""}
         ${b.food_pairing  ? `<div class="mm-notes mm-pairing">🍽️ ${esc(b.food_pairing)}</div>`  : ""}
@@ -1876,21 +2250,28 @@ class MillesimeCard extends HTMLElement {
                 const n = slotCount(w);
                 const apo = (w.drink_from || w.drink_until)
                   ? `${esc(w.drink_from || "?")}–${esc(w.drink_until || "?")}` : "";
+                // Ligne 1 (infos libres) : appellation, note, format
                 const meta = [];
                 if (w.appellation) meta.push(`<span class="vm">📍 ${esc(w.appellation)}</span>`);
-                if (w.producer)    meta.push(`<span class="vm">🏭 ${esc(w.producer)}</span>`);
                 if (w.vivino_rating) meta.push(`<span class="vm">★ ${w.vivino_rating}</span>`);
-                if (apo)           meta.push(`<span class="vm">🕐 ${apo}</span>`);
-                if (w.event)       meta.push(`<span class="vm">📅 ${esc(fmtEvent(w.event))}</span>`);
                 if (w.size && String(w.size) !== "75cl") meta.push(`<span class="vm">🍾 ${esc(String(w.size))}</span>`);
-                meta.push(`<span class="vm vm-qty">Qté : ${n}</span>`);
+                // Ligne 2 : 2 colonnes ALIGNÉES (apogée | occasion) — la quantité passe en haut
+                const cols = `
+                  <div class="vlist-wine-cols">
+                    <span class="vcol vcol-apo">${apo ? `🕐 ${apo}` : ""}</span>
+                    <span class="vcol vcol-occ">${w.event ? `📅 ${esc(fmtEvent(w.event))}` : ""}</span>
+                  </div>`;
                 return `
                 <div class="vlist-wine" data-wine="${esc(w.id)}">
                   <div class="vlist-wine-top">
                     <span class="vlist-wine-name">${w.favorite ? '<span class="vfav">★</span> ' : ""}${esc(w.name || "Sans nom")}${w.vintage ? ` <i>${esc(w.vintage)}</i>` : ""}</span>
-                    <span class="vlist-wine-price">${w.price ? Math.round(w.price) + "€" : ""}</span>
+                    <span class="vlist-wine-tail">
+                      <span class="vlist-wine-qty">×${n}</span>
+                      <span class="vlist-wine-price">${w.price ? Math.round(w.price) + "€" : ""}</span>
+                    </span>
                   </div>
                   ${meta.length ? `<div class="vlist-wine-meta">${meta.join("")}</div>` : ""}
+                  ${cols}
                 </div>`;
               }).join("")}`;
             }).join("")}`;
@@ -1901,6 +2282,9 @@ class MillesimeCard extends HTMLElement {
       <div class="mm-header">
         <span class="mm-title">🍷 ${totalSlots} bouteille${totalSlots > 1 ? "s" : ""}</span>
         <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="vlist-search-wrap">
+        <input type="text" id="vlist-search" class="vlist-search" placeholder="🔍 Rechercher un vin, une région, un producteur…" autocomplete="off">
       </div>
       <div class="mm-body">${body}</div>
       <div class="mm-footer">
@@ -1913,10 +2297,289 @@ class MillesimeCard extends HTMLElement {
     box.querySelectorAll(".vlist-wine[data-wine]").forEach((row) =>
       row.addEventListener("click", () => {
         const wine = (this._data?.wines || []).find((w) => w.id === row.dataset.wine);
-        if (wine) { this._closeModal(); this._openModal("detail", { wine }); }
+        if (wine) this._locateBottle(wine);
       })
     );
     box.querySelector("#blist-export")?.addEventListener("click", () => this._exportCSV());
+
+    // Recherche en direct dans la liste
+    const search = box.querySelector("#vlist-search");
+    if (search) {
+      const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const apply = () => {
+        const q = norm(search.value.trim());
+        const wines = this._data?.wines || [];
+        const byId = Object.fromEntries(wines.map(w => [w.id, w]));
+        box.querySelectorAll(".vlist-wine[data-wine]").forEach((row) => {
+          const w = byId[row.dataset.wine];
+          const hay = norm([w?.name, w?.region, w?.appellation, w?.producer, w?.vintage].join(" "));
+          row.style.display = (!q || hay.includes(q)) ? "" : "none";
+        });
+        // Masquer les en-têtes région/couleur devenus vides
+        box.querySelectorAll(".vlist-region-head").forEach((rh) => {
+          let n = rh.nextElementSibling, any = false;
+          while (n && n.classList.contains("vlist-wine")) {
+            if (n.style.display !== "none") { any = true; break; }
+            n = n.nextElementSibling;
+          }
+          rh.style.display = any ? "" : "none";
+        });
+        box.querySelectorAll(".vlist-color-head").forEach((ch) => {
+          let n = ch.nextElementSibling, any = false;
+          while (n && !n.classList.contains("vlist-color-head")) {
+            if (n.classList.contains("vlist-wine") && n.style.display !== "none") { any = true; break; }
+            n = n.nextElementSibling;
+          }
+          ch.style.display = any ? "" : "none";
+        });
+      };
+      search.addEventListener("input", apply);
+      setTimeout(() => search.focus(), 120);
+    }
+  }
+
+  // ── Liste des casiers : un casier → les bouteilles qu'il contient ──
+  _rackListHTML() {
+    const racks = this._data?.cellar?.racks || [];
+    const wines = this._data?.wines || [];
+    const fmtEvent = (e) => (EVENT_TYPES.find(x => x.v === e)?.l) || "";
+
+    // Index : rack_id → [{wine, slot}]
+    const byRack = {};
+    for (const w of wines) {
+      for (const s of (w.slots || [])) {
+        (byRack[s.rack_id] ??= []).push({ wine: w, slot: s.slot });
+      }
+    }
+    const totalBottles = wines.reduce((a, w) => a + (w.slots || []).length, 0);
+
+    const body = racks.length === 0
+      ? `<div class="mm-empty-hint">Aucun casier dans la cave.</div>`
+      : `<div class="vlist">
+          ${racks.map((rack, fi) => {
+            const rackName = rack.name || `Casier ${fi + 1}`;
+            const cols = rack.columns || 8;
+            const capacity = rack.slots || cols * (rack.shelves || 2);
+            const entries = (byRack[rack.id] || []).sort((a, b) => a.slot - b.slot);
+            const n = entries.length;
+            const pct = capacity > 0 ? Math.round((n / capacity) * 100) : 0;
+            const rows = entries.length === 0
+              ? `<div class="rk-empty">Casier vide</div>`
+              : entries.map(({ wine: w, slot }) => {
+                  const t = WINE_TYPES[w.type] || WINE_TYPES.red;
+                  const apo = (w.drink_from || w.drink_until)
+                    ? `${esc(w.drink_from || "?")}–${esc(w.drink_until || "?")}` : "";
+                  const meta = [];
+                  if (w.appellation) meta.push(`<span class="vm">📍 ${esc(w.appellation)}</span>`);
+                  if (w.vivino_rating) meta.push(`<span class="vm">★ ${w.vivino_rating}</span>`);
+                  if (apo) meta.push(`<span class="vm">🕐 ${apo}</span>`);
+                  if (w.event) meta.push(`<span class="vm">📅 ${esc(fmtEvent(w.event))}</span>`);
+                  return `
+                  <div class="vlist-wine rk-wine" data-wine="${esc(w.id)}"
+                       data-hay="${esc([w.name, w.region, w.appellation, w.producer, w.vintage, rackName].join(" "))}">
+                    <div class="vlist-wine-top">
+                      <span class="vlist-wine-name"><span class="rk-dot" style="background:${t.color}"></span>${w.favorite ? '<span class="vfav">★</span> ' : ""}${esc(w.name || "Sans nom")}${w.vintage ? ` <i>${esc(w.vintage)}</i>` : ""}</span>
+                      <span class="vlist-wine-tail">
+                        <span class="rk-slot">N°${slot + 1}</span>
+                        <span class="vlist-wine-price">${w.price ? Math.round(w.price) + "€" : ""}</span>
+                      </span>
+                    </div>
+                    ${meta.length ? `<div class="vlist-wine-meta">${meta.join("")}</div>` : ""}
+                  </div>`;
+                }).join("");
+            return `
+            <div class="rk-head" data-rack-head>
+              <span class="rk-name">📦 ${esc(rackName)}</span>
+              <span class="rk-stat">${n}/${capacity} · ${pct}%</span>
+            </div>
+            ${rows}`;
+          }).join("")}
+        </div>`;
+
+    return `
+      <div class="mm-header">
+        <span class="mm-title">📦 ${racks.length} casier${racks.length > 1 ? "s" : ""} · ${totalBottles} bouteille${totalBottles > 1 ? "s" : ""}</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="vlist-search-wrap">
+        <input type="text" id="rklist-search" class="vlist-search" placeholder="🔍 Rechercher un vin, un casier, une région…" autocomplete="off">
+      </div>
+      <div class="mm-body">${body}</div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Fermer</button>
+      </div>`;
+  }
+
+  _bindRackList(box) {
+    // Clic sur un vin → localiser dans la cave (même mécanique que la liste des vins)
+    box.querySelectorAll(".rk-wine[data-wine]").forEach((row) =>
+      row.addEventListener("click", () => {
+        const wine = (this._data?.wines || []).find((w) => w.id === row.dataset.wine);
+        if (wine) this._locateBottle(wine);
+      })
+    );
+    // Recherche en direct
+    const search = box.querySelector("#rklist-search");
+    if (search) {
+      const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const apply = () => {
+        const q = norm(search.value.trim());
+        box.querySelectorAll(".rk-wine[data-hay]").forEach((row) => {
+          row.style.display = (!q || norm(row.dataset.hay).includes(q)) ? "" : "none";
+        });
+        // Masquer les en-têtes de casier (et "Casier vide") devenus sans résultat
+        box.querySelectorAll(".rk-head[data-rack-head]").forEach((rh) => {
+          let n = rh.nextElementSibling, any = false;
+          while (n && !n.classList.contains("rk-head")) {
+            if (n.classList.contains("rk-wine") && n.style.display !== "none") { any = true; break; }
+            n = n.nextElementSibling;
+          }
+          rh.style.display = any ? "" : "none";
+          // les lignes "Casier vide" suivent le sort de leur en-tête
+          let m = rh.nextElementSibling;
+          while (m && !m.classList.contains("rk-head")) {
+            if (m.classList.contains("rk-empty")) m.style.display = (any || !q) ? (q ? "none" : "") : "none";
+            m = m.nextElementSibling;
+          }
+        });
+      };
+      search.addEventListener("input", apply);
+      setTimeout(() => search.focus(), 120);
+    }
+  }
+
+  // ── Panneau d'infos au survol (souris) / appui long (tactile iPhone) ────────
+  _showBottlePanel(wine, anchorEl, pinned = false) {
+    this._hideBottlePanel();
+    if (!wine) return;
+    // CSS injecté une fois dans document.head (le panneau vit hors shadow DOM, comme le toast)
+    if (!document.querySelector("#mm-bpanel-css")) {
+      const st = document.createElement("style");
+      st.id = "mm-bpanel-css";
+      st.textContent = `
+        .mm-bottle-panel {
+          position:fixed; z-index:999998; width:230px; max-width:calc(100vw - 16px);
+          background:#15110E; border:1px solid #2E2620; border-radius:12px;
+          padding:11px 13px; box-shadow:0 8px 28px rgba(0,0,0,0.6);
+          font-family:Inter, sans-serif; color:#EDE0CC; pointer-events:none;
+          opacity:0; transform:translateY(4px); transition:opacity 0.13s ease, transform 0.13s ease;
+        }
+        .mm-bottle-panel.show { opacity:1; transform:translateY(0); }
+        .mm-bottle-panel .bp-head {
+          display:flex; flex-direction:column; gap:2px; padding-bottom:7px; margin-bottom:7px;
+          border-bottom:2px solid #7B1D2E;
+        }
+        .mm-bottle-panel .bp-name { font-family:Georgia, serif; font-size:1.02em; font-weight:700; line-height:1.25; }
+        .mm-bottle-panel .bp-name i { color:#9A8C78; font-style:italic; }
+        .mm-bottle-panel .bp-type { font-size:0.72em; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; }
+        .mm-bottle-panel .bp-row { display:flex; justify-content:space-between; gap:10px; font-size:0.78em; padding:2px 0; }
+        .mm-bottle-panel .bp-l { color:#8A7E6C; white-space:nowrap; }
+        .mm-bottle-panel .bp-v { color:#EDE0CC; text-align:right; }
+        .mm-bottle-panel .bp-foot {
+          display:flex; justify-content:space-between; margin-top:8px; padding-top:7px;
+          border-top:1px solid #2E2620; font-size:0.84em; font-weight:600; color:#C9A84C;
+        }
+        .mm-bottle-panel.pinned { border-color:#7B1D2E; }
+        .mm-bottle-panel.pinned:active { transform:scale(0.98); }
+        .mm-bottle-panel .bp-tap {
+          margin-top:9px; padding-top:8px; border-top:1px dashed #3a302a;
+          text-align:center; font-size:0.78em; font-weight:600; color:#E0A85A;
+        }
+        .mm-bottle-panel .bp-label { font-size:7px; max-width:128px; margin:0 auto 9px; }
+        .mm-bottle-panel .bp-photo { max-width:120px; margin:0 auto 9px; border-radius:8px; overflow:hidden; background:#15110d; }
+        .mm-bottle-panel .bp-photo img { display:block; width:100%; max-height:150px; object-fit:contain; }
+      `;
+      document.head.appendChild(st);
+    }
+    const t = WINE_TYPES[wine.type] || WINE_TYPES.red;
+    const apo = (wine.drink_from || wine.drink_until)
+      ? `${esc(wine.drink_from || "?")} – ${esc(wine.drink_until || "?")}` : "";
+    const evt = wine.event ? (EVENT_LABEL[wine.event]?.emoji + " " + EVENT_LABEL[wine.event]?.l) : "";
+    const n = (wine.slots || []).length;
+    const row = (lbl, val) => val ? `<div class="bp-row"><span class="bp-l">${lbl}</span><span class="bp-v">${esc(String(val))}</span></div>` : "";
+
+    const panel = document.createElement("div");
+    panel.className = "mm-bottle-panel";
+    panel.innerHTML = `
+      ${wine.image_url
+        ? `<div class="bp-photo"><img src="${esc(wine.image_url)}" alt=""></div>`
+        : `<div class="bp-label">${this._wineLabelHTML(wine)}</div>`}
+      <div class="bp-head" style="border-color:${t.color}">
+        <span class="bp-name">${wine.favorite ? "⭐ " : ""}${esc(wine.name || "Sans nom")}${wine.vintage ? ` <i>${esc(wine.vintage)}</i>` : ""}</span>
+        <span class="bp-type" style="color:${t.color}">${t.emoji} ${t.label}</span>
+      </div>
+      ${row("Producteur", wine.producer)}
+      ${row("Appellation", wine.appellation)}
+      ${row("Région", [wine.region, wine.country].filter(Boolean).join(", "))}
+      ${wine.vivino_rating ? row("Note", wine.vivino_rating + " / 5 ★") : ""}
+      ${apo ? row("Apogée", apo) : ""}
+      ${evt ? row("Occasion", evt) : ""}
+      ${wine.gifted_by ? row("De la part de", "🎁 " + wine.gifted_by) : ""}
+      ${row("Format", wine.size || "75cl")}
+      <div class="bp-foot">
+        <span>${wine.price ? Math.round(wine.price) + " €" : "Prix —"}</span>
+        <span>Qté : ${n}</span>
+      </div>`;
+    document.body.appendChild(panel);
+    this._bottlePanel = panel;
+
+    // Positionner près de la bouteille, en restant dans l'écran
+    const r = anchorEl.getBoundingClientRect();
+    const pw = panel.offsetWidth, ph = panel.offsetHeight;
+    let left = r.left + r.width / 2 - pw / 2;
+    let top = r.top - ph - 8;
+    left = Math.max(8, Math.min(left, window.innerWidth - pw - 8));
+    if (top < 8) top = r.bottom + 8;   // bascule en dessous si pas de place au-dessus
+    panel.style.left = left + "px";
+    panel.style.top = top + "px";
+    requestAnimationFrame(() => panel.classList.add("show"));
+
+    // Mode épinglé (tactile) : l'aperçu reste, devient cliquable → ouvre la fiche,
+    // et un toucher en dehors le referme.
+    if (pinned) {
+      panel.classList.add("pinned");
+      panel.style.pointerEvents = "auto";
+      panel.style.cursor = "pointer";
+      const hint = document.createElement("div");
+      hint.className = "bp-tap";
+      hint.textContent = "Toucher pour la fiche →";
+      panel.appendChild(hint);
+      panel.addEventListener("click", () => {
+        this._hideBottlePanel();
+        this._openModal("detail", { wine });
+      });
+      // Referme si on touche ailleurs (le geste courant est déjà passé : on écoute le suivant)
+      this._panelDismiss = (ev) => {
+        if (this._bottlePanel && !this._bottlePanel.contains(ev.target)) this._hideBottlePanel();
+      };
+      document.addEventListener("pointerdown", this._panelDismiss, true);
+    }
+  }
+
+  _hideBottlePanel() {
+    if (this._panelDismiss) { document.removeEventListener("pointerdown", this._panelDismiss, true); this._panelDismiss = null; }
+    if (this._bottlePanel) { this._bottlePanel.remove(); this._bottlePanel = null; }
+    if (this._lpTimer) { clearTimeout(this._lpTimer); this._lpTimer = null; }
+    if (this._lp3Timer) { clearTimeout(this._lp3Timer); this._lp3Timer = null; }
+  }
+
+  _locateBottle(wine) {
+    const slot = (wine.slots || [])[0];
+    this._closeModal();
+    this._selected = wine.id;
+    this._render();
+    // Défilement vers la bouteille (utile en 2D / pastilles ; en 3D le halo suffit)
+    setTimeout(() => {
+      const sel = slot
+        ? this.shadowRoot.querySelector(`[data-wine-id="${wine.id}"][data-rack-id="${slot.rack_id}"]`)
+        : this.shadowRoot.querySelector(`[data-wine-id="${wine.id}"]`);
+      if (sel) {
+        sel.scrollIntoView({ behavior: "smooth", block: "center" });
+        sel.classList.add("bottle-flash");
+        setTimeout(() => sel.classList.remove("bottle-flash"), 2000);
+      }
+      this._showToast("info", `${wine.name || "Vin"} mis en valeur — touchez ailleurs pour revenir`);
+    }, 160);
   }
 
   _exportCSV() {
@@ -1953,6 +2616,207 @@ class MillesimeCard extends HTMLElement {
   }
 
   // ── Déplacer le contenu d'un casier vers un autre ───────────────────────────
+
+  // ── Capteurs température / hygrométrie ──────────────────────────────────────
+
+  _sensorsHTML() {
+    const cellar = this._data?.cellar || {};
+    return `
+      <div class="mm-header">
+        <span class="mm-title">🌡️ Capteurs de la cave</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        <p class="mm-hint" style="margin-bottom:14px">Choisissez les capteurs Home Assistant à afficher. Les listes se chargent depuis vos entités.</p>
+        <div class="mm-field">
+          <label class="mm-label">🌡️ Capteur de température</label>
+          <select class="mm-input" id="sensor-temp"><option value="">⏳ Chargement…</option></select>
+        </div>
+        <div class="mm-field">
+          <label class="mm-label">💧 Capteur d'hygrométrie</label>
+          <select class="mm-input" id="sensor-humid"><option value="">⏳ Chargement…</option></select>
+        </div>
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Annuler</button>
+        <button class="mm-btn mm-btn-primary" id="sensors-save">Enregistrer</button>
+      </div>`;
+  }
+
+  async _bindSensors(box) {
+    const cellar = this._data?.cellar || {};
+    const tSel = box.querySelector("#sensor-temp");
+    const hSel = box.querySelector("#sensor-humid");
+
+    // Charger la liste des capteurs depuis le backend
+    let sensors = { temperature: [], humidity: [], other: [] };
+    try {
+      sensors = await this._hass.connection.sendMessagePromise({ type: "millesime/list_sensors" });
+    } catch (err) {
+      console.error("[Millésime] list_sensors:", err);
+    }
+
+    const opt = (s, sel) => `<option value="${s.entity_id}" ${s.entity_id === sel ? "selected" : ""}>${s.name}${s.unit ? ` (${s.state}${s.unit})` : ""}</option>`;
+    const fill = (sel, primary, current) => {
+      const groups = [];
+      groups.push(`<option value="">— Aucun —</option>`);
+      if (primary.length) groups.push(`<optgroup label="Capteurs ${sel === tSel ? "température" : "humidité"}">${primary.map(s => opt(s, current)).join("")}</optgroup>`);
+      if (sensors.other.length) groups.push(`<optgroup label="Autres capteurs">${sensors.other.map(s => opt(s, current)).join("")}</optgroup>`);
+      sel.innerHTML = groups.join("");
+    };
+    fill(tSel, sensors.temperature, cellar.temp_entity || "");
+    fill(hSel, sensors.humidity, cellar.humid_entity || "");
+
+    box.querySelector("#sensors-save")?.addEventListener("click", async () => {
+      const btn = box.querySelector("#sensors-save");
+      btn.textContent = "⏳…"; btn.disabled = true;
+      try {
+        await this._hass.connection.sendMessagePromise({
+          type: "millesime/set_sensors",
+          temp_entity: tSel.value || null,
+          humid_entity: hSel.value || null,
+        });
+        await new Promise(r => setTimeout(r, 400));
+        await this._fetchData();
+        this._closeModal();
+        this._showToast("success", "Capteurs enregistrés ✓");
+      } catch (err) {
+        btn.textContent = "Enregistrer"; btn.disabled = false;
+        this._showToast("error", "Erreur : " + (err.message || err));
+      }
+    });
+  }
+
+  _envHistoryHTML(entity, kind) {
+    const cur = this._sensorVal(entity);
+    const icon = kind === "temperature" ? "🌡️" : "💧";
+    const title = kind === "temperature" ? "Température" : "Hygrométrie";
+    return `
+      <div class="mm-header">
+        <span class="mm-title">${icon} ${title}</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px">
+          <span style="font-size:2em;font-weight:700;color:var(--mm-text);font-family:var(--font-serif,Georgia,serif)">${cur ? `${cur.value}${cur.unit}` : "—"}</span>
+          <span style="font-size:0.82em;color:var(--mm-muted)">${cur ? esc(cur.name) : esc(entity)}</span>
+        </div>
+        <div class="env-range" style="display:flex;gap:6px;margin:10px 0">
+          ${[["24h", 24], ["7 j", 168], ["30 j", 720]].map(([lbl, h], i) =>
+            `<button class="env-range-btn ${i === 1 ? "active" : ""}" data-hours="${h}">${lbl}</button>`).join("")}
+        </div>
+        <div id="env-chart-wrap" style="width:100%;height:200px;background:var(--mm-bg0,#0D0D0D);border-radius:8px;border:1px solid var(--mm-border,#222)"></div>
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Fermer</button>
+      </div>`;
+  }
+
+  async _bindEnvHistory(box, entity, kind) {
+    const wrap = box.querySelector("#env-chart-wrap");
+    const unit = this._sensorVal(entity)?.unit || (kind === "temperature" ? "°" : "%");
+    const load = async (hours) => {
+      wrap.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--mm-muted);font-size:0.9em">⏳ Chargement…</div>`;
+      let points = [];
+      try {
+        const res = await this._hass.connection.sendMessagePromise({
+          type: "millesime/entity_history", entity_id: entity, hours,
+        });
+        points = res.points || [];
+      } catch (err) {
+        console.error("[Millésime] entity_history:", err);
+      }
+      this._renderEntityChart(wrap, points, unit);
+    };
+    box.querySelectorAll(".env-range-btn").forEach((b) =>
+      b.addEventListener("click", () => {
+        box.querySelectorAll(".env-range-btn").forEach(x => x.classList.remove("active"));
+        b.classList.add("active");
+        load(parseInt(b.dataset.hours, 10));
+      })
+    );
+    load(168);  // 7 jours par défaut
+  }
+
+  _renderEntityChart(wrap, points, unit) {
+    wrap.innerHTML = "";
+    const tv     = this._hass?.themes?.themes?.[this._hass?.themes?.theme] || {};
+    const cBg    = tv['primary-background-color'] || '#0D0D0D';
+    const cGrid  = tv['divider-color']            || '#222';
+    const cMuted = tv['secondary-text-color']     || '#777';
+    const cText  = tv['primary-text-color']       || '#EDE0CC';
+    const cAccent= tv['primary-color']            || '#C0392B';
+    const sans   = this._fontSans || 'Inter,sans-serif';
+
+    if (!points || points.length < 2) {
+      wrap.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:${cMuted};font-size:0.9em;font-family:${sans}">Pas assez de données sur cette période</div>`;
+      return;
+    }
+
+    const NS = "http://www.w3.org/2000/svg";
+    const W = wrap.offsetWidth || wrap.parentElement?.offsetWidth || 340;
+    const H = 200;
+    const pad = { t: 16, r: 14, b: 26, l: 44 };
+    const cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
+
+    const ts = points.map(p => new Date(p.t).getTime());
+    const vs = points.map(p => p.v);
+    const tMin = Math.min(...ts), tMax = Math.max(...ts);
+    const vMin = Math.min(...vs), vMax = Math.max(...vs);
+    const vSpanRaw = vMax - vMin;
+    const lo = vMin - (vSpanRaw || 1) * 0.12;
+    const hi = vMax + (vSpanRaw || 1) * 0.12;
+    const span = hi - lo || 1;
+    const tSpan = tMax - tMin || 1;
+
+    const px = t => pad.l + ((t - tMin) / tSpan) * cw;
+    const py = v => pad.t + ch - ((v - lo) / span) * ch;
+    const mk = tag => document.createElementNS(NS, tag);
+    const at = (el, a) => { Object.entries(a).forEach(([k, v]) => el.setAttribute(k, v)); return el; };
+
+    const svg = at(mk("svg"), { width: W, height: H, viewBox: `0 0 ${W} ${H}` });
+    svg.style.cssText = "display:block;width:100%;height:100%";
+    const defs = mk("defs");
+    const grad = at(mk("linearGradient"), { id: "eg", x1: "0", y1: "0", x2: "0", y2: "1" });
+    grad.appendChild(at(mk("stop"), { offset: "0%", "stop-color": cAccent, "stop-opacity": "0.35" }));
+    grad.appendChild(at(mk("stop"), { offset: "100%", "stop-color": cAccent, "stop-opacity": "0.02" }));
+    defs.appendChild(grad); svg.appendChild(defs);
+    svg.appendChild(at(mk("rect"), { x: 0, y: 0, width: W, height: H, fill: cBg }));
+
+    for (let g = 0; g <= 4; g++) {
+      const v = hi - span * g / 4;
+      const y = (pad.t + ch * g / 4).toFixed(1);
+      svg.appendChild(at(mk("line"), { x1: pad.l, y1: y, x2: W - pad.r, y2: y, stroke: cGrid, "stroke-width": "1" }));
+      const txt = at(mk("text"), { x: pad.l - 5, y: (parseFloat(y) + 3.5).toFixed(1), "text-anchor": "end", fill: cMuted, "font-size": "10", "font-family": sans });
+      txt.textContent = (Math.round(v * 10) / 10) + unit;
+      svg.appendChild(txt);
+    }
+
+    // Étiquettes de temps (début / milieu / fin)
+    [0, 0.5, 1].forEach(f => {
+      const t = tMin + tSpan * f;
+      const d = new Date(t);
+      const x = px(t);
+      const lbl = tSpan > 36 * 3600 * 1000
+        ? `${d.getDate()}/${d.getMonth() + 1}`
+        : `${String(d.getHours()).padStart(2, "0")}h`;
+      const txt = at(mk("text"), { x: x, y: H - 8, "text-anchor": f === 0 ? "start" : f === 1 ? "end" : "middle", fill: cMuted, "font-size": "10", "font-family": sans });
+      txt.textContent = lbl;
+      svg.appendChild(txt);
+    });
+
+    const line = points.map((p, i) => `${i === 0 ? "M" : "L"} ${px(ts[i]).toFixed(1)} ${py(p.v).toFixed(1)}`).join(" ");
+    const area = `${line} L ${px(tMax).toFixed(1)} ${(pad.t + ch).toFixed(1)} L ${px(tMin).toFixed(1)} ${(pad.t + ch).toFixed(1)} Z`;
+    svg.appendChild(at(mk("path"), { d: area, fill: "url(#eg)" }));
+    svg.appendChild(at(mk("path"), { d: line, fill: "none", stroke: cAccent, "stroke-width": "2", "stroke-linejoin": "round", "stroke-linecap": "round" }));
+
+    // Min / max
+    const tMaxV = ts[vs.indexOf(vMax)], tMinV = ts[vs.indexOf(vMin)];
+    [[tMaxV, vMax], [tMinV, vMin]].forEach(([t, v]) =>
+      svg.appendChild(at(mk("circle"), { cx: px(t).toFixed(1), cy: py(v).toFixed(1), r: "2.5", fill: cText })));
+
+    wrap.appendChild(svg);
+  }
 
   _moveRackHTML(rack) {
     const racks = (this._data?.cellar?.racks || []).filter(f => f.id !== rack.id);
@@ -2313,6 +3177,7 @@ class MillesimeCard extends HTMLElement {
   }
 
   _render() {
+    this._hideBottlePanel();   // éviter un panneau orphelin après reconstruction du DOM
     const data   = this._data || DEFAULT_DATA();
     const racks = data.cellar?.racks || [];
     const wines  = data.wines || [];
@@ -2348,11 +3213,12 @@ class MillesimeCard extends HTMLElement {
       </select>`;
     // Menu déroulant des repères 3D (étiquette de planche / bulle / les deux)
     const labelSel = `
-      <select class="opt-select opt-select-compact" id="sel-labelmode" title="Repères des étagères en 3D">
-        ${[["plate", "🏷️ Étiquette"], ["bubble", "🔵 Bulle"], ["both", "Les deux"]]
-          .map(([v, lbl]) => `<option value="${v}" ${this._labelMode === v ? "selected" : ""}>${lbl}</option>`)
+      <div class="seg3" id="seg-labelmode" role="group" aria-label="Repères 3D">
+        ${[["plate", "🏷️", "Étiquette"], ["bubble", "🔵", "Bulle"], ["both", "⊕", "Les deux"]]
+          .map(([v, icon, lbl]) =>
+            `<button type="button" class="seg3-btn ${this._labelMode === v ? "active" : ""}" data-mode="${v}" title="${lbl}">${icon}<span class="seg3-lbl">${lbl}</span></button>`)
           .join("")}
-      </select>`;
+      </div>`;
 
     return `
       <div class="header">
@@ -2366,27 +3232,25 @@ class MillesimeCard extends HTMLElement {
         <div class="header-right">
           <div class="header-stats">
             <div class="stat stat-clickable" id="btn-bottlelist" title="Voir la liste des bouteilles"><span class="stat-value">${total}</span><span class="stat-label">Bouteilles</span></div>
-            <div class="stat"><span class="stat-value">${nRack}</span><span class="stat-label">Casiers</span></div>
+            <div class="stat stat-clickable" id="btn-racklist" title="Voir la liste des casiers"><span class="stat-value">${nRack}</span><span class="stat-label">Casiers</span></div>
             <div class="stat stat-clickable" id="btn-history" title="Évolution de la valeur de la cave">
               <span class="stat-value">${value > 0 ? Math.round(value) + "€" : "—"}</span><span class="stat-label">Valeur</span>
             </div>
+            <button class="btn-icon btn-options-top" id="btn-options" title="Options" aria-label="Options">⚙️</button>
           </div>
           <div class="header-actions">
-            <div class="ha-icons">
-              ${viewSel}
-              <button class="btn-icon" id="btn-search"  title="Rechercher une bouteille">🔍</button>
-              <button class="btn-icon" id="btn-journal" title="Journal de dégustation">📓</button>
-              <button class="btn-icon" id="btn-options" title="Options" aria-label="Options">⚙️</button>
-            </div>
+            ${viewSel}
+            <button class="btn-rack" id="btn-add-rack" title="Ajouter un casier">➕ Casier</button>
             <button class="btn-primary" id="btn-add-bottle">+ Vin</button>
+            <button class="btn-icon btn-journal-top" id="btn-journal" title="Journal de dégustation">📓</button>
           </div>
         </div>
       </div>
       <div class="header-options ${this._optionsOpen ? "open" : ""}" id="header-options">
         <div class="opt-row">
-          <button class="opt-btn opt-btn-accent" id="btn-add-rack" title="Ajouter un casier">➕ Ajouter un casier</button>
           <button class="opt-btn" id="btn-import"  title="Importer millesime_import_vinotag.csv">📥 Importer des données</button>
           <button class="opt-btn" id="btn-refresh" title="Compléter les fiches via Gemini + fusionner les doublons">♻️ Compléter les fiches</button>
+          <button class="opt-btn" id="btn-sensors" title="Choisir les capteurs température et hygrométrie">🌡️ Capteurs T° / humidité</button>
           <div class="opt-field">
             <span class="opt-field-label">Repères 3D</span>
             ${labelSel}
@@ -2395,28 +3259,411 @@ class MillesimeCard extends HTMLElement {
       </div>`;
   }
 
+  // Compresse une image (File ou data URL) : redimensionne à ~600px max,
+  // JPEG qualité 0.7 → ~40-80 Ko, pour ne pas alourdir le stockage HA.
+  _compressImage(fileOrDataUrl, maxSize = 600, quality = 0.7) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width: w, height: h } = img;
+        if (w > h && w > maxSize) { h = Math.round(h * maxSize / w); w = maxSize; }
+        else if (h > maxSize)     { w = Math.round(w * maxSize / h); h = maxSize; }
+        const cv = document.createElement("canvas");
+        cv.width = w; cv.height = h;
+        const ctx = cv.getContext("2d");
+        ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        try { resolve(cv.toDataURL("image/jpeg", quality)); }
+        catch (e) { reject(e); }
+      };
+      img.onerror = () => reject(new Error("Image illisible"));
+      if (typeof fileOrDataUrl === "string") img.src = fileOrDataUrl;
+      else {
+        const r = new FileReader();
+        r.onload = () => { img.src = r.result; };
+        r.onerror = () => reject(new Error("Lecture fichier impossible"));
+        r.readAsDataURL(fileOrDataUrl);
+      }
+    });
+  }
+
+  _donorSuggestions() {
+    // Noms de donateurs déjà saisis (champ « De la part de »), pour l'autocomplétion
+    const set = new Set();
+    for (const w of (this._data?.wines || [])) {
+      const g = (w.gifted_by || "").trim();
+      if (g) set.add(g);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }
+
+  _sensorVal(entityId) {
+    // Valeur courante d'un capteur, lue en temps réel depuis hass.states
+    if (!entityId || !this._hass) return null;
+    const st = this._hass.states[entityId];
+    if (!st || st.state === "unavailable" || st.state === "unknown") return null;
+    const v = parseFloat(st.state);
+    return {
+      value: isNaN(v) ? st.state : v,
+      unit: st.attributes?.unit_of_measurement || "",
+      name: st.attributes?.friendly_name || entityId,
+    };
+  }
+
   _renderFilters() {
+    const cellar = this._data?.cellar || {};
+    const temp = this._sensorVal(cellar.temp_entity);
+    const humid = this._sensorVal(cellar.humid_entity);
+    const occActive = !!this._occasionFilter;
+    const occLabel = occActive
+      ? esc((EVENT_TYPES.find(e => e.v === this._occasionFilter) || {}).l || "À ouvrir")
+      : "À ouvrir…";
+
     return `
-      <div class="filters">
-        <div class="filter-group">
-          <span class="filter-label">Type</span>
-          <select class="filter-select" id="sel-type">
-            <option value="all" ${this._filter === "all" ? "selected" : ""}>Tous les vins</option>
-            ${Object.entries(WINE_TYPES).map(([v, t]) =>
-              `<option value="${v}" ${this._filter === v ? "selected" : ""}>${t.emoji} ${t.label}</option>`
-            ).join("")}
-          </select>
+      <div class="env-row">
+        <div class="env-box ${cellar.temp_entity ? "env-clickable" : "env-empty"}" id="env-temp" title="Température">
+          <span class="env-value">🌡️ ${temp ? `${temp.value}${temp.unit || "°"}` : "—"}</span>
         </div>
-        <div class="filter-group">
-          <span class="filter-label">Événement</span>
-          <select class="filter-select" id="sel-event">
-            <option value="all" ${this._filterEvent === "all" ? "selected" : ""}>Tous</option>
-            ${EVENT_TYPES.filter(e => e.v).map(e =>
-              `<option value="${e.v}" ${this._filterEvent === e.v ? "selected" : ""}>${e.emoji} ${e.l}</option>`
-            ).join("")}
-          </select>
+        <div class="env-box ${cellar.humid_entity ? "env-clickable" : "env-empty"}" id="env-humid" title="Hygrométrie">
+          <span class="env-value">💧 ${humid ? `${humid.value}${humid.unit || "%"}` : "—"}</span>
+        </div>
+        <button class="env-box env-clickable env-open ${occActive ? "env-open-active" : ""}" id="btn-open-page" title="À ouvrir : filtrer par occasion">
+          ${CORKSCREW_SVG}<span class="env-open-label">${occLabel}</span>
+        </button>
+      </div>`;
+  }
+
+  // Page "À ouvrir" : sous-menu 3 onglets dans un modal (comme la liste des bouteilles)
+  _openPageHTML() {
+    const tab = this._filterTab || "occasions";
+    const occBtns = EVENT_TYPES.filter(e => e.v).map(e =>
+      `<button class="occ-btn ${this._occasionFilter === e.v ? "active" : ""}" data-occ="${e.v}">${e.emoji} ${e.l}</button>`
+    ).join("");
+    return `
+      <div class="mm-header">
+        <span class="mm-title">🍷 À ouvrir</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        <div class="sub-tabs">
+          <button class="sub-tab ${tab === "accords" ? "active" : ""}" data-tab="accords">🍽️ Accords mets/vin</button>
+          <button class="sub-tab ${tab === "apogee" ? "active" : ""}" data-tab="apogee">🕐 Apogée</button>
+          <button class="sub-tab ${tab === "occasions" ? "active" : ""}" data-tab="occasions">🥂 Occasions</button>
+        </div>
+        <div class="sub-panel ${tab === "accords" ? "active" : ""}" data-panel="accords">
+          ${this._accordsHTML()}
+        </div>
+        <div class="sub-panel ${tab === "apogee" ? "active" : ""}" data-panel="apogee">
+          ${this._apogeeHTML()}
+        </div>
+        <div class="sub-panel ${tab === "occasions" ? "active" : ""}" data-panel="occasions">
+          <div class="occ-hint">Choisissez une occasion : la fenêtre se ferme et les bouteilles concernées s'affichent en surbrillance dans la cave.</div>
+          <div class="occ-btns">
+            <button class="occ-btn ${!this._occasionFilter ? "active" : ""}" data-occ="">Tout afficher</button>
+            ${occBtns}
+          </div>
         </div>
       </div>`;
+  }
+
+  // ── APOGÉE : état d'une bouteille selon ses dates et l'année courante ──
+  _apogeeState(w) {
+    const now = new Date().getFullYear();
+    const from = parseInt(w.drink_from) || 0;
+    const until = parseInt(w.drink_until) || 0;
+    if (!from && !until) return "none";
+    if (until && until < now) return "past";                       // apogée dépassée
+    if (from && from > now) return (from <= now + 2) ? "soon" : "keep"; // pas encore / bientôt
+    // dans la fenêtre : "bientôt" si elle se termine d'ici 1 an, sinon "maintenant"
+    if (until && until <= now + 1) return "soon";
+    return "now";
+  }
+
+  // Rendu d'une bouteille pour une liste (réutilisé Apogée + Accords)
+  // ── Étiquette de vin générée (style « vraie étiquette », sobre) ──
+  // Styles inline en em → autonome et scalable (la taille est pilotée par le conteneur).
+  // Affichée en grand sur la fiche et en miniature sur l'aperçu. S'adapte si des infos manquent.
+  _wineLabelHTML(w) {
+    const producer = (w.producer || "").trim();
+    const name = (w.name || "Sans nom").trim();
+    const showProducer = producer && producer.toLowerCase() !== name.toLowerCase();
+    const appellation = (w.appellation || "").trim();
+    const vintage = (w.vintage || "").toString().trim();
+    const regionLine = [w.region, w.country].filter(Boolean).map(s => String(s).trim()).filter(Boolean).join(" · ");
+    return `
+      <div class="mm-wlabel" style="background:linear-gradient(180deg,#f7f1e6,#ece2cf);border:0.09em solid #b9ab8f;border-radius:0.45em;padding:1.1em 1em;box-shadow:0 0.4em 1.2em rgba(0,0,0,0.45);">
+        <div style="border:0.09em solid #bfa04f;border-radius:0.25em;padding:1em 0.8em;text-align:center;">
+          ${showProducer ? `<div style="font-size:0.8em;letter-spacing:0.18em;color:#5a4632;text-transform:uppercase;line-height:1.25;">${esc(producer)}</div>
+          <div style="height:0.07em;width:55%;margin:0.45em auto 0.55em;background:#bfa04f;opacity:0.55;"></div>` : ""}
+          <div style="font-family:Georgia,'Times New Roman',serif;font-size:1.65em;font-weight:bold;color:#241a12;line-height:1.12;">${esc(name)}</div>
+          ${appellation ? `<div style="font-size:0.85em;font-style:italic;color:#4a3826;margin-top:0.4em;line-height:1.2;">${esc(appellation)}</div>` : ""}
+          ${vintage ? `<div style="font-family:Georgia,serif;font-size:1.9em;font-weight:bold;color:#3a2a1c;letter-spacing:0.08em;margin-top:0.5em;">${esc(vintage)}</div>` : ""}
+          ${regionLine ? `<div style="font-size:0.64em;letter-spacing:0.13em;color:#6a5946;text-transform:uppercase;margin-top:0.45em;line-height:1.2;">${esc(regionLine)}</div>` : ""}
+          <div style="font-size:0.58em;color:#9c8a6a;opacity:0.75;margin-top:0.75em;letter-spacing:0.02em;">🍷 Millésime</div>
+        </div>
+      </div>`;
+  }
+
+  _miniWineRow(w, extra = "") {
+    const t = WINE_TYPES[w.type] || WINE_TYPES.red;
+    const n = (w.slots || []).length;
+    const apo = (w.drink_from || w.drink_until)
+      ? `${esc(w.drink_from || "?")}–${esc(w.drink_until || "?")}` : "";
+    const sub = [w.appellation, w.region].filter(Boolean).map(esc).join(" · ");
+    return `
+      <div class="vlist-wine ap-wine" data-wine="${esc(w.id)}">
+        <div class="vlist-wine-top">
+          <span class="vlist-wine-name"><span class="rk-dot" style="background:${t.color}"></span>${esc(w.name || "Sans nom")}${w.vintage ? ` <i>${esc(w.vintage)}</i>` : ""}</span>
+          <span class="vlist-wine-tail">
+            ${extra}
+            <span class="rk-slot">×${n}</span>
+            <span class="vlist-wine-price">${w.price ? Math.round(w.price) + "€" : ""}</span>
+          </span>
+        </div>
+        ${(sub || apo) ? `<div class="vlist-wine-meta">${sub ? `<span class="vm">📍 ${sub}</span>` : ""}${apo ? `<span class="vm">🕐 ${apo}</span>` : ""}</div>` : ""}
+      </div>`;
+  }
+
+  _apogeeHTML() {
+    const wines = this._data?.wines || [];
+    const groups = { now: [], soon: [], keep: [], past: [], none: [] };
+    for (const w of wines) groups[this._apogeeState(w)].push(w);
+    const states = [
+      { k: "now",  emoji: "🟢", label: "À boire maintenant" },
+      { k: "soon", emoji: "🟠", label: "Bientôt / à surveiller" },
+      { k: "keep", emoji: "🔵", label: "À garder" },
+      { k: "past", emoji: "🔴", label: "Apogée dépassée" },
+    ];
+    const btns = states.map(s => {
+      const c = groups[s.k].reduce((a, w) => a + (w.slots || []).length, 0);
+      return `<button class="apo-state" data-apo="${s.k}">
+        <span class="apo-emoji">${s.emoji}</span>
+        <span class="apo-label">${s.label}</span>
+        <span class="apo-count">${c}</span>
+      </button>`;
+    }).join("");
+    const noneCount = groups.none.reduce((a, w) => a + (w.slots || []).length, 0);
+    return `
+      <div class="apo-hint">Cliquez un état pour voir les bouteilles, puis une bouteille pour la localiser dans la cave.</div>
+      <div class="apo-states">${btns}</div>
+      ${noneCount ? `<div class="apo-none-note">${noneCount} bouteille${noneCount > 1 ? "s" : ""} sans dates d'apogée renseignées.</div>` : ""}
+      <div class="apo-list" id="apo-list"></div>`;
+  }
+
+  // ── ACCORDS : score d'une bouteille pour un plat donné ──
+  _matchScore(w, dish) {
+    const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    let score = 0;
+    const pairing = norm(w.food_pairing);
+    // 1) Correspondance avec les accords générés par l'IA (le plus fiable)
+    for (const k of (dish.kw || [])) { if (pairing && pairing.includes(norm(k))) score += 10; }
+    // 2) Type de vin idéal
+    if ((dish.types || []).includes(w.type)) score += 4;
+    // 3) Caractéristiques (notes de dégustation)
+    const notes = norm(w.tasting_notes);
+    for (const n of (dish.notes || [])) { if (notes && notes.includes(norm(n))) score += 2; }
+    return score;
+  }
+
+  _accordsHTML() {
+    // Liste déroulante : famille → catégorie → plat
+    const fams = Object.keys(FOOD_LIBRARY);
+    const famOpts = fams.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join("");
+    return `
+      <div class="acc-hint">Tapez un plat, ou parcourez les catégories : l'app propose les bouteilles de votre cave qui s'accordent le mieux.</div>
+      <div class="acc-searchwrap">
+        <input type="text" class="mm-input acc-search" id="acc-search" placeholder="🍽️ Quel plat ? (ex. bœuf bourguignon, curry de poulet, raclette…)" autocomplete="off">
+        <button class="acc-go" id="acc-go">Trouver</button>
+      </div>
+      <div class="acc-or">— ou parcourir —</div>
+      <div class="acc-selects">
+        <select class="mm-input acc-sel" id="acc-fam"><option value="">— Famille —</option>${famOpts}</select>
+        <select class="mm-input acc-sel" id="acc-cat" disabled><option value="">— Catégorie —</option></select>
+        <select class="mm-input acc-sel" id="acc-dish" disabled><option value="">— Plat —</option></select>
+      </div>
+      <div class="acc-list" id="acc-list"></div>`;
+  }
+
+  // Construit un "profil de plat" depuis un texte libre via la table d'ingrédients
+  _dishFromText(text) {
+    const norm = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const q = norm(text);
+    if (!q) return null;
+    const types = {}, notes = {}, kw = [];
+    let matched = 0;
+    for (const [syns, prof] of PAIR_KEYWORDS) {
+      if (syns.some(s => q.includes(norm(s)))) {
+        matched++;
+        kw.push(...syns);
+        for (const t of (prof.types || [])) types[t] = (types[t] || 0) + 1;
+        for (const n of (prof.notes || [])) notes[n] = (notes[n] || 0) + 1;
+      }
+    }
+    if (!matched) return { kw: [text], types: [], notes: [], unknown: true };
+    // garde les types/notes les plus fréquents
+    const top = (obj) => Object.entries(obj).sort((a, b) => b[1] - a[1]).map(e => e[0]);
+    return { kw, types: top(types), notes: top(notes), unknown: false };
+  }
+
+  // Rendu d'une liste de résultats d'accords (commun local + IA)
+  _renderAccordsResults(list, items, { approx = false, ai = false } = {}) {
+    const wines = this._data?.wines || [];
+    if (!items.length) {
+      list.innerHTML = `<div class="acc-empty">Aucune bouteille adaptée dans votre cave pour ce plat.</div>`;
+      return;
+    }
+    const badge = (s) => s >= 14 ? `<span class="acc-badge acc-top">★ idéal</span>`
+                      : s >= 10 ? `<span class="acc-badge">très bon</span>`
+                      : s >= 4  ? `<span class="acc-badge acc-ok">bon</span>` : `<span class="acc-badge acc-low">proche</span>`;
+    const head = ai ? `<div class="acc-aibadge">✨ Sélection IA selon votre cave</div>`
+              : approx ? `<div class="acc-approx">Aucun accord parfait en local — voici les plus proches :</div>` : "";
+    list.innerHTML = head + `<div class="vlist">${items.map(x => {
+      const reason = x.reason ? `<div class="acc-reason">${esc(x.reason)}</div>` : "";
+      return this._miniWineRow(x.w, ai ? "" : badge(x.s)) + reason;
+    }).join("")}</div>`;
+    list.querySelectorAll(".ap-wine[data-wine]").forEach((row) =>
+      row.addEventListener("click", () => {
+        const w = wines.find(x => x.id === row.dataset.wine);
+        if (w) this._locateBottle(w);
+      })
+    );
+  }
+
+  // Matching local pour un profil de plat → bouteilles scorées
+  _localMatch(dish) {
+    const wines = this._data?.wines || [];
+    const scored = wines.map(w => ({ w, s: this._matchScore(w, dish) })).sort((a, b) => b.s - a.s);
+    const strong = scored.filter(x => x.s >= 4);
+    if (strong.length) return { items: strong.slice(0, 30), approx: false };
+    return { items: scored.filter(x => x.s > 0).slice(0, 10), approx: true };
+  }
+
+  // Appel IA : Gemini choisit parmi la cave
+  async _aiPairing(dish, list) {
+    list.innerHTML = `<div class="acc-loading"><span class="mm-spinner"></span> L'IA choisit dans votre cave…</div>`;
+    try {
+      const res = await this._hass.connection.sendMessagePromise({ type: "millesime/pair_food", dish });
+      const wines = this._data?.wines || [];
+      if (res?.error) {
+        list.innerHTML = `<div class="acc-empty">IA indisponible (${esc(res.error)}). Réessayez plus tard.</div>`;
+        return;
+      }
+      const items = (res?.results || [])
+        .map(r => ({ w: wines.find(w => w.id === r.id), reason: r.reason }))
+        .filter(x => x.w);
+      this._renderAccordsResults(list, items, { ai: true });
+    } catch (e) {
+      list.innerHTML = `<div class="acc-empty">Erreur IA. Réessayez plus tard.</div>`;
+    }
+  }
+
+  _bindApogee(box) {
+    const list = box.querySelector("#apo-list");
+    const wines = this._data?.wines || [];
+    box.querySelectorAll(".apo-state").forEach((b) =>
+      b.addEventListener("click", () => {
+        box.querySelectorAll(".apo-state").forEach(x => x.classList.toggle("active", x === b));
+        const k = b.dataset.apo;
+        const items = wines.filter(w => this._apogeeState(w) === k)
+          .sort((a, c) => (parseInt(a.drink_until) || 9999) - (parseInt(c.drink_until) || 9999));
+        if (!list) return;
+        list.innerHTML = items.length
+          ? `<div class="vlist">${items.map(w => this._miniWineRow(w)).join("")}</div>`
+          : `<div class="acc-empty">Aucune bouteille dans cet état.</div>`;
+        list.querySelectorAll(".ap-wine[data-wine]").forEach((row) =>
+          row.addEventListener("click", () => {
+            const w = wines.find(x => x.id === row.dataset.wine);
+            if (w) this._locateBottle(w);
+          })
+        );
+      })
+    );
+  }
+
+  _bindAccords(box) {
+    const selFam  = box.querySelector("#acc-fam");
+    const selCat  = box.querySelector("#acc-cat");
+    const selDish = box.querySelector("#acc-dish");
+    const search  = box.querySelector("#acc-search");
+    const goBtn   = box.querySelector("#acc-go");
+    const list    = box.querySelector("#acc-list");
+
+    const fill = (sel, items, placeholder) => {
+      sel.innerHTML = `<option value="">${placeholder}</option>` +
+        items.map(i => `<option value="${esc(i)}">${esc(i)}</option>`).join("");
+    };
+
+    // Affiche un résultat local + propose/bascule vers l'IA
+    const runDish = (dish, label, { fromText = false } = {}) => {
+      if (!list) return;
+      // Plat inconnu de la table locale → on passe directement à l'IA
+      if (fromText && dish.unknown) { this._aiPairing(label, list); return; }
+      const { items, approx } = this._localMatch(dish);
+      this._renderAccordsResults(list, items, { approx });
+      // Toujours offrir l'IA en renfort (surtout si résultat approximatif ou peu fourni)
+      const ai = document.createElement("button");
+      ai.className = "acc-ai-btn";
+      ai.textContent = approx ? "✨ Demander à l'IA (plus précis)" : "✨ Affiner avec l'IA";
+      ai.addEventListener("click", () => this._aiPairing(label, list));
+      list.appendChild(ai);
+    };
+
+    // ── Recherche libre ──
+    const doSearch = () => {
+      const txt = (search?.value || "").trim();
+      if (!txt) return;
+      const dish = this._dishFromText(txt);
+      runDish(dish, txt, { fromText: true });
+    };
+    goBtn?.addEventListener("click", doSearch);
+    search?.addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
+
+    // ── Déroulants ──
+    selFam?.addEventListener("change", () => {
+      const fam = selFam.value;
+      if (fam && FOOD_LIBRARY[fam]) { fill(selCat, Object.keys(FOOD_LIBRARY[fam]), "— Catégorie —"); selCat.disabled = false; }
+      else { selCat.innerHTML = `<option value="">— Catégorie —</option>`; selCat.disabled = true; }
+      selDish.innerHTML = `<option value="">— Plat —</option>`; selDish.disabled = true;
+      if (list) list.innerHTML = "";
+    });
+    selCat?.addEventListener("change", () => {
+      const fam = selFam.value, cat = selCat.value;
+      if (fam && cat && FOOD_LIBRARY[fam]?.[cat]) { fill(selDish, Object.keys(FOOD_LIBRARY[fam][cat]), "— Plat —"); selDish.disabled = false; }
+      else { selDish.innerHTML = `<option value="">— Plat —</option>`; selDish.disabled = true; }
+      if (list) list.innerHTML = "";
+    });
+    selDish?.addEventListener("change", () => {
+      const fam = selFam.value, cat = selCat.value, dishName = selDish.value;
+      const dish = FOOD_LIBRARY[fam]?.[cat]?.[dishName];
+      if (!dish) { if (list) list.innerHTML = ""; return; }
+      if (search) search.value = "";   // les deux modes ne se mélangent pas
+      runDish(dish, dishName);
+    });
+  }
+
+  _bindOpenPage(box) {
+    box.querySelectorAll(".sub-tab").forEach((t) =>
+      t.addEventListener("click", () => {
+        this._filterTab = t.dataset.tab;
+        box.querySelectorAll(".sub-tab").forEach(x => x.classList.toggle("active", x === t));
+        box.querySelectorAll(".sub-panel").forEach(p =>
+          p.classList.toggle("active", p.dataset.panel === this._filterTab));
+      })
+    );
+    this._bindApogee(box);
+    this._bindAccords(box);
+    // Occasion : sélection unique → ferme la page + surbrillance dans la cave
+    box.querySelectorAll(".occ-btn").forEach((b) =>
+      b.addEventListener("click", () => {
+        this._occasionFilter = b.dataset.occ || "";
+        this._closeModal();
+        this._render();
+        if (this._occasionFilter) {
+          const lbl = (EVENT_TYPES.find(e => e.v === this._occasionFilter) || {}).l || "";
+          this._showToast("info", `Surbrillance : ${lbl}`);
+        }
+      })
+    );
   }
 
   _renderEmpty() {
@@ -2464,7 +3711,10 @@ class MillesimeCard extends HTMLElement {
       const slotIdx = entry?.slotIdx ?? -1;
       const filteredType  = this._filter !== "all" && wine && wine.type !== this._filter;
       const filteredEvent = this._filterEvent !== "all" && wine && (wine.event || "") !== this._filterEvent;
-      const filtered = filteredType || filteredEvent;
+      const filteredOcc   = this._occasionFilter && wine && (wine.event || "") !== this._occasionFilter;
+      // Vin sélectionné dans la liste : grise toutes les AUTRES bouteilles (comme les occasions)
+      const filteredSel   = this._selected && wine && wine.id !== this._selected;
+      const filtered = filteredType || filteredEvent || filteredOcc || filteredSel;
       const wt  = wine ? WINE_TYPES[wine.type] || WINE_TYPES.red : null;
       const sel = wine && wine.id === this._selected;
       const shelf2d = Math.floor(i / cols);
@@ -3223,7 +4473,10 @@ class MillesimeCard extends HTMLElement {
           const tp = WINE_TYPES[wine.type] ? wine.type : "red";
           const filtered =
             (this._filter !== "all" && wine.type !== this._filter) ||
-            (this._filterEvent !== "all" && (wine.event || "") !== this._filterEvent);
+            (this._filterEvent !== "all" && (wine.event || "") !== this._filterEvent) ||
+            (this._occasionFilter && (wine.event || "") !== this._occasionFilter) ||
+            // Vin sélectionné dans la liste : on grise toutes les AUTRES bouteilles
+            (this._selected && wine.id !== this._selected);
 
           const shapeKey = (wine.shape && geoByType[wine.shape]) ? wine.shape : tp;
           const set = geoByType[shapeKey] || geoByType[tp] || setBordeaux;
@@ -3531,15 +4784,24 @@ class MillesimeCard extends HTMLElement {
     const onPick = (e) => {
       if (this._t3Suppress) return;            // un drag vient de se terminer
       const hit = pickAt(e, pickables);
-      if (!hit) return;
+      if (!hit) {
+        // Toucher/clic dans le vide : referme l'aperçu épinglé éventuel
+        if (this._bottlePanel) this._hideBottlePanel();
+        return;
+      }
       const u = hit.object.userData;
       if (u.empty) {
         this._openModal("bottle", { slot: { rack_id: u.rackId, slot: u.slot } });
+        return;
+      }
+      const wine = wines.find((w) => w.id === u.wineId);
+      if (!wine) return;
+      if (this._lastPT === "touch") {
+        // Tactile : 1er tap → aperçu épinglé (la fiche s'ouvre en touchant l'aperçu)
+        this._showBottlePanel(wine, anchorFromEvent(e), true);
       } else {
-        const wine = wines.find((w) => w.id === u.wineId);
-        if (!wine) return;
-        this._selected = wine.id;               // mémorisé pour la vue 2D
-        this._openModal("detail", { wine });    // ouverture directe, sans re-render
+        // Souris : ouverture directe de la fiche
+        this._openModal("detail", { wine });
       }
     };
     renderer.domElement.addEventListener("click", onPick);
@@ -3685,6 +4947,45 @@ class MillesimeCard extends HTMLElement {
     renderer.domElement.addEventListener("pointerup", onUp);
     renderer.domElement.addEventListener("pointercancel", onCancel);
 
+    // ── Panneau d'infos 3D : survol (souris) + appui long (iPhone) ──
+    // On réutilise le raycaster : la bouteille survolée → panneau positionné près du curseur.
+    const wineAt = (e) => {
+      const hit = pickAt(e, pickables);
+      const u = hit?.object?.userData;
+      if (!u || u.empty || !u.wineId) return null;
+      return wines.find((w) => w.id === u.wineId) || null;
+    };
+    // Ancre virtuelle = position du curseur (le panneau se place juste au-dessus)
+    const anchorFromEvent = (e) => ({
+      getBoundingClientRect: () => ({
+        left: e.clientX, right: e.clientX, width: 0,
+        top: e.clientY, bottom: e.clientY, height: 0,
+      }),
+    });
+    // Survol SOURIS uniquement : aperçu qui suit le curseur (sans gêner le drag)
+    let hoverWineId = null;
+    renderer.domElement.addEventListener("mousemove", (e) => {
+      if (this._lastPT === "touch") return;           // le tactile passe par onPick (aperçu épinglé)
+      if (drag && drag.active) { this._hideBottlePanel(); hoverWineId = null; return; }
+      const wine = wineAt(e);
+      if (wine) {
+        if (wine.id !== hoverWineId) { hoverWineId = wine.id; this._showBottlePanel(wine, anchorFromEvent(e)); }
+        else if (this._bottlePanel) {  // suit le curseur
+          const r = anchorFromEvent(e).getBoundingClientRect();
+          const p = this._bottlePanel;
+          let left = r.left - p.offsetWidth / 2;
+          let top = r.top - p.offsetHeight - 12;
+          left = Math.max(8, Math.min(left, window.innerWidth - p.offsetWidth - 8));
+          if (top < 8) top = r.bottom + 12;
+          p.style.left = left + "px"; p.style.top = top + "px";
+        }
+      } else { hoverWineId = null; this._hideBottlePanel(); }
+    });
+    renderer.domElement.addEventListener("mouseleave", () => {
+      if (this._lastPT === "touch") return;
+      hoverWineId = null; this._hideBottlePanel();
+    });
+
     // ── Redimensionnement (largeur uniquement) ──
     const ro = new ResizeObserver(() => {
       const w = stage.clientWidth || curW;
@@ -3742,17 +5043,23 @@ class MillesimeCard extends HTMLElement {
   _bindCardListeners(data, wines) {
     const s = this.shadowRoot;
 
-    // Filtres par type et événement (selects)
-    s.getElementById("sel-type")?.addEventListener("change", (e) => {
-      this._filter = e.target.value;
-      this._render();
-    });
-    s.getElementById("sel-event")?.addEventListener("change", (e) => {
-      this._filterEvent = e.target.value;
-      this._render();
-    });
+    // Mémorise le type de pointeur (souris vs tactile) pour adapter le comportement
+    // des bouteilles : tactile = aperçu épinglé, souris = survol + clic direct.
+    s.addEventListener("pointerdown", (e) => { this._lastPT = e.pointerType || "mouse"; }, true);
 
     s.getElementById("btn-history")?.addEventListener("click", () => this._openModal("history"));
+
+    // Bouton « À ouvrir » → ouvre la page modale de sélection d'occasion
+    s.getElementById("btn-open-page")?.addEventListener("click", () => this._openModal("openpage"));
+    s.getElementById("env-temp")?.addEventListener("click", () => {
+      const ent = this._data?.cellar?.temp_entity;
+      if (ent) this._openModal("envhistory", { entity: ent, kind: "temperature" });
+    });
+    s.getElementById("env-humid")?.addEventListener("click", () => {
+      const ent = this._data?.cellar?.humid_entity;
+      if (ent) this._openModal("envhistory", { entity: ent, kind: "humidity" });
+    });
+
     s.getElementById("sel-view")?.addEventListener("change", (e) => {
       this._viewTouched = true;
       this._view = e.target.value;
@@ -3766,13 +5073,17 @@ class MillesimeCard extends HTMLElement {
       if (el) el.classList.toggle("open", this._optionsOpen);
       if (logo) logo.classList.toggle("active", this._optionsOpen);
     });
-    s.getElementById("sel-labelmode")?.addEventListener("change", (e) => {
-      this._labelMode = e.target.value;
-      try { localStorage.setItem("millesime-labelmode", this._labelMode); } catch (err) {}
-      if (this._view === "3d") this._render();   // re-rendu pour appliquer aux repères 3D
-    });
+    // Sélecteur segmenté 3 positions des repères 3D
+    s.querySelectorAll("#seg-labelmode .seg3-btn").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        this._labelMode = btn.dataset.mode;
+        try { localStorage.setItem("millesime-labelmode", this._labelMode); } catch (err) {}
+        s.querySelectorAll("#seg-labelmode .seg3-btn").forEach(b => b.classList.toggle("active", b === btn));
+        if (this._view === "3d") this._render();
+      })
+    );
     s.getElementById("btn-bottlelist")?.addEventListener("click", () => this._openModal("bottlelist"));
-    s.getElementById("btn-search")?.addEventListener("click",  () => this._openModal("search"));
+    s.getElementById("btn-racklist")?.addEventListener("click", () => this._openModal("racklist"));
     s.getElementById("btn-journal")?.addEventListener("click", () => this._openModal("journal"));
     s.getElementById("btn-import")?.addEventListener("click", async () => {
       const ok = await this._confirm(
@@ -3794,11 +5105,11 @@ class MillesimeCard extends HTMLElement {
         { checkbox: "💰 Mettre à jour les prix (prix moyen constaté par Gemini)" }
       );
       if (!res) return;
-      this._showToast("info", "Rafraîchissement lancé — la cave se mettra à jour à la fin…");
-      if (await this._callService("refresh_wines", { update_prices: !!res.checked }))
-        this._showToast("success", "Fiches rafraîchies ✓");
+      this._showToast("info", "Rafraîchissement lancé — suivez la progression en bas…");
+      await this._callService("refresh_wines", { update_prices: !!res.checked });
     });
     s.getElementById("btn-add-rack")?.addEventListener("click",   () => this._openModal("rack"));
+    s.getElementById("btn-sensors")?.addEventListener("click",    () => this._openModal("sensors"));
 
     s.getElementById("btn-add-bottle")?.addEventListener("click", () => {
       if (!data.cellar.racks.length) {
@@ -3808,25 +5119,31 @@ class MillesimeCard extends HTMLElement {
       this._openModal("bottle");
     });
 
-    s.querySelectorAll(".dot").forEach((dot) =>
+    s.querySelectorAll(".dot").forEach((dot) => {
+      const wineId = dot.dataset.wineId;
+      const wine = wineId ? wines.find(w => w.id === wineId) : null;
+      const slot   = parseInt(dot.dataset.slot);
+      const rackId = dot.dataset.rackId;
+
       dot.addEventListener("click", () => {
-        const slot    = parseInt(dot.dataset.slot);
-        const rackId = dot.dataset.rackId;
-        const wineId  = dot.dataset.wineId;
-        const wine    = wineId ? wines.find(w => w.id === wineId) : null;
-        if (wine) {
-          if (this._selected === wine.id) {
-            this._selected = null;
-            this._openModal("detail", { wine });
-          } else {
-            this._selected = wine.id;
-            this._render();
-          }
+        // Case vide → formulaire d'ajout (souris comme tactile)
+        if (!wine) { this._openModal("bottle", { slot: { rack_id: rackId, slot } }); return; }
+        if (this._lastPT === "touch") {
+          // Tactile : 1er tap → aperçu épinglé (la fiche s'ouvre en touchant l'aperçu)
+          this._showBottlePanel(wine, dot, true);
         } else {
-          this._openModal("bottle", { slot: { rack_id: rackId, slot } });
+          // Souris : ouvre la fiche directement
+          this._openModal("detail", { wine });
         }
-      })
-    );
+      });
+
+      // Survol souris (desktop uniquement) → aperçu non épinglé
+      if (wine) {
+        dot.removeAttribute("title");   // évite le doublon avec le panneau
+        dot.addEventListener("mouseenter", () => { if (this._lastPT !== "touch") this._showBottlePanel(wine, dot); });
+        dot.addEventListener("mouseleave", () => { if (this._lastPT !== "touch") this._hideBottlePanel(); });
+      }
+    });
 
     s.querySelectorAll("[data-edit-rack]").forEach((btn) =>
       btn.addEventListener("click", (e) => {
@@ -3932,7 +5249,9 @@ class MillesimeCard extends HTMLElement {
     this._unsubs.forEach((f) => f());
     this._closeModal();
     this._unmount3D();
+    this._hideBottlePanel();
     document.querySelector("#mm-toast-css")?.remove();
+    document.querySelector("#mm-bpanel-css")?.remove();
   }
 }
 
@@ -3952,7 +5271,7 @@ function _drow(label, value) {
 
 const CARD_CSS = `<style>
 :host {
-  display: block; font-size: var(--fs-base, 13px);
+  display: block; position: relative; font-size: var(--fs-base, 13px);
   --red:#C0392B; --red-h:#E74C3C; --gold:#C9A84C;
   --accent: var(--primary-color, #C0392B);
   --accent-h: var(--secondary-color, #E74C3C);
@@ -3979,7 +5298,7 @@ const CARD_CSS = `<style>
 @keyframes pulse-anim { 0%,100%{opacity:0.3} 50%{opacity:0.8} }
 
 .header {
-  display:flex; align-items:flex-start; gap:10px;
+  display:flex; align-items:center; gap:10px;
   padding:12px 14px 10px;
   background:linear-gradient(160deg,color-mix(in srgb,var(--card-background-color,#111) 75%,var(--header-accent,#C0392B) 25%) 0%,var(--card-background-color,#111) 100%);
   border-bottom:1px solid var(--border); position:relative;
@@ -3988,30 +5307,39 @@ const CARD_CSS = `<style>
   content:''; position:absolute; bottom:0; left:14px; right:14px; height:1px;
   background:linear-gradient(90deg,transparent,var(--header-accent,var(--red))44,transparent);
 }
-/* Logo + nom empilés à gauche */
-.header-left { display:flex; flex-direction:column; align-items:center; gap:4px; flex-shrink:0; padding-top:2px; }
+/* Logo + nom empilés à gauche, centrés verticalement sur la hauteur des deux lignes */
+.header-left { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; flex-shrink:0; }
 .header-glass {
-  width:28px;
+  width:30px;
   filter:drop-shadow(0 0 8px rgba(192,57,43,0.7));
   animation:float-anim 3s ease-in-out infinite;
 }
 @keyframes float-anim { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
 .header-meta { text-align:center; }
-.header-name { font-family:var(--font-serif); font-size:0.77em; color:var(--cream); line-height:1.2; }
-.header-tagline { font-size:0.54em; color:var(--red); text-transform:uppercase; letter-spacing:1.5px; margin-top:1px; }
+.header-name { font-family:var(--font-serif); font-size:0.82em; color:var(--cream); line-height:1.2; }
+.header-tagline { font-size:0.55em; color:var(--red); text-transform:uppercase; letter-spacing:1.5px; margin-top:2px; }
 /* Colonne droite : stats en haut, boutons en dessous */
 .header-right { display:flex; flex-direction:column; gap:7px; flex:1; min-width:0; }
-/* Stats et actions partagent la MÊME grille 3 colonnes → alignement parfait */
-.header-stats   { display:grid; grid-template-columns:1fr 1fr 1fr; gap:5px; align-items:stretch; }
-.header-actions { display:grid; grid-template-columns:repeat(5, 1fr); gap:5px; align-items:stretch; }
-.header-actions .ha-icons { display:contents; }  /* les 4 icônes deviennent 4 cellules égales de la grille */
+/* Stats et actions : MÊME grille (3 colonnes égales + colonne icône à droite) → alignement parfait */
+.header-stats   { display:grid; grid-template-columns:1fr 1fr 1fr 40px; gap:5px; align-items:stretch; }
+.header-actions { display:grid; grid-template-columns:1fr 1fr 1fr 40px; gap:5px; align-items:stretch; }
+.btn-options-top, .btn-journal-top { width:40px; height:auto; align-self:stretch; display:flex; align-items:center; justify-content:center; font-size:1.05em; }
 .stat { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:5px 6px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border); }
 .stat-value { font-size:1.08em; font-weight:700; color:var(--cream); font-family:var(--font-serif); line-height:1; }
 .stat-label { font-size:0.54em; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-top:2px; }
 .stat-clickable { cursor:pointer; transition:all 0.15s; }
 .stat-clickable:hover { background:var(--bg-3); border-color:var(--header-accent,var(--red)); }
 .stat-clickable:active { transform:scale(0.97); }
-/* La rangée d'icônes (vue + 🔍 + 📓) occupe la colonne "Bouteilles" */
+/* Bouton "Casier" : bleu distinct de "+Vin" (plus clair/cyan) */
+.btn-rack {
+  height:38px; box-sizing:border-box; width:100%; min-width:0;
+  display:flex; align-items:center; justify-content:center; gap:3px;
+  background:#2BA5C7; color:#fff; border:none; border-radius:8px;
+  font-size:0.86em; font-weight:600; padding:0 6px; white-space:nowrap; cursor:pointer;
+  transition:filter 0.15s;
+}
+.btn-rack:hover { filter:brightness(1.1); }
+/* Boutons de la rangée actions (vue + casier + vin) */
 .header-actions .btn-icon, .header-actions .view-select, .header-actions .btn-primary {
   height:38px; box-sizing:border-box; width:100%; min-width:0;
 }
@@ -4025,7 +5353,7 @@ const CARD_CSS = `<style>
   background:var(--bg-1); border-bottom:1px solid transparent; padding:0 14px;
 }
 .header-options.open {
-  max-height:140px; opacity:1; padding:10px 14px;
+  max-height:230px; opacity:1; padding:10px 14px;
   border-bottom:1px solid var(--border);
 }
 .opt-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; align-items:center; }
@@ -4045,34 +5373,18 @@ const CARD_CSS = `<style>
   flex:1; padding:7px 9px; border-radius:8px; border:1px solid var(--border);
   background:var(--bg-2); color:var(--cream); font-size:0.78em; cursor:pointer;
 }
+.seg3 { display:flex; flex:1; min-width:0; border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--bg-2); }
+.seg3-btn {
+  flex:1; min-width:0; display:flex; align-items:center; justify-content:center; gap:4px;
+  padding:7px 4px; border:none; background:transparent; color:var(--muted);
+  font-size:0.78em; cursor:pointer; transition:all 0.13s; border-right:1px solid var(--border);
+}
+.seg3-btn:last-child { border-right:none; }
+.seg3-btn:hover { background:var(--bg-3); color:var(--cream); }
+.seg3-btn.active { background:var(--accent); color:#fff; font-weight:600; }
+.seg3-lbl { font-size:0.86em; }
 .header-glass.active { filter:drop-shadow(0 0 11px rgba(192,57,43,1)); transform:scale(1.08); }
 
-/* ── Liste des bouteilles : arborescence Couleur → Région → Châteaux ── */
-.vlist { display:flex; flex-direction:column; }
-.vlist-color-head { display:flex; align-items:center; gap:9px; padding:9px 4px 7px; margin-top:8px;
-  border-bottom:2px solid var(--c, var(--red)); }
-.vlist-color-head:first-child { margin-top:0; }
-.vlist-swatch { width:13px; height:13px; border-radius:50%; box-shadow:0 0 5px rgba(0,0,0,0.4); flex-shrink:0; }
-.vlist-color-name { font-size:1em; font-weight:700; color:var(--cream); font-family:var(--font-serif);
-  text-transform:uppercase; letter-spacing:0.5px; }
-.vlist-count { margin-left:auto; font-size:0.76em; font-weight:700; background:var(--bg-1);
-  padding:2px 9px; border-radius:10px; }
-.vlist-region-head { font-size:0.8em; font-weight:600; color:var(--wood-lt,#c8a06a);
-  padding:8px 0 3px 8px; letter-spacing:0.3px; }
-.vlist-count-sm { font-size:0.86em; color:var(--muted); font-weight:500; }
-.vlist-wine { padding:7px 10px; margin:2px 0 2px 14px; border-left:2px solid var(--border);
-  cursor:pointer; transition:background 0.12s; }
-.vlist-wine:hover { background:var(--bg-3); }
-.vlist-wine-top { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
-.vlist-wine-name { font-size:0.88em; color:var(--cream); }
-.vlist-wine-name i { color:var(--muted); font-style:italic; }
-.vlist-wine-name .vqty { color:var(--muted); font-size:0.9em; }
-.vfav { color:#E8B84B; }
-.vlist-wine-price { font-size:0.85em; font-weight:600; color:var(--cream); white-space:nowrap;
-  font-family:var(--font-serif); font-variant-numeric:tabular-nums; }
-.vlist-wine-meta { display:flex; gap:11px; flex-wrap:wrap; margin-top:3px; }
-.vlist-wine-meta .vm { font-size:0.72em; color:var(--muted); white-space:nowrap; }
-.vlist-wine-meta .vm-qty { color:var(--cream); }
 .mm-empty-hint { text-align:center; color:var(--muted); padding:24px 0; font-size:0.85em; }
 .mm-hint { font-size:0.66em; font-style:italic; color:#c8c8c8; margin-top:9px; line-height:1.4; }
 .btn-primary, .btn-secondary {
@@ -4099,6 +5411,26 @@ const CARD_CSS = `<style>
 }
 .view-select:hover { background:var(--bg-3); }
 
+.env-row {
+  display:flex; gap:8px; align-items:stretch; padding:7px 14px;
+  background:var(--bg-1); border-bottom:1px solid var(--border);
+}
+.env-box {
+  flex:1; display:flex; align-items:center; justify-content:center; gap:5px;
+  padding:7px 8px; min-height:34px; box-sizing:border-box;
+  background:var(--bg-2); border-radius:8px; border:1px solid var(--border);
+}
+.env-value { font-size:0.92em; font-weight:700; color:var(--cream); font-family:var(--font-serif); line-height:1; white-space:nowrap; }
+.env-clickable { cursor:pointer; transition:all 0.15s; }
+.env-clickable:hover { background:var(--bg-3); border-color:var(--header-accent,var(--red)); }
+.env-clickable:active { transform:scale(0.97); }
+.env-empty { opacity:0.5; }
+/* Bouton « À ouvrir » (même gabarit que les zones T°/hygro) */
+.env-open { border:none; }
+.env-open .cork-icon { flex-shrink:0; }
+.env-open-label { font-size:0.84em; font-weight:600; color:var(--cream); white-space:nowrap; }
+.env-open-active { background:var(--accent); }
+.env-open-active .env-open-label { color:#fff; }
 .filters {
   display:flex; gap:10px; padding:8px 14px;
   background:var(--bg-1); border-bottom:1px solid var(--border);
@@ -4147,6 +5479,20 @@ const CARD_CSS = `<style>
 .dot--filled { filter:drop-shadow(0 2px 4px var(--dot-glow,rgba(192,57,43,0.35))); }
 .dot--filled:hover { transform:scale(1.12) translateY(-2px); filter:drop-shadow(0 4px 8px var(--dot-glow,rgba(192,57,43,0.6))); }
 .dot--selected { filter:drop-shadow(0 0 5px var(--gold)) drop-shadow(0 2px 5px var(--dot-glow,rgba(192,57,43,0.4))); transform:scale(1.1); }
+@keyframes bottle-flash {
+  0%, 100% { filter:drop-shadow(0 0 4px var(--gold)); }
+  50% { filter:drop-shadow(0 0 14px var(--gold)) drop-shadow(0 0 22px var(--gold)); }
+}
+.bottle-flash { animation:bottle-flash 0.5s ease-in-out 4; z-index:5; }
+/* Barre de progression « Compléter les fiches » (dans le menu options) */
+.refresh-progress {
+  margin-top:10px;
+  background:var(--bg-2); border:1px solid var(--border); border-radius:10px;
+  padding:9px 11px;
+}
+.rp-label { font-size:0.8em; color:var(--cream); margin-bottom:6px; font-weight:600; }
+.rp-track { height:7px; background:var(--bg-1); border-radius:4px; overflow:hidden; }
+.rp-fill { height:100%; width:0; background:linear-gradient(90deg,#2BA5C7,#1E88C7); border-radius:4px; transition:width 0.3s ease; }
 .dot--alt { transform:rotate(180deg); }
 .dot--alt:hover { transform:rotate(180deg) scale(1.12) translateY(2px); }
 .dot--alt.dot--selected { transform:rotate(180deg) scale(1.1); }
@@ -4262,7 +5608,9 @@ const MODAL_CSS = `
 
 .mm-overlay {
   position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:99999;
-  display:flex; align-items:flex-start; justify-content:center; padding-top:12px;
+  display:flex; align-items:flex-start; justify-content:center;
+  padding-top:max(8px, env(safe-area-inset-top));
+  padding-bottom:env(safe-area-inset-bottom);
   animation:mm-fade 0.15s ease; font-family:var(--font-sans); font-size:var(--fs-base, 13px);
   --mm-bg0: var(--primary-background-color, #080808);
   --mm-bg1: var(--card-background-color, #111);
@@ -4271,19 +5619,139 @@ const MODAL_CSS = `
   --mm-text: var(--primary-text-color, #EDE0CC);
   --mm-muted: var(--secondary-text-color, #555);
   --mm-border: var(--divider-color, #222);
+  --mm-accent: var(--header-accent, #7B1D2E);
   --mm-red: var(--primary-color, #C0392B);
   --mm-red-h: var(--secondary-color, #E74C3C);
 }
 .mm-box {
   background:var(--mm-bg1); border:1px solid var(--mm-border); border-top:none;
   border-radius:0 0 20px 20px;
-  width:100%; max-width:520px; max-height:92vh;
+  width:100%; max-width:520px;
+  /* dvh = hauteur de vue dynamique : tient compte des barres mobiles (Safari iOS) */
+  max-height:calc(100dvh - max(16px, env(safe-area-inset-top)) - env(safe-area-inset-bottom));
   display:flex; flex-direction:column;
   animation:mm-slide 0.22s ease-out; color:var(--mm-text);
   overflow:hidden;
 }
 /* Liste des bouteilles : occupe toute la largeur dispo (PC comme mobile) */
 .mm-box-wide { max-width:min(680px, 95vw); }
+/* ── Liste des bouteilles : arborescence Couleur → Région → Châteaux ── */
+.vlist { display:flex; flex-direction:column; }
+.vlist-color-head { display:flex; align-items:center; gap:10px; padding:11px 2px 7px; margin-top:6px;
+  border-bottom:2px solid var(--c, var(--mm-accent,#7B1D2E)); }
+.vlist-color-head:first-child { margin-top:0; }
+.vlist-swatch { width:13px; height:13px; border-radius:50%; box-shadow:0 0 5px rgba(0,0,0,0.35); flex-shrink:0; }
+.vlist-color-name { font-family:var(--font-serif,Georgia,serif); font-size:0.98em; font-weight:bold;
+  letter-spacing:1px; color:var(--mm-text); text-transform:uppercase; }
+.vlist-count { margin-left:auto; font-size:0.78em; color:var(--c, var(--mm-accent,#7B1D2E)); }
+.vlist-region-head { font-size:0.84em; color:var(--mm-muted); padding:11px 0 4px 2px; }
+.vlist-wine { padding:7px 10px 8px; margin-left:14px; border-left:2px solid var(--mm-border);
+  cursor:pointer; transition:background 0.12s; }
+.vlist-wine:hover { background:var(--mm-bg3); }
+.vlist-wine-top { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+.vlist-wine-name { font-size:0.92em; color:var(--mm-text); min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.vlist-wine-name i { color:var(--mm-muted); font-style:italic; font-family:var(--font-serif,Georgia,serif); }
+.vfav { color:#E0A82E; }
+/* Queue de ligne : quantité AVANT le prix */
+.vlist-wine-tail { display:flex; align-items:baseline; gap:8px; white-space:nowrap; flex-shrink:0; }
+.vlist-wine-qty { font-size:0.78em; color:var(--mm-muted); font-variant-numeric:tabular-nums; }
+.vlist-wine-price { font-size:0.86em; font-weight:600; color:var(--mm-text); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.vlist-wine-meta { display:flex; gap:14px; flex-wrap:wrap; margin-top:4px; }
+.vlist-wine-meta .vm { font-size:0.74em; color:var(--mm-muted); white-space:nowrap; }
+/* Colonnes alignées : apogée | occasion (grille fixe → alignement vertical) */
+.vlist-wine-cols { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:4px; }
+.vlist-wine-cols .vcol { font-size:0.74em; color:var(--mm-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* Liste des casiers : en-tête de casier + lignes de vins */
+.rk-head { display:flex; align-items:center; justify-content:space-between; gap:10px;
+  padding:11px 2px 7px; margin-top:10px; border-bottom:2px solid var(--mm-accent,#7B1D2E); }
+.rk-head:first-child { margin-top:0; }
+.rk-name { font-family:var(--font-serif,Georgia,serif); font-size:0.98em; font-weight:bold;
+  letter-spacing:0.5px; color:var(--mm-text); }
+.rk-stat { font-size:0.78em; color:var(--mm-accent,#7B1D2E); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.rk-empty { font-size:0.8em; color:var(--mm-muted); font-style:italic; padding:6px 0 6px 16px; }
+.rk-dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:7px; vertical-align:middle; box-shadow:0 0 4px rgba(0,0,0,0.4); }
+.rk-slot { font-size:0.76em; color:var(--mm-muted); font-variant-numeric:tabular-nums; }
+.env-range-btn {
+  flex:1; padding:6px 4px; border-radius:7px; border:1px solid var(--mm-border);
+  background:var(--mm-bg2); color:var(--mm-muted); font-size:0.82em; cursor:pointer;
+  font-family:var(--font-sans); transition:all 0.13s;
+}
+.env-range-btn:hover { color:var(--mm-text); }
+.env-range-btn.active { background:var(--mm-accent); color:#fff; border-color:var(--mm-accent); }
+.vlist-search-wrap { padding:10px 20px 0; }
+.vlist-search {
+  width:100%; box-sizing:border-box; padding:9px 12px; border-radius:9px;
+  border:1px solid var(--mm-border); background:var(--mm-bg2); color:var(--mm-text);
+  font-size:0.92em; font-family:var(--font-sans,Inter,sans-serif); outline:none;
+}
+.vlist-search:focus { border-color:var(--mm-accent); }
+.vlist-search::placeholder { color:var(--mm-muted); }
+/* Page « À ouvrir » : sous-onglets + boutons occasion (dans le modal) */
+.sub-tabs { display:flex; gap:5px; margin-bottom:14px; }
+.sub-tab {
+  flex:1; padding:9px 4px; border-radius:8px; border:1px solid var(--mm-border);
+  background:var(--mm-bg2); color:var(--mm-muted); font-size:0.78em; font-weight:600;
+  cursor:pointer; transition:all 0.13s; white-space:nowrap;
+}
+.sub-tab:hover { color:var(--mm-text); }
+.sub-tab.active { background:var(--mm-accent); color:#fff; border-color:var(--mm-accent); }
+.sub-panel { display:none; }
+.sub-panel.active { display:block; }
+.sub-soon { text-align:center; padding:30px 8px; color:var(--mm-muted); font-size:0.9em; font-style:italic; }
+.occ-hint { font-size:0.82em; color:var(--mm-muted); margin-bottom:12px; line-height:1.4; }
+.occ-btns { display:flex; flex-wrap:wrap; gap:8px; }
+.occ-btn {
+  padding:10px 16px; border-radius:18px; border:1px solid var(--mm-border);
+  background:var(--mm-bg2); color:var(--mm-text); font-size:0.86em; font-weight:500;
+  cursor:pointer; transition:all 0.13s;
+}
+.occ-btn:hover { border-color:var(--mm-accent); }
+.occ-btn.active { background:var(--mm-accent); color:#fff; border-color:var(--mm-accent); }
+/* Apogée */
+.apo-hint, .acc-hint { font-size:0.82em; color:var(--mm-muted); margin-bottom:12px; line-height:1.4; }
+.apo-states { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.apo-state {
+  display:flex; align-items:center; gap:8px; padding:12px 10px;
+  border-radius:10px; border:1px solid var(--mm-border); background:var(--mm-bg2);
+  color:var(--mm-text); font-size:0.86em; cursor:pointer; transition:all 0.13s; text-align:left;
+}
+.apo-state:hover { border-color:var(--mm-accent); }
+.apo-state.active { background:var(--mm-accent); color:#fff; border-color:var(--mm-accent); }
+.apo-emoji { font-size:1.1em; }
+.apo-label { flex:1; font-weight:600; line-height:1.2; }
+.apo-count { font-weight:700; font-variant-numeric:tabular-nums; min-width:1.5em; text-align:right; }
+.apo-none-note, .acc-approx { font-size:0.76em; color:var(--mm-muted); font-style:italic; margin-top:10px; }
+.apo-list, .acc-list { margin-top:6px; }
+.ap-wine { cursor:pointer; }
+/* Accords */
+.acc-selects { display:flex; flex-direction:column; gap:8px; }
+.acc-sel { width:100%; }
+.acc-empty { text-align:center; padding:20px 8px; color:var(--mm-muted); font-style:italic; font-size:0.85em; }
+.acc-badge {
+  font-size:0.66em; font-weight:700; padding:2px 7px; border-radius:10px;
+  background:var(--mm-bg3); color:var(--mm-text); white-space:nowrap;
+}
+.acc-badge.acc-top { background:#C9A84C; color:#1a1206; }
+.acc-badge.acc-ok  { background:#3a6b4a; color:#fff; }
+.acc-badge.acc-low { background:var(--mm-bg2); color:var(--mm-muted); }
+/* Recherche libre + IA */
+.acc-searchwrap { display:flex; gap:8px; margin-bottom:10px; }
+.acc-search { flex:1; }
+.acc-go {
+  padding:0 16px; border-radius:10px; border:none; background:var(--mm-accent);
+  color:#fff; font-size:0.86em; font-weight:600; cursor:pointer; white-space:nowrap;
+}
+.acc-go:hover { filter:brightness(1.1); }
+.acc-or { text-align:center; font-size:0.72em; color:var(--mm-muted); margin:4px 0 10px; letter-spacing:1px; }
+.acc-ai-btn {
+  display:block; width:100%; margin-top:12px; padding:11px;
+  border-radius:10px; border:1px solid #C9A84C; background:transparent;
+  color:#C9A84C; font-size:0.86em; font-weight:600; cursor:pointer; transition:all 0.13s;
+}
+.acc-ai-btn:hover { background:#C9A84C; color:#1a1206; }
+.acc-aibadge { font-size:0.78em; color:#C9A84C; font-weight:600; margin-bottom:10px; }
+.acc-reason { font-size:0.74em; color:var(--mm-muted); font-style:italic; margin:-4px 0 8px 4px; line-height:1.35; }
+.acc-loading { display:flex; align-items:center; gap:10px; justify-content:center; padding:24px 8px; color:var(--mm-muted); font-size:0.86em; }
 /* Description sous les menus (disposition, orientation) : petit, gris clair, italique */
 .mm-hint { font-size:0.74em; font-style:italic; color:#c8c8c8; margin-top:7px; line-height:1.4; }
 .mm-header {
@@ -4435,6 +5903,36 @@ const MODAL_CSS = `
 .mm-detail-hero  { text-align:center; margin-bottom:18px; }
 .mm-detail-name  { font-family:var(--font-serif); font-size:1.54em; color:var(--mm-text); margin-bottom:4px; }
 .mm-detail-sub   { font-size:0.92em; color:var(--mm-muted); }
+/* Photo de la bouteille — bandeau en haut de la fiche */
+.mm-detail-photo {
+  margin:0 auto 18px; max-width:200px; border-radius:14px; overflow:hidden;
+  background:linear-gradient(180deg,#241b16,#15100d);
+  box-shadow:0 6px 22px rgba(0,0,0,0.55); border:1px solid #2E2620;
+}
+.mm-detail-photo img { display:block; width:100%; max-height:340px; object-fit:contain; }
+/* Étiquette générée sur la fiche (grand format) */
+.mm-detail-label { max-width:165px; margin:0 auto 16px; font-size:11px; }
+/* Bloc photo dans le formulaire */
+.mm-photo-box { display:flex; gap:12px; align-items:center; margin-bottom:8px; }
+.mm-photo-thumb {
+  width:64px; height:64px; flex-shrink:0; border-radius:10px; overflow:hidden;
+  background:var(--mm-bg2); border:1px solid var(--mm-border);
+  display:flex; align-items:center; justify-content:center;
+}
+.mm-photo-thumb img { width:100%; height:100%; object-fit:cover; }
+.mm-photo-thumb.empty { border-style:dashed; }
+.mm-photo-ph { font-size:0.62em; color:var(--mm-muted); text-align:center; padding:4px; }
+.mm-photo-actions { display:flex; flex-direction:column; gap:6px; }
+.mm-photo-btn {
+  padding:8px 12px; border-radius:8px; border:1px solid var(--mm-border);
+  background:var(--mm-bg2); color:var(--mm-text); font-size:0.82em; cursor:pointer;
+  white-space:nowrap; transition:border-color 0.13s;
+}
+.mm-photo-btn:hover { border-color:var(--mm-accent); }
+.mm-photo-btn-rm { color:#E06B6B; }
+.mm-photo-url { margin-top:4px; font-size:0.84em; }
+.mm-photo-hint { font-size:0.72em; color:var(--mm-muted); margin-top:5px; line-height:1.35; }
+.hidden { display:none !important; }
 .mm-vivino-link  { display:inline-block; margin-top:8px; color:var(--mm-red); font-size:0.85em; text-decoration:none; border:1px solid rgba(192,57,43,0.3); padding:3px 10px; border-radius:20px; }
 .mm-detail-grid  { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-bottom:10px; }
 .mm-drow         { background:var(--mm-bg2); border-radius:8px; padding:9px 11px; border:1px solid var(--mm-border); }

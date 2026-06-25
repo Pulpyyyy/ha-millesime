@@ -1,4 +1,4 @@
-"""Config flow Millésime v3.1.0."""
+"""Config flow Millésime v6.3.4."""
 from __future__ import annotations
 from typing import Any
 
@@ -18,6 +18,31 @@ GEMINI_HELP = (
 )
 
 
+def _clean_key(raw: str | None) -> str:
+    """Nettoie une clé Gemini saisie (espaces, guillemets éventuels collés au copier-coller)."""
+    key = (raw or "").strip()
+    # Retire d'éventuels guillemets entourant la clé
+    if len(key) >= 2 and key[0] in "\"'" and key[-1] in "\"'":
+        key = key[1:-1].strip()
+    return key
+
+
+def _key_looks_invalid(key: str) -> bool:
+    """Validation souple : la clé n'est rejetée que si elle est manifestement erronée.
+
+    On ne se base plus sur un préfixe (« AI ») car les clés Google ne le partagent
+    pas toutes. On vérifie seulement une longueur plausible et l'absence d'espaces
+    internes. La vraie validation se fait à l'usage (le backend gère HTTP 400/401/403).
+    """
+    if not key:
+        return False  # vide = pas de clé, autorisé (repli Open Food Facts)
+    if any(c.isspace() for c in key):
+        return True   # une clé ne contient jamais d'espace
+    if len(key) < 20:
+        return True   # bien trop courte pour être une clé valide
+    return False
+
+
 class MillesimeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Config flow pour Millésime."""
 
@@ -33,9 +58,8 @@ class MillesimeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Valider la clé Gemini si fournie (format basique)
-            key = (user_input.get("gemini_api_key") or "").strip()
-            if key and not key.startswith("AI"):
+            key = _clean_key(user_input.get("gemini_api_key"))
+            if _key_looks_invalid(key):
                 errors["gemini_api_key"] = "invalid_key"
             else:
                 user_input["gemini_api_key"] = key
@@ -72,8 +96,8 @@ class MillesimeOptionsFlow(config_entries.OptionsFlow):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            key = (user_input.get("gemini_api_key") or "").strip()
-            if key and not key.startswith("AI"):
+            key = _clean_key(user_input.get("gemini_api_key"))
+            if _key_looks_invalid(key):
                 errors["gemini_api_key"] = "invalid_key"
             else:
                 return self.async_create_entry(

@@ -1,4 +1,4 @@
-"""Millésime v6.2.1 — Cave à Vin pour Home Assistant.
+"""Millésime v6.7.1 — Cave à Vin pour Home Assistant.
 
 Recherche texte : gemini-3.1-flash-lite (tier gratuit)
 Lecture photo   : gemini-3-flash (tier gratuit)
@@ -34,7 +34,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN    = "millesime"
 PLATFORMS = ["sensor"]
 DATA_FILE = "millesime_data.json"
-VERSION   = "6.2.1"
+VERSION   = "6.7.1"
 
 OFF_UA       = f"Millesime-HA/{VERSION} (github.com/Redsklns/ha-millesime)"
 # Deux modèles séparés = deux pools de quota indépendants (free tier)
@@ -514,6 +514,87 @@ async def _gemini_analyze_photo(
     return results, err
 
 
+# ── Accords mets/vin par IA : Gemini choisit parmi les vins de la cave ────────
+
+async def _gemini_pair_food(
+    hass: HomeAssistant, dish: str, wines: list[dict], api_key: str
+) -> tuple[list[dict], str | None]:
+    """Demande à Gemini de choisir, PARMI les vins fournis, les meilleurs accords
+    pour un plat donné. Retourne ([{id, reason, rank}], code_erreur_ou_None)."""
+    session = async_get_clientsession(hass)
+    # On envoie une liste compacte des vins de la cave (id + infos utiles)
+    catalogue = []
+    for w in wines:
+        catalogue.append({
+            "id":          w.get("id"),
+            "name":        w.get("name", ""),
+            "type":        w.get("type", ""),
+            "vintage":     w.get("vintage", ""),
+            "region":      w.get("region", ""),
+            "appellation": w.get("appellation", ""),
+            "food_pairing":w.get("food_pairing", ""),
+        })
+    sys = (
+        "Tu es sommelier. On te donne un plat et une liste de vins disponibles (avec leur id). "
+        "Choisis UNIQUEMENT parmi ces vins ceux qui s'accordent le mieux avec le plat. "
+        "Classe-les du meilleur au moins bon (max 8). Pour chacun, donne une raison courte (une phrase). "
+        "Réponds STRICTEMENT en JSON : "
+        '{"results":[{"id":"...","reason":"...","rank":1}]} '
+        "N'invente aucun vin : n'utilise que les id fournis. Si rien ne convient vraiment, "
+        "propose quand même les moins mauvais."
+    )
+    body = {
+        "system_instruction": {"parts": [{"text": sys}]},
+        "contents": [{"parts": [{"text": (
+            f'Plat : "{dish}"\n\n'
+            f"Vins disponibles (JSON) :\n{json.dumps(catalogue, ensure_ascii=False)}"
+        )}]}],
+        "generationConfig": {
+            "temperature":      0.3,
+            "maxOutputTokens":  2048,
+            "responseMimeType": "application/json",
+        },
+    }
+    data = None
+    for _model in (GEMINI_TEXT_MODEL, GEMINI_TEXT_FALLBACK):
+        try:
+            async with session.post(
+                f"{GEMINI_BASE_URL}{_model}:generateContent",
+                params={"key": api_key},
+                json=body,
+                headers={"Content-Type": "application/json"},
+                timeout=20,
+            ) as resp:
+                if resp.status == 404:
+                    continue
+                if resp.status != 200:
+                    return [], _gemini_error_code(resp.status)
+                data = await resp.json(content_type=None)
+                break
+        except asyncio.TimeoutError:
+            _LOGGER.warning("Gemini accords timeout (%s) pour '%s'", _model, dish)
+        except Exception as exc:
+            _LOGGER.warning("Gemini accords erreur (%s): %s", _model, exc)
+    if data is None:
+        return [], ERR_UNAVAILABLE
+    try:
+        raw = (
+            data.get("candidates", [{}])[0]
+            .get("content", {})
+            .get("parts", [{}])[0]
+            .get("text", "")
+        )
+        parsed = json.loads(raw)
+        results = parsed.get("results", []) if isinstance(parsed, dict) else []
+        # garde uniquement les id réellement présents dans la cave
+        valid_ids = {w.get("id") for w in wines}
+        clean = [r for r in results if isinstance(r, dict) and r.get("id") in valid_ids]
+        _LOGGER.info("Gemini accords : %d vin(s) pour '%s'", len(clean), dish)
+        return clean, None
+    except Exception as exc:
+        _LOGGER.warning("Gemini accords parse erreur pour '%s': %s", dish, exc)
+        return [], ERR_PARSE_ERROR
+
 
 
 # ── Open Food Facts (fallback texte) ─────────────────────────────────────────
@@ -828,6 +909,111 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     websocket_api.async_register_command(hass, ws_get_data)
 
+    # ── WebSocket : lister les capteurs température / humidité disponibles ─────
+    @websocket_api.websocket_command({vol.Required("type"): "millesime/list_sensors"})
+    @websocket_api.async_response
+    async def ws_list_sensors(hass: HomeAssistant, connection, msg: dict) -> None:
+        temp, humid, other = [], [], []
+        for state in hass.states.async_all("sensor"):
+            dc = state.attributes.get("device_class")
+            unit = state.attributes.get("unit_of_measurement", "") or ""
+            entry = {
+                "entity_id": state.entity_id,
+                "name": state.attributes.get("friendly_name", state.entity_id),
+                "unit": unit,
+                "state": state.state,
+            }
+            if dc == "temperature" or "°" in unit:
+                temp.append(entry)
+            elif dc == "humidity" or unit == "%":
+                humid.append(entry)
+            else:
+                other.append(entry)
+        temp.sort(key=lambda e: e["name"].lower())
+        humid.sort(key=lambda e: e["name"].lower())
+        other.sort(key=lambda e: e["name"].lower())
+        connection.send_result(msg["id"], {"temperature": temp, "humidity": humid, "other": other})
+
+    websocket_api.async_register_command(hass, ws_list_sensors)
+
+    # ── WebSocket : enregistrer les entités capteurs choisies ─────────────────
+    @websocket_api.websocket_command({
+        vol.Required("type"): "millesime/set_sensors",
+        vol.Optional("temp_entity"): vol.Any(str, None),
+        vol.Optional("humid_entity"): vol.Any(str, None),
+    })
+    @websocket_api.async_response
+    async def ws_set_sensors(hass: HomeAssistant, connection, msg: dict) -> None:
+        data = await hass.async_add_executor_job(_load, hass)
+        cellar = data.setdefault("cellar", {})
+        if "temp_entity" in msg:
+            cellar["temp_entity"] = msg["temp_entity"] or ""
+        if "humid_entity" in msg:
+            cellar["humid_entity"] = msg["humid_entity"] or ""
+        await hass.async_add_executor_job(_save, hass, data)
+        hass.bus.async_fire(f"{DOMAIN}_updated", {})
+        connection.send_result(msg["id"], {"ok": True})
+
+    websocket_api.async_register_command(hass, ws_set_sensors)
+
+    # ── WebSocket : état courant des capteurs configurés ──────────────────────
+    @websocket_api.websocket_command({vol.Required("type"): "millesime/sensor_states"})
+    @websocket_api.async_response
+    async def ws_sensor_states(hass: HomeAssistant, connection, msg: dict) -> None:
+        data = await hass.async_add_executor_job(_load, hass)
+        cellar = data.get("cellar", {})
+        out = {}
+        for key, ent in (("temperature", cellar.get("temp_entity")), ("humidity", cellar.get("humid_entity"))):
+            if ent:
+                st = hass.states.get(ent)
+                if st:
+                    out[key] = {
+                        "entity_id": ent,
+                        "state": st.state,
+                        "unit": st.attributes.get("unit_of_measurement", ""),
+                        "name": st.attributes.get("friendly_name", ent),
+                    }
+        connection.send_result(msg["id"], out)
+
+    websocket_api.async_register_command(hass, ws_sensor_states)
+
+    # ── WebSocket : historique d'une entité (recorder) ────────────────────────
+    @websocket_api.websocket_command({
+        vol.Required("type"): "millesime/entity_history",
+        vol.Required("entity_id"): str,
+        vol.Optional("hours", default=168): int,
+    })
+    @websocket_api.async_response
+    async def ws_entity_history(hass: HomeAssistant, connection, msg: dict) -> None:
+        from datetime import timedelta
+        from homeassistant.util import dt as dt_util
+        try:
+            from homeassistant.components.recorder import history, get_instance
+            end = dt_util.utcnow()
+            start = end - timedelta(hours=msg["hours"])
+            ent = msg["entity_id"]
+
+            def _fetch():
+                return history.state_changes_during_period(
+                    hass, start, end, ent, include_start_time_state=True, no_attributes=True
+                )
+
+            states = await get_instance(hass).async_add_executor_job(_fetch)
+            points = []
+            for st in states.get(ent, []):
+                try:
+                    val = float(st.state)
+                except (ValueError, TypeError):
+                    continue
+                ts = st.last_changed or st.last_updated
+                points.append({"t": ts.isoformat(), "v": val})
+            connection.send_result(msg["id"], {"entity_id": ent, "points": points})
+        except Exception as exc:
+            _LOGGER.warning("Millésime — historique %s impossible : %s", msg.get("entity_id"), exc)
+            connection.send_result(msg["id"], {"entity_id": msg.get("entity_id"), "points": []})
+
+    websocket_api.async_register_command(hass, ws_entity_history)
+
     # ── WebSocket : search_wine (texte) ───────────────────────────────────────
 
     @websocket_api.websocket_command({
@@ -869,6 +1055,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         })
 
     websocket_api.async_register_command(hass, ws_analyze_photo)
+
+    # ── WebSocket : accords mets/vin par IA ───────────────────────────────────
+
+    @websocket_api.websocket_command({
+        vol.Required("type"): "millesime/pair_food",
+        vol.Required("dish"): str,
+    })
+    @websocket_api.async_response
+    async def ws_pair_food(hass: HomeAssistant, connection, msg: dict) -> None:
+        gkey = hass.data[DOMAIN][entry.entry_id]["gemini_key"]
+        if not gkey:
+            connection.send_result(msg["id"], {"results": [], "error": ERR_INVALID_KEY})
+            return
+        d = _load(hass)
+        wines = d.get("wines", [])
+        results, err = await _gemini_pair_food(hass, msg["dish"], wines, gkey)
+        connection.send_result(msg["id"], {"results": results, "error": err})
+
+    websocket_api.async_register_command(hass, ws_pair_food)
 
     # ── WebSocket : estimate_price ────────────────────────────────────────────
     @websocket_api.websocket_command({
@@ -1004,6 +1209,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "image_url":    call.data.get("image_url", ""),
             "vivino_url":   call.data.get("vivino_url", ""),
             "event":        call.data.get("event", ""),
+            "gifted_by":    call.data.get("gifted_by", ""),
             "size":         call.data.get("size") or "75cl",
             "favorite":     bool(call.data.get("favorite", False)),
             "added_date":   call.data.get("added_date") or datetime.now().strftime("%Y-%m-%d"),
@@ -1018,7 +1224,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "name", "vintage", "type", "appellation", "region", "producer",
             "country", "price", "drink_from", "drink_until", "notes",
             "tasting_notes", "food_pairing", "event", "vivino_rating",
-            "image_url", "vivino_url", "size", "favorite", "shape",
+            "image_url", "vivino_url", "size", "favorite", "shape", "gifted_by",
         ]
         for w in d["wines"]:
             if w["id"] == call.data["wine_id"]:
@@ -1353,7 +1559,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # constaté par Gemini — opt-in car elle écrase un prix déjà saisi
         update_prices = bool(call.data.get("update_prices", False))
         updated = 0
+        total = len(d["wines"])
+        done = 0
+        hass.bus.async_fire(f"{DOMAIN}_refresh_progress", {"done": 0, "total": total})
         for w in d["wines"]:
+            done += 1
+            hass.bus.async_fire(f"{DOMAIN}_refresh_progress", {"done": done, "total": total})
             if not update_prices and not any(not w.get(f) for f in FIELDS):
                 continue                        # fiche déjà complète
             query = " ".join(filter(None, [w.get("name", ""), str(w.get("vintage", ""))]))
@@ -1380,6 +1591,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if changed:
                 updated += 1
             await asyncio.sleep(0.3)            # ménage le quota Gemini
+        hass.bus.async_fire(f"{DOMAIN}_refresh_progress", {"done": total, "total": total, "finished": True})
         await _persist(d)
         _LOGGER.info("Millésime — refresh : %d doublon(s) fusionné(s), %d fiche(s) complétée(s)", merged, updated)
 
