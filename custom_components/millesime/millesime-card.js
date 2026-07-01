@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.7.1
+ * Millésime Card v6.8.0
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.7.1";
+const MILLESIME_CARD_VERSION = "6.8.0";
 
 const DOMAIN = "millesime";
 
@@ -1329,7 +1329,8 @@ class MillesimeCard extends HTMLElement {
               ${b.image_url ? `<img src="${esc(b.image_url)}" alt="">` : `<span class="mm-photo-ph">Aucune photo</span>`}
             </div>
             <div class="mm-photo-actions">
-              <button type="button" class="mm-photo-btn" id="bt-photo-pick">📷 Prendre / choisir</button>
+              <button type="button" class="mm-photo-btn" id="bt-photo-cam">📷 Photo</button>
+              <button type="button" class="mm-photo-btn" id="bt-photo-pick">🖼️ Galerie</button>
               <button type="button" class="mm-photo-btn mm-photo-btn-rm ${b.image_url ? "" : "hidden"}" id="bt-photo-rm">🗑️ Retirer</button>
             </div>
           </div>
@@ -1384,7 +1385,16 @@ class MillesimeCard extends HTMLElement {
       }
       if (photoRm) photoRm.classList.toggle("hidden", !src);
     };
-    box.querySelector("#bt-photo-pick")?.addEventListener("click", () => photoFile?.click());
+    // « Photo » : sur mobile, ouvre directement l'appareil photo (capture) ;
+    // « Galerie » : sélecteur classique. Un seul input, l'attribut bascule au clic.
+    box.querySelector("#bt-photo-cam")?.addEventListener("click", () => {
+      photoFile?.setAttribute("capture", "environment");
+      photoFile?.click();
+    });
+    box.querySelector("#bt-photo-pick")?.addEventListener("click", () => {
+      photoFile?.removeAttribute("capture");
+      photoFile?.click();
+    });
     photoFile?.addEventListener("change", async () => {
       const file = photoFile.files?.[0];
       if (!file) return;
@@ -1514,7 +1524,30 @@ class MillesimeCard extends HTMLElement {
     });
 
     // ── Scan photo de l'étiquette ─────────────────────────────────────────────
-    btnPhoto?.addEventListener("click", () => fileInput?.click());
+    // Scan d'étiquette : sur mobile, proposer l'appareil photo direct ou la galerie.
+    // Sur PC (souris), comportement inchangé : sélecteur de fichiers direct.
+    btnPhoto?.addEventListener("click", () => {
+      if (this._lastPT !== "touch") {
+        fileInput?.removeAttribute("capture");
+        fileInput?.click();
+        return;
+      }
+      banner.innerHTML = `
+        <div class="mm-scan-choice">
+          <button type="button" class="mm-scan-btn" id="scan-cam">📷 Prendre une photo</button>
+          <button type="button" class="mm-scan-btn" id="scan-lib">🖼️ Galerie</button>
+        </div>`;
+      banner.querySelector("#scan-cam")?.addEventListener("click", () => {
+        banner.innerHTML = "";
+        fileInput?.setAttribute("capture", "environment");   // ouvre l'appareil photo
+        fileInput?.click();
+      });
+      banner.querySelector("#scan-lib")?.addEventListener("click", () => {
+        banner.innerHTML = "";
+        fileInput?.removeAttribute("capture");
+        fileInput?.click();
+      });
+    });
 
     fileInput?.addEventListener("change", async () => {
       const file = fileInput.files?.[0];
@@ -3925,8 +3958,9 @@ class MillesimeCard extends HTMLElement {
       this._render();
       return;
     }
-    // Le rendu a pu changer pendant le chargement (ou un montage plus récent a pris la main)
-    if (mountTok !== this._mountTok) return;
+    // Le rendu a pu changer pendant le chargement (ou un montage plus récent a pris la main),
+    // ou la carte a pu être détachée (changement de vue Lovelace) pendant le chargement
+    if (mountTok !== this._mountTok || !this.isConnected) return;
     if (this._view !== "3d" || !this.shadowRoot.getElementById("view3d-stage")) return;
 
     const data   = this._data || DEFAULT_DATA();
@@ -5045,7 +5079,11 @@ class MillesimeCard extends HTMLElement {
 
     // Mémorise le type de pointeur (souris vs tactile) pour adapter le comportement
     // des bouteilles : tactile = aperçu épinglé, souris = survol + clic direct.
-    s.addEventListener("pointerdown", (e) => { this._lastPT = e.pointerType || "mouse"; }, true);
+    // Attaché UNE seule fois (le shadowRoot survit aux re-renders, sinon accumulation).
+    if (!this._ptTracked) {
+      this._ptTracked = true;
+      s.addEventListener("pointerdown", (e) => { this._lastPT = e.pointerType || "mouse"; }, true);
+    }
 
     s.getElementById("btn-history")?.addEventListener("click", () => this._openModal("history"));
 
@@ -5245,8 +5283,21 @@ class MillesimeCard extends HTMLElement {
     });
   }
 
+  connectedCallback() {
+    // Lovelace détache la carte lors d'un changement de vue (subview) puis la
+    // ré-attache au retour : disconnectedCallback a démonté la 3D et coupé les
+    // abonnements. On remonte tout ici. Le tout premier attachement, lui, reste
+    // géré par `set hass` (sinon on créerait des abonnements en double).
+    if (!this._hass || !this._wasDisconnected) return;
+    this._wasDisconnected = false;
+    this._subscribeUpdates();
+    this._fetchData();   // recharge les données puis re-render → remonte la vue 3D
+  }
+
   disconnectedCallback() {
-    this._unsubs.forEach((f) => f());
+    this._unsubs.forEach((f) => { try { f(); } catch (e) { /* déjà fermé */ } });
+    this._unsubs = [];
+    this._wasDisconnected = true;
     this._closeModal();
     this._unmount3D();
     this._hideBottlePanel();
@@ -5922,7 +5973,7 @@ const MODAL_CSS = `
 .mm-photo-thumb img { width:100%; height:100%; object-fit:cover; }
 .mm-photo-thumb.empty { border-style:dashed; }
 .mm-photo-ph { font-size:0.62em; color:var(--mm-muted); text-align:center; padding:4px; }
-.mm-photo-actions { display:flex; flex-direction:column; gap:6px; }
+.mm-photo-actions { display:flex; flex-wrap:wrap; gap:6px; }
 .mm-photo-btn {
   padding:8px 12px; border-radius:8px; border:1px solid var(--mm-border);
   background:var(--mm-bg2); color:var(--mm-text); font-size:0.82em; cursor:pointer;
@@ -5930,6 +5981,14 @@ const MODAL_CSS = `
 }
 .mm-photo-btn:hover { border-color:var(--mm-accent); }
 .mm-photo-btn-rm { color:#E06B6B; }
+/* Choix appareil photo / galerie pour le scan d'étiquette (mobile) */
+.mm-scan-choice { display:flex; gap:8px; margin:8px 0 4px; }
+.mm-scan-btn {
+  flex:1; padding:10px 8px; border-radius:9px; border:1px solid var(--mm-border);
+  background:var(--mm-bg2); color:var(--mm-text); font-size:0.84em; font-weight:600;
+  cursor:pointer; transition:border-color 0.13s;
+}
+.mm-scan-btn:hover { border-color:var(--mm-accent); }
 .mm-photo-url { margin-top:4px; font-size:0.84em; }
 .mm-photo-hint { font-size:0.72em; color:var(--mm-muted); margin-top:5px; line-height:1.35; }
 .hidden { display:none !important; }
