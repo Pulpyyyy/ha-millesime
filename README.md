@@ -1,7 +1,7 @@
 # 🍷 Millésime — Cave à vin pour Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-6.7.1-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
+[![version](https://img.shields.io/badge/version-6.8.0-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
 [![Offrir un verre de vin](https://img.shields.io/badge/🍷_Offrir_un_verre_de_vin-PayPal-7B1D2E.svg?style=flat-square)](https://paypal.me/Redsklns)
 
 **Millésime** transforme Home Assistant en gestionnaire de cave à vin complet : visualisez vos bouteilles dans une scène **3D réaliste**, scannez les étiquettes par **photo**, suivez la valeur de votre collection et tenez un **journal de dégustation**.
@@ -99,6 +99,13 @@ L'intégralité de Millésime a été conçue et développée en collaboration a
 ---
 
 ## 📝 Changelog
+
+### [6.8.0] — 2026-06
+Correction de la vue 3D et appareil photo direct sur mobile.
+
+- **Vue 3D après un changement de vue Lovelace (fond noir)** : la carte remontait un fond noir au retour d'une subview, car la vue 3D était démontée au détachement sans jamais être reconstruite au retour. La carte détecte désormais son ré-attachement, se réabonne aux mises à jour et remonte la vue 3D automatiquement (merci @mrgrlscz pour le signalement)
+- **Appareil photo direct sur mobile** : sur téléphone, le scan d'étiquette propose désormais « 📷 Prendre une photo » (ouvre directement l'appareil photo) ou « 🖼️ Galerie ». Le bloc photo du formulaire offre les deux mêmes boutons. Sur ordinateur, comportement inchangé (merci @chris94440 pour la suggestion)
+- **Fiabilisation** : désabonnements nettoyés au détachement (plus de doublons), montage 3D annulé si la carte est détachée pendant le chargement, écouteur de pointeur attaché une seule fois
 
 ### [6.7.1] — 2026-06
 Correctif d'affichage.
