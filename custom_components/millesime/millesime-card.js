@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.8.0";
+const MILLESIME_CARD_VERSION = "6.8.1";
 
 const DOMAIN = "millesime";
 
