@@ -1,7 +1,7 @@
 # 🍷 Millésime — Cave à vin pour Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-6.8.1-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
+[![version](https://img.shields.io/badge/version-6.9.0-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
 [![Offrir un verre de vin](https://img.shields.io/badge/🍷_Offrir_un_verre_de_vin-PayPal-7B1D2E.svg?style=flat-square)](https://paypal.me/Redsklns)
 
 **Millésime** transforme Home Assistant en gestionnaire de cave à vin complet : visualisez vos bouteilles dans une scène **3D réaliste**, scannez les étiquettes par **photo**, suivez la valeur de votre collection et tenez un **journal de dégustation**.
@@ -99,6 +99,15 @@ L'intégralité de Millésime a été conçue et développée en collaboration a
 ---
 
 ## 📝 Changelog
+
+### [6.9.0] — 2026-07
+Fenêtre Options, vue 3D par défaut, carte pleine largeur, appareil photo Android et 1000+ accords.
+
+- **Fenêtre Options dédiée** : le menu repliable sous l'en-tête est remplacé par une vraie fenêtre (bouton ⚙️) regroupant Compléter les fiches, Capteurs, Import et Repères 3D. La barre de progression de la complétion s'affiche désormais sous l'en-tête de la carte
+- **Vue 3D par défaut** : à la première installation, la carte s'ouvre en vue 3D. La dernière vue choisie reste bien sûr mémorisée
+- **Carte pleine largeur** : dans le tableau de bord (disposition « sections »), la carte occupe désormais toute la largeur par défaut et reste redimensionnable (minimum 6 colonnes) — bien plus confortable sur PC
+- **Appareil photo sur Android (correctif)** : le bouton « 📷 Prendre une photo » ouvrait la pellicule au lieu de l'appareil photo. Les entrées de capture sont désormais créées statiquement, ce que toutes les WebView Android respectent
+- **Accords mets/vin : plus de 1000 plats** : la bibliothèque passe à **1011 plats** répartis en 34 catégories (gibier, fromages nommés, poissons par cuisson, fruits, apéritif, cuisines du monde, desserts…), générés avec des profils de vin cohérents. Le nombre exact est affiché dans l'onglet Accords. La recherche libre et le renfort IA restent disponibles
 
 ### [6.8.0] — 2026-06
 Correction de la vue 3D et appareil photo direct sur mobile.
