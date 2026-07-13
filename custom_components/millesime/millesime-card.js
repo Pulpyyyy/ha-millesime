@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.8.1";
+const MILLESIME_CARD_VERSION = "6.9.0";
 
 const DOMAIN = "millesime";
 
@@ -35,7 +35,7 @@ const EVENT_LABEL = Object.fromEntries(EVENT_TYPES.map(e => [e.v, e]));
 //   kw    = mots-clés cherchés dans le champ food_pairing (généré par l'IA à l'ajout)
 //   types = types de vin idéaux (red/white/rose/sparkling/dessert)
 //   notes = mots-clés cherchés dans les notes de dégustation (caractéristiques)
-const FOOD_LIBRARY = {
+const FOOD_LIBRARY_BASE = {
   "Aliments": {
     "Viandes rouges": {
       "Bœuf grillé / steak":   { kw:["boeuf","bœuf","steak","entrecôte","grillade","viande rouge","bavette","côte de bœuf"], types:["red"], notes:["tannique","corsé","puissant"] },
@@ -248,6 +248,466 @@ const PAIR_KEYWORDS = [
   [["vietnamien","pho","bo bun","rouleau de printemps","bobun"], { types:["white","rose"], notes:["vif","frais"] }],
   [["apéritif","apéro","aperitif","amuse-bouche","tapas","chips","cacahuète","olive"], { types:["sparkling","white","rose"], notes:["vif","léger","frais"] }],
 ];
+
+// ── Bibliothèque d'accords GÉNÉRÉE (1000+ plats) ──────────────────────────────
+// Construite par combinaison au chargement (protéines × préparations réelles,
+// fromages nommés, desserts, cuisines du monde…). Les profils de vin sont
+// dérivés par règles, puis la bibliothèque manuelle (FOOD_LIBRARY_BASE) est
+// fusionnée — sans doublons de nom.
+const FOOD_LIBRARY = (() => {
+  const L = {}, seen = new Set();
+  const add = (fam, cat, name, kw, types, notes) => {
+    const key = name.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    ((L[fam] ??= {})[cat] ??= {})[name] = { kw, types, notes };
+  };
+  // Accord du participe : base (-é/-i/-t) + e (fém.) + s (pluriel)
+  const acc = (base, g, pl) => base + (g === "f" ? "e" : "") + (pl ? "s" : "");
+  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+  // — VIANDES : [nom, genre, catégorie, kw, types, notes] —
+  const MEATS = [
+    ["bœuf","m","Viandes rouges",["boeuf","bœuf"],["red"],["tannique","corsé"]],
+    ["veau","m","Viandes blanches",["veau"],["white","red"],["rond","souple"]],
+    ["agneau","m","Viandes rouges",["agneau"],["red"],["tannique","épicé"]],
+    ["porc","m","Porc",["porc"],["red","white"],["fruité","souple"]],
+    ["poulet","m","Volailles",["poulet","volaille"],["white","red"],["souple","fruité"]],
+    ["canard","m","Volailles",["canard"],["red"],["fruité","corsé"]],
+    ["dinde","f","Volailles",["dinde","volaille"],["white","red"],["rond","souple"]],
+    ["lapin","m","Viandes blanches",["lapin"],["white","red"],["souple","fruité"]],
+    ["pintade","f","Volailles",["pintade","volaille"],["red","white"],["fruité","souple"]],
+  ];
+  // Préparations : [base, accordable, kwΔ, notesΔ, typesOverride|null]
+  const MEAT_PREPS = [
+    ["grillé",1,["grillade"],["fruité"],null],
+    ["rôti",1,["rôti"],["souple"],null],
+    ["braisé",1,["braisé","mijoté"],["charpenté"],null],
+    ["mijoté",1,["mijoté","sauce"],["charpenté"],null],
+    ["poêlé",1,[],["fruité"],null],
+    ["sauté",1,[],["fruité"],null],
+    ["mariné grillé",0,["mariné","grillade"],["épicé"],null],
+    ["en sauce",0,["sauce"],["charpenté"],null],
+    ["au four",0,["four"],["souple"],null],
+    ["en brochettes",0,["brochette","grillade"],["fruité"],null],
+    ["à la plancha",0,["plancha","grillade"],["fruité"],null],
+    ["au curry",0,["curry"],["demi-sec","aromatique"],["white","rose"]],
+    ["à la crème",0,["crème"],["rond","gras"],["white"]],
+    ["à la moutarde",0,["moutarde"],["vif"],null],
+    ["en cocotte",0,["cocotte","mijoté"],["souple","charpenté"],null],
+    ["au poivre",0,["poivre","sauce"],["corsé","épicé"],null],
+  ];
+  for (const [n, g, cat, kw, ty, no] of MEATS)
+    for (const [p, a, pkw, pno, pty] of MEAT_PREPS)
+      add("Aliments", cat, cap(`${n} ${a ? acc(p, g, false) : p}`), [...kw, ...pkw], pty || ty, [...no, ...pno]);
+
+  // — POISSONS : nom (genre, pluriel) × préparations —
+  const FISHES = [
+    ["saumon","m",0],["thon","m",0],["cabillaud","m",0],["bar","m",0],["dorade","f",0],
+    ["sole","f",0],["truite","f",0],["merlu","m",0],["lieu jaune","m",0],["sardines","f",1],
+    ["maquereau","m",0],["lotte","f",0],["églefin","m",0],["saint-pierre","m",0],
+    ["turbot","m",0],["rouget","m",0],["colin","m",0],["raie","f",0],
+  ];
+  const FISH_PREPS = [
+    ["grillé",1,["grillé"],["vif","frais"],null],
+    ["au four",0,["four"],["frais","minéral"],null],
+    ["en papillote",0,["papillote"],["frais","léger"],null],
+    ["poché",1,["poché"],["léger","minéral"],null],
+    ["à la plancha",0,["plancha"],["vif"],null],
+    ["en tartare",0,["tartare","cru"],["vif","minéral"],["white","sparkling"]],
+    ["fumé",1,["fumé"],["minéral"],["white","sparkling"]],
+    ["meunière",0,["meunière","beurre"],["rond","beurré"],null],
+    ["en sauce",0,["sauce","beurre blanc"],["rond","gras"],null],
+    ["en croûte de sel",0,["croûte de sel","four"],["minéral"],null],
+  ];
+  for (const [n, g, pl] of FISHES)
+    for (const [p, a, pkw, pno, pty] of FISH_PREPS)
+      add("Aliments", "Poissons", cap(`${n} ${a ? acc(p, g, pl) : p}`),
+        ["poisson", n.split(" ")[0], ...pkw], pty || ["white"], pno);
+
+  // — FRUITS DE MER —
+  [["Huîtres nature",["huître"],["sparkling","white"],["iodé","minéral"]],
+   ["Huîtres gratinées",["huître","gratiné"],["white"],["rond","iodé"]],
+   ["Moules marinières",["moule"],["white"],["vif","minéral"]],
+   ["Moules à la crème",["moule","crème"],["white"],["rond"]],
+   ["Crevettes grillées",["crevette","grillé"],["white","rose"],["vif","frais"]],
+   ["Gambas à l'ail",["gambas","ail"],["white","rose"],["vif","aromatique"]],
+   ["Homard grillé",["homard"],["white","sparkling"],["rond","gras"]],
+   ["Homard thermidor",["homard","crème"],["white"],["rond","beurré"]],
+   ["Langouste",["langouste"],["white","sparkling"],["rond","minéral"]],
+   ["Langoustines",["langoustine"],["white","sparkling"],["minéral","frais"]],
+   ["Crabe / tourteau",["crabe","tourteau"],["white"],["vif","iodé"]],
+   ["Saint-Jacques poêlées",["saint-jacques"],["white","sparkling"],["rond","beurré"]],
+   ["Saint-Jacques gratinées",["saint-jacques","gratiné"],["white"],["rond","beurré"]],
+   ["Plateau de fruits de mer",["fruits de mer","huître","crustacé"],["white","sparkling"],["iodé","minéral","vif"]],
+   ["Bulots mayonnaise",["bulot"],["white"],["vif","iodé"]],
+   ["Calamars frits",["calamar","frit"],["white","sparkling"],["vif","frais"]],
+   ["Calamars à la romaine",["calamar","frit"],["white","rose"],["vif"]],
+   ["Poulpe grillé",["poulpe","grillé"],["white","rose"],["vif","frais"]],
+   ["Seiche à la plancha",["seiche","plancha"],["white","rose"],["vif"]],
+   ["Palourdes farcies",["palourde","farci"],["white"],["iodé","aromatique"]],
+   ["Oursins",["oursin"],["white","sparkling"],["iodé","minéral"]],
+   ["Tarama et blinis",["tarama"],["white","sparkling"],["vif","frais"]],
+  ].forEach(([n, kw, ty, no]) => add("Aliments", "Fruits de mer", n, kw, ty, no));
+
+  // — FROMAGES (60 nommés, profil par famille) —
+  const FROM = {
+    "pâte dure":      [["white","red"],["rond","fruité"]],
+    "bleu":           [["dessert","red"],["liquoreux","puissant"]],
+    "pâte molle":     [["red","white"],["souple","fruité"]],
+    "croûte lavée":   [["white","dessert"],["aromatique","puissant"]],
+    "chèvre":         [["white","rose"],["vif","frais","minéral"]],
+    "italien":        [["red","white"],["fruité","souple"]],
+    "brebis":         [["red","white"],["rond","fruité"]],
+  };
+  const CHEESES = [
+    ["Comté","pâte dure"],["Beaufort","pâte dure"],["Gruyère","pâte dure"],["Emmental","pâte dure"],
+    ["Abondance","pâte dure"],["Cantal","pâte dure"],["Salers","pâte dure"],["Laguiole","pâte dure"],
+    ["Tomme de Savoie","pâte dure"],["Mimolette","pâte dure"],["Morbier","pâte dure"],["Saint-Nectaire","pâte dure"],
+    ["Roquefort","bleu"],["Bleu d'Auvergne","bleu"],["Fourme d'Ambert","bleu"],["Gorgonzola","bleu"],
+    ["Stilton","bleu"],["Bleu de Gex","bleu"],
+    ["Camembert","pâte molle"],["Brie de Meaux","pâte molle"],["Brie de Melun","pâte molle"],
+    ["Coulommiers","pâte molle"],["Chaource","pâte molle"],["Neufchâtel","pâte molle"],["Brillat-Savarin","pâte molle"],
+    ["Munster","croûte lavée"],["Époisses","croûte lavée"],["Maroilles","croûte lavée"],["Langres","croûte lavée"],
+    ["Livarot","croûte lavée"],["Pont-l'Évêque","croûte lavée"],["Reblochon","croûte lavée"],["Vacherin Mont-d'Or","croûte lavée"],
+    ["Chèvre frais","chèvre"],["Crottin de Chavignol","chèvre"],["Sainte-Maure","chèvre"],["Valençay","chèvre"],
+    ["Picodon","chèvre"],["Pélardon","chèvre"],["Rocamadour","chèvre"],["Chabichou","chèvre"],
+    ["Mozzarella","italien"],["Burrata","italien"],["Parmesan","italien"],["Pecorino","italien"],
+    ["Manchego","brebis"],["Ossau-Iraty","brebis"],["Pérail","brebis"],["Feta","chèvre"],["Halloumi","brebis"],
+  ];
+  for (const [n, famC] of CHEESES) {
+    const [ty, no] = FROM[famC];
+    add("Aliments", "Fromages", n, [n.toLowerCase(), "fromage"], ty, no);
+  }
+
+  // — LÉGUMES × préparations —
+  const VEGS = [
+    ["aubergines","f",1],["courgettes","f",1],["poivrons","m",1],["tomates","f",1],["champignons","m",1],
+    ["asperges","f",1],["artichauts","m",1],["poireaux","m",1],["chou-fleur","m",0],["brocolis","m",1],
+    ["épinards","m",1],["potiron","m",0],["carottes","f",1],["haricots verts","m",1],["petits pois","m",1],
+    ["fenouil","m",0],["betteraves","f",1],["endives","f",1],["navets","m",1],["panais","m",1],
+  ];
+  const VEG_PREPS = [
+    ["grillé",1,["grillé"],["fruité","frais"]],
+    ["rôti",1,["rôti"],["fruité"]],
+    ["en gratin",0,["gratin","crème"],["rond"]],
+    ["en velouté",0,["velouté","soupe"],["rond","souple"]],
+    ["farci",1,["farci"],["fruité","souple"]],
+    ["poêlé",1,[],["frais"]],
+    ["à la vapeur",0,["vapeur"],["léger","frais"]],
+    ["en purée",0,["purée"],["rond","souple"]],
+  ];
+  for (const [n, g, pl] of VEGS)
+    for (const [p, a, pkw, pno] of VEG_PREPS)
+      add("Aliments", "Légumes", cap(`${n} ${a ? acc(p, g, pl) : p}`),
+        ["légume", n.split(" ")[0], ...pkw], ["white","rose","red"], pno);
+
+  // — ŒUFS, TARTES, CHARCUTERIE, SALADES, SOUPES —
+  [["Omelette nature",["œuf","omelette"]],["Omelette aux champignons",["œuf","omelette","champignon"]],
+   ["Œufs brouillés",["œuf"]],["Œufs cocotte",["œuf","crème"]],["Œufs mimosa",["œuf"]],
+   ["Quiche lorraine",["quiche","lard"]],["Quiche aux légumes",["quiche","légume"]],
+   ["Tarte à l'oignon",["tarte","oignon"]],["Pissaladière",["oignon","anchois"]],
+   ["Soufflé au fromage",["soufflé","fromage"]],["Croque-monsieur",["croque","jambon","fromage"]],
+   ["Croque-madame",["croque","œuf"]],
+  ].forEach(([n, kw]) => add("Aliments", "Œufs & tartes salées", n, kw, ["white","red"], ["souple","vif"]));
+
+  [["Saucisson sec"],["Jambon de Bayonne"],["Jambon blanc"],["Chorizo"],["Coppa"],["Bresaola"],
+   ["Pâté en croûte"],["Terrine de campagne"],["Rillettes"],["Boudin noir"],["Boudin blanc"],
+   ["Andouillette"],["Foie gras mi-cuit"],["Jambon serrano"],
+  ].forEach(([n]) => add("Aliments", "Charcuterie", n, [n.toLowerCase(), "charcuterie"],
+    n.includes("Foie gras") ? ["dessert","white"] : ["red","white","rose"],
+    n.includes("Foie gras") ? ["liquoreux","rond"] : ["fruité","vif"]));
+
+  [["Salade César",["salade","poulet","parmesan"]],["Salade de chèvre chaud",["salade","chèvre"]],
+   ["Salade périgourdine",["salade","gésier","foie gras"]],["Salade caprese",["tomate","mozzarella"]],
+   ["Salade de quinoa",["salade","quinoa"]],["Salade de lentilles",["salade","lentille"]],
+   ["Coleslaw",["chou","salade"]],["Salade landaise",["salade","canard"]],
+  ].forEach(([n, kw]) => add("Aliments", "Salades", n, kw, ["white","rose"], ["vif","frais"]));
+
+  [["Velouté de potiron",["velouté","potiron"]],["Soupe à l'oignon",["soupe","oignon","gratiné"]],
+   ["Soupe de poisson",["soupe","poisson"]],["Velouté de champignons",["velouté","champignon"]],
+   ["Soupe miso",["miso","soupe"]],["Gaspacho",["gaspacho","tomate","froid"]],
+   ["Velouté d'asperges",["velouté","asperge"]],["Bisque de homard",["bisque","homard"]],
+  ].forEach(([n, kw]) => add("Aliments", "Soupes & veloutés", n, kw, ["white"], ["rond","souple"]));
+
+  // — GIBIER —
+  [["Chevreuil rôti",["chevreuil","gibier"]],["Civet de sanglier",["sanglier","civet","gibier"]],
+   ["Biche en sauce",["biche","gibier","sauce"]],["Faisan rôti",["faisan","gibier"]],
+   ["Perdrix aux choux",["perdrix","chou","gibier"]],["Lièvre à la royale",["lièvre","gibier","sauce"]],
+   ["Marcassin braisé",["marcassin","gibier","braisé"]],["Pigeon rôti",["pigeon"]],
+   ["Caille rôtie",["caille"]],["Terrine de gibier",["gibier","terrine"]],
+  ].forEach(([n, kw]) => add("Aliments", "Gibier", n, kw, ["red"], ["puissant","corsé","épicé"]));
+
+  // — FRUITS —
+  [["Fraises au sucre",["fraise"]],["Framboises fraîches",["framboise"]],["Salade de fruits frais",["fruits","salade de fruits"]],
+   ["Melon",["melon"]],["Melon jambon cru",["melon","jambon"]],["Figues rôties",["figue","rôti"]],
+   ["Pêches rôties",["pêche","rôti"]],["Abricots rôtis",["abricot","rôti"]],["Ananas rôti",["ananas","rôti"]],
+   ["Pommes au four",["pomme","four"]],["Poires pochées au vin",["poire","poché","vin"]],
+   ["Raisin frais",["raisin"]],["Mangue fraîche",["mangue"]],["Agrumes en salade",["agrume","orange","salade"]],
+   ["Compote de pommes",["compote","pomme"]],
+  ].forEach(([n, kw]) => add("Aliments", "Fruits", n, kw, ["dessert","sparkling","rose"], ["fruité","sucré","frais"]));
+
+  // — APÉRITIF —
+  [["Gougères",["gougère","fromage"]],["Verrines apéritives",["verrine"]],["Feuilletés apéritifs",["feuilleté"]],
+   ["Olives marinées",["olive"]],["Tapenade",["tapenade","olive"]],["Planche mixte",["planche","charcuterie","fromage"]],
+   ["Chips et dips",["chips"]],["Mini-quiches",["quiche"]],["Cake salé",["cake","salé"]],
+   ["Bâtonnets de légumes",["légume","crudité"]],
+  ].forEach(([n, kw]) => add("Aliments", "Apéritif", n, kw, ["sparkling","white","rose"], ["vif","léger","frais"]));
+
+  // — RECETTES : listes réelles par catégorie —
+  const R = (cat, arr, defT, defN) => arr.forEach((e) => {
+    const [n, kw, ty, no] = Array.isArray(e) ? e : [e, null, null, null];
+    add("Recettes", cat, n, kw || n.toLowerCase().split(/[\s,']+/).filter(w => w.length > 2), ty || defT, no || defN);
+  });
+  R("Grands classiques français", [
+    "Bœuf bourguignon","Coq au vin","Blanquette de veau","Pot-au-feu","Hachis parmentier",
+    "Gratin dauphinois","Cassoulet","Choucroute garnie","Tartiflette","Fondue savoyarde",
+    "Fondue bourguignonne","Aligot","Truffade","Potée auvergnate","Petit salé aux lentilles",
+    "Navarin d'agneau","Daube provençale","Ratatouille","Bouillabaisse","Quenelles de brochet",
+    "Baeckeoffe","Flammekueche","Garbure","Poule au pot","Poulet chasseur",
+    "Poulet vallée d'Auge","Lapin à la moutarde","Sole meunière","Brandade de morue","Grand aïoli",
+    "Moules-frites","Coquilles Saint-Jacques à la bretonne","Œufs en meurette","Salade lyonnaise","Salade niçoise",
+    "Steak frites","Entrecôte bordelaise","Magret sauce au poivre","Confit de canard pommes sarladaises","Tête de veau",
+    "Paupiettes de veau","Bœuf stroganoff","Tomates farcies","Endives au jambon","Gratin de courgettes",
+    "Pieds paquets","Tripes à la mode de Caen","Rognons à la moutarde","Foie de veau persillé","Pain de viande",
+  ], ["red"], ["charpenté","fruité"]);
+  R("Cuisine italienne", [
+    ["Spaghetti carbonara",["carbonara","pâtes","lard"],["white","red"],["rond"]],
+    ["Pâtes bolognaise",["bolognaise","pâtes","tomate"],["red"],["fruité"]],
+    ["Penne arrabiata",["arrabiata","pâtes","piment"],["red","rose"],["fruité","épicé"]],
+    ["Pâtes au pesto",["pesto","pâtes","basilic"],["white"],["vif","aromatique"]],
+    ["Cacio e pepe",["pâtes","pecorino","poivre"],["white"],["vif"]],
+    ["Pâtes all'amatriciana",["pâtes","tomate","lard"],["red"],["fruité"]],
+    ["Spaghetti alle vongole",["pâtes","palourde"],["white"],["minéral","vif"]],
+    "Lasagnes","Cannelloni","Raviolis ricotta-épinards",
+    ["Gnocchis au gorgonzola",["gnocchi","gorgonzola"],["white","red"],["rond"]],
+    "Risotto aux champignons","Risotto milanais","Risotto aux asperges",
+    ["Risotto aux fruits de mer",["risotto","fruits de mer"],["white"],["minéral","rond"]],
+    "Osso buco","Saltimbocca","Escalope milanaise",
+    ["Vitello tonnato",["veau","thon"],["white"],["rond","vif"]],
+    "Polenta crémeuse","Pizza margherita","Pizza quattro formaggi","Pizza napolitaine",
+    "Pizza calzone","Pizza prosciutto","Pizza végétarienne","Focaccia","Bruschetta",
+    "Antipasti","Carpaccio de bœuf",["Burrata tomates",["burrata","tomate"],["white","rose"],["frais"]],
+    "Minestrone","Arancini","Panzanella","Involtini","Piccata de veau","Tagliata de bœuf",
+  ], ["red","white"], ["fruité","souple"]);
+  R("Cuisine asiatique", [
+    ["Sushis saumon",["sushi","saumon"],["white","sparkling"],["vif","minéral"]],
+    ["Sushis thon",["sushi","thon"],["white","sparkling"],["vif","minéral"]],
+    ["Sashimi",["sashimi","cru"],["white","sparkling"],["minéral"]],
+    ["Maki variés",["maki","sushi"],["white","sparkling"],["vif"]],
+    ["Chirashi",["chirashi","riz","cru"],["white"],["vif","frais"]],
+    ["Ramen",["ramen","bouillon","nouilles"],["white"],["souple"]],
+    ["Yakitori",["yakitori","brochette"],["red","white"],["fruité"]],
+    ["Tempura",["tempura","frit"],["white","sparkling"],["vif","frais"]],
+    ["Saumon teriyaki",["teriyaki","saumon"],["white","rose"],["fruité","demi-sec"]],
+    ["Gyozas",["gyoza","raviolis"],["white"],["vif"]],
+    ["Poke bowl",["poke","cru","riz"],["white","rose"],["frais","vif"]],
+    ["Pad thaï",["pad thaï","nouilles","cacahuète"],["white","rose"],["aromatique","demi-sec"]],
+    ["Curry vert thaï",["curry","coco","thaï"],["white","rose"],["aromatique","demi-sec"]],
+    ["Curry rouge thaï",["curry","coco","thaï"],["white","rose"],["aromatique","demi-sec"]],
+    ["Soupe tom yum",["tom yum","citronnelle","épicé"],["white"],["vif","aromatique"]],
+    ["Riz sauté à l'ananas",["riz","ananas"],["white","rose"],["fruité"]],
+    ["Pho",["pho","bouillon","bœuf"],["white","red"],["souple"]],
+    ["Bo bun",["bo bun","bœuf","nouilles"],["white","rose"],["frais","fruité"]],
+    ["Nems",["nem","frit"],["white","rose"],["vif","frais"]],
+    ["Rouleaux de printemps",["rouleau de printemps","frais"],["white","rose"],["frais","léger"]],
+    ["Banh mi",["banh mi","sandwich"],["rose","white"],["frais"]],
+    ["Porc au caramel",["porc","caramel"],["red","white"],["fruité","demi-sec"]],
+    ["Canard laqué",["canard","laqué"],["red"],["fruité","épicé"]],
+    ["Porc aigre-doux",["porc","aigre-doux"],["white","rose"],["fruité","demi-sec"]],
+    ["Poulet général Tao",["poulet","frit","épicé"],["white","rose"],["demi-sec","fruité"]],
+    ["Nouilles sautées",["nouilles","wok"],["white","red"],["fruité"]],
+    ["Riz cantonais",["riz","cantonais"],["white"],["souple"]],
+    ["Dim sum",["dim sum","vapeur"],["white","sparkling"],["vif"]],
+    ["Mapo tofu",["tofu","épicé"],["white","rose"],["demi-sec"]],
+    ["Bœuf aux oignons",["bœuf","oignon","wok"],["red"],["fruité"]],
+    ["Crevettes sel et poivre",["crevette","frit"],["white","sparkling"],["vif"]],
+    ["Poulet tikka masala",["tikka","curry","poulet"],["white","rose"],["aromatique","demi-sec"]],
+    ["Butter chicken",["curry","poulet","crème"],["white","rose"],["rond","demi-sec"]],
+    ["Curry d'agneau",["curry","agneau"],["red","rose"],["épicé","fruité"]],
+    ["Dahl de lentilles",["dahl","lentille","épices"],["white","rose"],["aromatique"]],
+    ["Biryani",["biryani","riz","épices"],["white","rose"],["aromatique","demi-sec"]],
+    ["Poulet tandoori",["tandoori","poulet"],["rose","white"],["fruité","épicé"]],
+    ["Samoussas",["samoussa","frit","épices"],["white","rose"],["vif","aromatique"]],
+    ["Korma",["korma","curry","crème"],["white"],["rond","demi-sec"]],
+    ["Bibimbap",["bibimbap","riz","coréen"],["white","rose"],["frais","fruité"]],
+    ["Bulgogi",["bulgogi","bœuf","coréen"],["red"],["fruité"]],
+    ["Poulet frit coréen",["poulet","frit","coréen"],["white","sparkling"],["vif","frais"]],
+  ], ["white","rose"], ["aromatique","frais"]);
+  R("Méditerranée & Orient", [
+    ["Couscous royal",["couscous","semoule","merguez"],["red","rose"],["épicé","fruité"]],
+    ["Couscous poulet",["couscous","poulet"],["rose","red"],["fruité"]],
+    ["Couscous végétarien",["couscous","légume"],["rose","white"],["fruité","frais"]],
+    ["Tajine d'agneau aux pruneaux",["tajine","agneau","pruneau"],["red"],["épicé","fruité"]],
+    ["Tajine de poulet au citron confit",["tajine","poulet","citron"],["white","rose"],["aromatique","vif"]],
+    ["Tajine de kefta",["tajine","kefta","bœuf"],["red","rose"],["épicé"]],
+    ["Pastilla",["pastilla","volaille","amande"],["white","rose"],["aromatique","demi-sec"]],
+    ["Méchoui",["méchoui","agneau"],["red"],["épicé","corsé"]],
+    ["Chorba / harira",["chorba","harira","soupe"],["rose","red"],["épicé"]],
+    ["Bricks à l'œuf",["brick","œuf","frit"],["white","rose"],["vif"]],
+    ["Mezze libanais",["mezze","houmous","taboulé"],["rose","white"],["frais","vif"]],
+    ["Falafels",["falafel","pois chiche","frit"],["rose","white"],["frais","vif"]],
+    ["Chawarma",["chawarma","kebab"],["rose","red"],["fruité","épicé"]],
+    ["Moussaka",["moussaka","aubergine","agneau"],["red"],["fruité","épicé"]],
+    ["Gyros",["gyros","porc","grec"],["red","rose"],["fruité"]],
+    ["Salade grecque",["salade","feta","olive"],["white","rose"],["frais","vif"]],
+    ["Feta rôtie au miel",["feta","miel","rôti"],["white","rose"],["fruité"]],
+    ["Dolmas",["dolma","riz","feuille de vigne"],["white","rose"],["frais"]],
+    ["Paella valencienne",["paella","riz","poulet"],["rose","red"],["fruité"]],
+    ["Paella aux fruits de mer",["paella","fruits de mer"],["rose","white"],["vif","fruité"]],
+    ["Tortilla espagnole",["tortilla","œuf","pomme de terre"],["red","rose"],["fruité"]],
+    ["Gambas al ajillo",["gambas","ail"],["white"],["vif","aromatique"]],
+    ["Patatas bravas",["pomme de terre","épicé"],["red","rose"],["fruité"]],
+    ["Pulpo a la gallega",["poulpe","paprika"],["white","rose"],["vif"]],
+    ["Pan con tomate",["pain","tomate"],["rose","red"],["frais"]],
+  ], ["rose","red"], ["fruité","épicé"]);
+  R("Amériques", [
+    ["Burger classique",["burger","bœuf"],["red"],["fruité","corsé"]],
+    ["Cheeseburger",["burger","fromage"],["red"],["fruité"]],
+    ["Bacon burger",["burger","bacon"],["red"],["corsé"]],
+    ["Pulled pork",["porc","effiloché","barbecue"],["red"],["fruité","épicé"]],
+    ["Ribs barbecue",["ribs","travers","barbecue"],["red"],["corsé","fruité"]],
+    ["Brisket fumé",["bœuf","fumé","barbecue"],["red"],["corsé"]],
+    ["Hot-dog",["hot-dog","saucisse"],["red","rose"],["fruité"]],
+    ["Mac and cheese",["pâtes","fromage"],["white","red"],["rond"]],
+    ["Poulet frit",["poulet","frit"],["white","sparkling"],["vif","frais"]],
+    ["Wings barbecue",["poulet","barbecue","épicé"],["red","rose"],["fruité","épicé"]],
+    ["Chili con carne",["chili","bœuf","haricot","épicé"],["red"],["épicé","fruité"]],
+    ["Fajitas de poulet",["fajitas","poulet"],["rose","white"],["fruité","épicé"]],
+    ["Fajitas de bœuf",["fajitas","bœuf"],["red","rose"],["fruité","épicé"]],
+    ["Tacos al pastor",["tacos","porc"],["red","rose"],["épicé"]],
+    ["Tacos de poisson",["tacos","poisson"],["white","rose"],["vif","frais"]],
+    ["Burritos",["burrito","haricot"],["red","rose"],["fruité"]],
+    ["Quesadillas",["quesadilla","fromage"],["rose","red"],["fruité"]],
+    ["Enchiladas",["enchilada","épicé"],["red","rose"],["épicé"]],
+    ["Guacamole et nachos",["guacamole","nachos","avocat"],["rose","white"],["frais"]],
+    ["Ceviche",["ceviche","poisson","cru","citron"],["white","sparkling"],["vif","minéral"]],
+    ["Empanadas",["empanada","viande"],["red","rose"],["fruité"]],
+    ["Fish and chips",["poisson","frit"],["white","sparkling"],["vif","frais"]],
+  ], ["red"], ["fruité"]);
+  R("Europe & montagnes", [
+    ["Goulash hongrois",["goulash","bœuf","paprika"],["red"],["épicé","corsé"]],
+    ["Wiener schnitzel",["escalope","panée","veau"],["white","red"],["vif"]],
+    ["Shepherd's pie",["hachis","agneau"],["red"],["fruité"]],
+    ["Irish stew",["ragoût","agneau"],["red"],["corsé"]],
+    ["Bortsch",["betterave","soupe"],["red","rose"],["fruité"]],
+    ["Pierogi",["raviolis","pomme de terre"],["white"],["souple"]],
+    ["Boulettes suédoises",["boulette","crème"],["red","white"],["rond"]],
+    ["Raclette au fromage fumé",["raclette","fumé"],["white","red"],["vif"]],
+    ["Rösti",["pomme de terre","poêlé"],["white","red"],["souple"]],
+    ["Croziflette",["crozets","reblochon"],["white","red"],["vif","fruité"]],
+  ], ["red","white"], ["fruité"]);
+  R("Afrique & Créole", [
+    ["Mafé",["mafé","cacahuète","bœuf"],["red"],["épicé","corsé"]],
+    ["Thiéboudienne",["riz","poisson"],["white","rose"],["épicé"]],
+    ["Poulet yassa",["yassa","poulet","citron","oignon"],["white","rose"],["vif","aromatique"]],
+    ["Colombo de poulet",["colombo","poulet","épices"],["white","rose"],["aromatique","épicé"]],
+    ["Rougail saucisse",["rougail","saucisse","épicé"],["red","rose"],["épicé","fruité"]],
+    ["Accras de morue",["accras","morue","frit"],["white","sparkling"],["vif","frais"]],
+    ["Poulet boucané",["poulet","fumé","créole"],["rose","red"],["épicé","fruité"]],
+    ["Gombo",["gombo","ragoût"],["red","rose"],["épicé"]],
+  ], ["rose","red"], ["épicé","fruité"]);
+  // Desserts : classiques + fruits × préparations
+  R("Desserts", [
+    ["Fondant au chocolat",["chocolat","fondant"],["dessert","red"],["liquoreux","puissant"]],
+    ["Mousse au chocolat",["chocolat","mousse"],["dessert","red"],["liquoreux"]],
+    ["Profiteroles",["chocolat","chou","glace"],["dessert"],["liquoreux","sucré"]],
+    ["Éclair au chocolat",["chocolat","éclair"],["dessert"],["sucré"]],
+    ["Forêt-noire",["chocolat","cerise"],["dessert","red"],["liquoreux","fruité"]],
+    ["Brownie",["chocolat","brownie"],["dessert","red"],["liquoreux"]],
+    ["Crème brûlée",["crème brûlée","vanille"],["dessert"],["liquoreux","sucré"]],
+    ["Crème caramel",["crème","caramel"],["dessert"],["sucré"]],
+    ["Île flottante",["île flottante","crème"],["dessert","sparkling"],["sucré","léger"]],
+    ["Riz au lait",["riz au lait"],["dessert"],["sucré"]],
+    ["Panna cotta",["panna cotta","crème"],["dessert","sparkling"],["sucré","fruité"]],
+    ["Flan pâtissier",["flan","vanille"],["dessert"],["sucré"]],
+    ["Paris-Brest",["praliné","chou"],["dessert"],["sucré","liquoreux"]],
+    ["Mille-feuille",["mille-feuille","crème"],["dessert","sparkling"],["sucré"]],
+    ["Saint-Honoré",["chou","crème"],["dessert","sparkling"],["sucré"]],
+    ["Opéra",["chocolat","café"],["dessert"],["liquoreux","puissant"]],
+    ["Fraisier",["fraise","crème"],["dessert","sparkling"],["fruité","sucré"]],
+    ["Baba au rhum",["baba","rhum"],["dessert"],["liquoreux","puissant"]],
+    ["Kouign-amann",["beurre","caramel"],["dessert"],["sucré","liquoreux"]],
+    ["Canelés",["canelé","rhum","vanille"],["dessert"],["sucré"]],
+    ["Macarons",["macaron"],["dessert","sparkling"],["sucré","fruité"]],
+    ["Tiramisu",["tiramisu","café","mascarpone"],["dessert"],["liquoreux","sucré"]],
+    ["Cheesecake",["cheesecake","fromage frais"],["dessert","sparkling"],["sucré","fruité"]],
+    ["Pavlova",["pavlova","meringue","fruits"],["dessert","sparkling"],["fruité","léger"]],
+    ["Crêpes Suzette",["crêpe","orange","flambé"],["dessert"],["fruité","liquoreux"]],
+    ["Gaufres chantilly",["gaufre","chantilly"],["dessert","sparkling"],["sucré"]],
+    ["Churros",["churros","frit","sucre"],["dessert"],["sucré"]],
+    ["Pain perdu",["pain perdu","caramel"],["dessert"],["sucré"]],
+    ["Galette des rois",["frangipane","amande"],["dessert","sparkling"],["sucré"]],
+    ["Mont-Blanc",["marron","meringue"],["dessert"],["sucré","liquoreux"]],
+    ["Nougat glacé",["nougat","glacé","miel"],["dessert"],["sucré"]],
+    ["Pêche Melba",["pêche","glace","framboise"],["dessert","sparkling"],["fruité"]],
+    ["Poire Belle-Hélène",["poire","chocolat"],["dessert"],["fruité","liquoreux"]],
+  ], ["dessert"], ["sucré"]);
+  const FRUITS = ["pommes","poires","abricots","cerises","fraises","framboises","mirabelles","pêches","rhubarbe","citron"];
+  for (const f of FRUITS) {
+    add("Recettes", "Desserts", cap(`tarte aux ${f}`), ["tarte", f], ["dessert","sparkling"], ["fruité","sucré"]);
+    add("Recettes", "Desserts", cap(`clafoutis aux ${f}`), ["clafoutis", f], ["dessert"], ["fruité","sucré"]);
+    add("Recettes", "Desserts", cap(`crumble aux ${f}`), ["crumble", f], ["dessert"], ["fruité","sucré"]);
+  }
+  // Desserts glacés
+  [["Glace vanille",["glace","vanille"]],["Glace chocolat",["glace","chocolat"]],
+   ["Sorbet citron",["sorbet","citron"]],["Sorbet framboise",["sorbet","framboise"]],
+   ["Banana split",["banane","glace","chocolat"]],["Coupe glacée",["glace","chantilly"]],
+   ["Café gourmand",["café","mignardise"]],["Omelette norvégienne",["glace","meringue","flambé"]],
+  ].forEach(([n, kw]) => add("Recettes", "Desserts", n, kw, ["dessert","sparkling"], ["sucré","fruité"]));
+  // Déclinaisons transversales (curry / wok / brochettes / risotto / tajine de X)
+  const DECL = [
+    ["Curry de", ["crevettes","légumes","poisson","bœuf","porc"], ["curry"], ["white","rose"], ["aromatique","demi-sec"]],
+    ["Wok de",   ["bœuf","poulet","crevettes","légumes","canard"], ["wok"], ["white","rose"], ["fruité","frais"]],
+    ["Brochettes de", ["bœuf","poulet","agneau","crevettes","légumes","canard"], ["brochette","grillade"], ["red","rose"], ["fruité"]],
+    ["Risotto aux", ["asperges vertes","cèpes","truffes","courgettes","crevettes","poireaux"], ["risotto"], ["white"], ["rond"]],
+    ["Tajine de", ["légumes","bœuf","canard"], ["tajine"], ["red","rose"], ["épicé","fruité"]],
+  ];
+  for (const [pre, items, kw, ty, no] of DECL)
+    for (const it of items)
+      add("Recettes", "Déclinaisons du monde", `${pre} ${it}`, [...kw, it.split(" ")[0]], ty, no);
+  // Street food & brunch
+  R("Street food & brunch", [
+    ["Club sandwich",["sandwich","poulet"],["white","rose"],["frais"]],
+    ["Panini",["panini","fromage"],["red","rose"],["fruité"]],
+    ["Wrap au poulet",["wrap","poulet"],["white","rose"],["frais"]],
+    ["Bagel au saumon",["bagel","saumon"],["white","sparkling"],["vif","frais"]],
+    ["Burger végétarien",["burger","végétarien"],["rose","red"],["fruité"]],
+    ["Œufs Bénédicte",["œuf","hollandaise"],["white","sparkling"],["rond","vif"]],
+    ["Pancakes au sirop d'érable",["pancake","sirop"],["dessert","sparkling"],["sucré"]],
+    ["Avocado toast",["avocat","toast"],["white","sparkling"],["frais","vif"]],
+    ["Granola et fruits",["granola","fruits","yaourt"],["sparkling","dessert"],["fruité","léger"]],
+    ["Pan bagnat",["pan bagnat","thon"],["rose","white"],["frais"]],
+  ], ["white","rose"], ["frais"]);
+  // Occasions
+  R("Occasions", [
+    ["Apéritif dînatoire",["apéritif","tapas","amuse-bouche"],["sparkling","white","rose"],["vif","léger","frais"]],
+    ["Brunch du dimanche",["brunch","œuf","viennoiserie"],["sparkling","white"],["léger","fruité"]],
+    ["Pique-nique",["pique-nique","sandwich","salade"],["rose","white"],["frais","léger"]],
+    ["Barbecue entre amis",["barbecue","grillade"],["red","rose"],["fruité","épicé"]],
+    ["Dîner romantique",["gastronomique"],["sparkling","red"],["élégant","fruité"]],
+    ["Repas de fête",["fête","festif","foie gras"],["sparkling","dessert","red"],["élégant","liquoreux"]],
+    ["Réveillon",["réveillon","huître","foie gras"],["sparkling","white","dessert"],["élégant","minéral"]],
+    ["Plateau télé",["plateau","fromage","charcuterie"],["red","white"],["fruité","souple"]],
+    ["Raclette party",["raclette","fromage"],["white","red"],["vif","fruité"]],
+    ["Soirée pizza",["pizza"],["red","rose"],["fruité","souple"]],
+  ], ["sparkling","white"], ["vif","frais"]);
+
+  // — Fusion de la bibliothèque manuelle (soignée), sans doublons —
+  // Les anciennes catégories proches sont fusionnées dans les nouvelles.
+  const CAT_MAP = { "Porc & charcuterie": "Porc", "Apéritif & entrées": "Apéritif", "Végétarien & légumes": "Légumes" };
+  for (const [fam, cats] of Object.entries(FOOD_LIBRARY_BASE))
+    for (const [cat, dishes] of Object.entries(cats))
+      for (const [name, prof] of Object.entries(dishes)) {
+        const tFam = (fam === "Aliments" && cat === "Desserts") ? "Recettes" : fam;
+        add(tFam, CAT_MAP[cat] || cat, name, prof.kw, prof.types, prof.notes);
+      }
+
+  return L;
+})();
+// Nombre total de plats référencés (affiché dans l'onglet Accords)
+const FOOD_COUNT = Object.values(FOOD_LIBRARY)
+  .reduce((a, cats) => a + Object.values(cats).reduce((b, d) => b + Object.keys(d).length, 0), 0);
 // Messages d'erreur affichés à l'utilisateur selon le code retourné par le backend
 const ERROR_MESSAGES = {
   quota_exceeded:      "⚠️ Quota Gemini dépassé (1 500/jour). Les résultats viennent d'Open Food Facts — ajoutez votre clé demain ou vérifiez votre quota sur aistudio.google.com.",
@@ -573,7 +1033,6 @@ class MillesimeCard extends HTMLElement {
     this._pendingRender = false;
     this._view       = "2d";  // "2d" | "dot" | "3d"
     this._viewTouched = false; // l'utilisateur a basculé manuellement (prime sur default_view)
-    this._optionsOpen = false; // ligne d'options repliable (sous le verre du logo)
     this._filtersOpen = false; // sous-menu repliable
     this._filterTab = "occasions"; // onglet actif du sous-menu
     this._occasionFilter = "";     // occasion sélectionnée (surbrillance cave)
@@ -586,7 +1045,7 @@ class MillesimeCard extends HTMLElement {
 
   setConfig(config) {
     this._config = config || {};
-    // Priorité : choix manuel mémorisé (localStorage) > default_view YAML > 2d.
+    // Priorité : choix manuel mémorisé (localStorage) > default_view YAML > 3D.
     // bottle_style: dot accepté comme alias déprécié.
     if (!this._viewTouched) {
       let saved = null;
@@ -595,8 +1054,8 @@ class MillesimeCard extends HTMLElement {
         this._view = saved;
       } else {
         const dv = normKey(this._config.default_view);
-        this._view = dv === "3d" || dv === "dot" ? dv
-          : this._config.bottle_style === "dot" ? "dot" : "2d";
+        this._view = dv === "2d" || dv === "dot" ? dv
+          : this._config.bottle_style === "dot" ? "dot" : "3d";
       }
     }
     this._applyConfigColors();
@@ -714,6 +1173,12 @@ class MillesimeCard extends HTMLElement {
 
   getCardSize() { return 8; }
 
+  // Layout « sections » (HA 2024.11+) : la carte occupe toute la largeur par défaut
+  // (grille de 12 colonnes) et reste redimensionnable, minimum 6 colonnes.
+  getGridOptions() {
+    return { columns: "full", rows: "auto", min_columns: 6, min_rows: 4 };
+  }
+
   _applyTheme() {
     const themeVars = this._hass?.themes?.themes?.[this._hass?.themes?.theme] || {};
     const props = [
@@ -758,24 +1223,16 @@ class MillesimeCard extends HTMLElement {
     const { done = 0, total = 0, finished = false } = data;
     if (!total) return;
     const pct = Math.round((done / total) * 100);
-    // La barre s'affiche dans le menu options (zone repliable) — pas collée en bas.
-    // On ouvre le menu options s'il est fermé, le temps de l'opération.
-    const opts = this.shadowRoot.getElementById("header-options");
-    if (opts && !this._optionsOpen && !finished) {
-      this._optionsOpen = true;
-      opts.classList.add("open");
-      this.shadowRoot.getElementById("btn-options")?.classList.add("active");
-    }
+    // La barre s'affiche dans une zone dédiée sous l'en-tête de la carte
+    // (les options sont désormais une fenêtre, fermée pendant l'opération).
     let bar = this.shadowRoot.getElementById("refresh-progress");
     if (!bar) {
       bar = document.createElement("div");
       bar.id = "refresh-progress";
       bar.className = "refresh-progress";
       bar.innerHTML = `<div class="rp-label"></div><div class="rp-track"><div class="rp-fill"></div></div>`;
-      // Insérer dans le menu options (juste après la rangée de boutons)
-      const row = opts?.querySelector(".opt-row");
-      if (row && row.parentNode) row.parentNode.insertBefore(bar, row.nextSibling);
-      else (opts || this.shadowRoot).appendChild(bar);
+      const zone = this.shadowRoot.getElementById("refresh-progress-zone");
+      (zone || this.shadowRoot).appendChild(bar);
     }
     bar.querySelector(".rp-label").textContent = `♻️ Complétion des fiches… ${done}/${total} (${pct} %)`;
     bar.querySelector(".rp-fill").style.width = `${pct}%`;
@@ -984,6 +1441,7 @@ class MillesimeCard extends HTMLElement {
     if (type === "bottlelist") box.innerHTML = this._bottleListHTML();
     if (type === "racklist")  box.innerHTML = this._rackListHTML();
     if (type === "openpage")  box.innerHTML = this._openPageHTML();
+    if (type === "options")   box.innerHTML = this._optionsHTML();
     if (type === "moverack") box.innerHTML = this._moveRackHTML(opts.rack);
     if (type === "sensors")   box.innerHTML = this._sensorsHTML();
     if (type === "envhistory") box.innerHTML = this._envHistoryHTML(opts.entity, opts.kind);
@@ -1009,6 +1467,7 @@ class MillesimeCard extends HTMLElement {
     if (type === "bottlelist") this._bindBottleList(box);
     if (type === "racklist")  this._bindRackList(box);
     if (type === "openpage")  this._bindOpenPage(box);
+    if (type === "options")   this._bindOptionsModal(box);
     if (type === "moverack") this._bindMoveRack(box, opts.rack);
     if (type === "sensors")   this._bindSensors(box);
     if (type === "envhistory") this._bindEnvHistory(box, opts.entity, opts.kind);
@@ -1197,6 +1656,7 @@ class MillesimeCard extends HTMLElement {
             </div>
             <button class="mm-btn-photo" id="btn-photo" title="Scanner l'étiquette">📷</button>
             <input type="file" id="photo-input" accept="image/*" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;overflow:hidden">
+            <input type="file" id="photo-input-cam" accept="image/*" capture="environment" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;overflow:hidden">
           </div>
           <div id="search-banner"></div>
           <div id="viv-results" class="mm-viv-results"></div>
@@ -1335,6 +1795,7 @@ class MillesimeCard extends HTMLElement {
             </div>
           </div>
           <input type="file" id="bt-photo-file" accept="image/*" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
+          <input type="file" id="bt-photo-file-cam" accept="image/*" capture="environment" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0">
           <input class="mm-input mm-photo-url" id="bt-photo-url" placeholder="… ou coller un lien d'image (https://…)" autocomplete="off" value="${(b.image_url && /^https?:/i.test(b.image_url)) ? esc(b.image_url) : ""}">
           <div class="mm-photo-hint">La photo prise pour scanner l'étiquette devient aussi la photo affichée.</div>
         </div>
@@ -1363,6 +1824,7 @@ class MillesimeCard extends HTMLElement {
     const banner   = box.querySelector("#search-banner");
     const btnPhoto = box.querySelector("#btn-photo");
     const fileInput= box.querySelector("#photo-input");
+    const fileInputCam = box.querySelector("#photo-input-cam");
 
     // Champ « De la part de » visible uniquement si l'événement = Cadeau
     const evSel = box.querySelector("#bt-event");
@@ -1385,18 +1847,15 @@ class MillesimeCard extends HTMLElement {
       }
       if (photoRm) photoRm.classList.toggle("hidden", !src);
     };
-    // « Photo » : sur mobile, ouvre directement l'appareil photo (capture) ;
-    // « Galerie » : sélecteur classique. Un seul input, l'attribut bascule au clic.
-    box.querySelector("#bt-photo-cam")?.addEventListener("click", () => {
-      photoFile?.setAttribute("capture", "environment");
-      photoFile?.click();
-    });
-    box.querySelector("#bt-photo-pick")?.addEventListener("click", () => {
-      photoFile?.removeAttribute("capture");
-      photoFile?.click();
-    });
-    photoFile?.addEventListener("change", async () => {
-      const file = photoFile.files?.[0];
+    // « Photo » ouvre l'appareil photo, « Galerie » le sélecteur classique.
+    // DEUX inputs statiques distincts : l'attribut capture doit être présent dès la
+    // création de l'input (les WebView Android ignorent un setAttribute dynamique
+    // et ouvraient la pellicule à la place de l'appareil photo).
+    const photoFileCam = box.querySelector("#bt-photo-file-cam");
+    box.querySelector("#bt-photo-cam")?.addEventListener("click", () => photoFileCam?.click());
+    box.querySelector("#bt-photo-pick")?.addEventListener("click", () => photoFile?.click());
+    const onPhotoFile = async (inp) => {
+      const file = inp.files?.[0];
       if (!file) return;
       try {
         const compressed = await this._compressImage(file);
@@ -1406,7 +1865,10 @@ class MillesimeCard extends HTMLElement {
       } catch (e) {
         this._showToast("error", "Impossible de lire cette image");
       }
-    });
+      inp.value = "";   // permet de reprendre la même photo ensuite
+    };
+    photoFile?.addEventListener("change", () => onPhotoFile(photoFile));
+    photoFileCam?.addEventListener("change", () => onPhotoFile(photoFileCam));
     photoUrl?.addEventListener("change", () => {
       const v = (photoUrl.value || "").trim();
       if (v && /^https?:/i.test(v)) setPhoto(v);
@@ -1528,8 +1990,7 @@ class MillesimeCard extends HTMLElement {
     // Sur PC (souris), comportement inchangé : sélecteur de fichiers direct.
     btnPhoto?.addEventListener("click", () => {
       if (this._lastPT !== "touch") {
-        fileInput?.removeAttribute("capture");
-        fileInput?.click();
+        fileInput?.click();   // PC : sélecteur de fichiers direct
         return;
       }
       banner.innerHTML = `
@@ -1539,18 +2000,16 @@ class MillesimeCard extends HTMLElement {
         </div>`;
       banner.querySelector("#scan-cam")?.addEventListener("click", () => {
         banner.innerHTML = "";
-        fileInput?.setAttribute("capture", "environment");   // ouvre l'appareil photo
-        fileInput?.click();
+        fileInputCam?.click();   // input statique avec capture → appareil photo direct
       });
       banner.querySelector("#scan-lib")?.addEventListener("click", () => {
         banner.innerHTML = "";
-        fileInput?.removeAttribute("capture");
-        fileInput?.click();
+        fileInput?.click();      // input sans capture → galerie / fichiers
       });
     });
 
-    fileInput?.addEventListener("change", async () => {
-      const file = fileInput.files?.[0];
+    const onScanFile = async (inp) => {
+      const file = inp.files?.[0];
       if (!file) return;
 
       // Aperçu immédiat
@@ -1629,7 +2088,10 @@ class MillesimeCard extends HTMLElement {
         showResults({ results: wines, error: null, source: "gemini" });
         this._showToast("info", "📷 Plusieurs vins possibles — sélectionnez le bon");
       }
-    });
+      inp.value = "";   // permet de re-scanner la même photo ensuite
+    };
+    fileInput?.addEventListener("change", () => onScanFile(fileInput));
+    fileInputCam?.addEventListener("change", () => onScanFile(fileInputCam));
 
     // ── Coup de cœur : étoile cliquable (★ pleine si actif, ☆ contour sinon) ──
     const fav = box.querySelector("#bt-favorite");
@@ -3244,14 +3706,7 @@ class MillesimeCard extends HTMLElement {
           .map(([v, lbl]) => `<option value="${v}" ${this._view === v ? "selected" : ""}>${lbl}</option>`)
           .join("")}
       </select>`;
-    // Menu déroulant des repères 3D (étiquette de planche / bulle / les deux)
-    const labelSel = `
-      <div class="seg3" id="seg-labelmode" role="group" aria-label="Repères 3D">
-        ${[["plate", "🏷️", "Étiquette"], ["bubble", "🔵", "Bulle"], ["both", "⊕", "Les deux"]]
-          .map(([v, icon, lbl]) =>
-            `<button type="button" class="seg3-btn ${this._labelMode === v ? "active" : ""}" data-mode="${v}" title="${lbl}">${icon}<span class="seg3-lbl">${lbl}</span></button>`)
-          .join("")}
-      </div>`;
+    // Menu déroulant des repères 3D : désormais dans la fenêtre Options (_optionsHTML)
 
     return `
       <div class="header">
@@ -3279,17 +3734,80 @@ class MillesimeCard extends HTMLElement {
           </div>
         </div>
       </div>
-      <div class="header-options ${this._optionsOpen ? "open" : ""}" id="header-options">
-        <div class="opt-row">
-          <button class="opt-btn" id="btn-import"  title="Importer millesime_import_vinotag.csv">📥 Importer des données</button>
-          <button class="opt-btn" id="btn-refresh" title="Compléter les fiches via Gemini + fusionner les doublons">♻️ Compléter les fiches</button>
-          <button class="opt-btn" id="btn-sensors" title="Choisir les capteurs température et hygrométrie">🌡️ Capteurs T° / humidité</button>
-          <div class="opt-field">
-            <span class="opt-field-label">Repères 3D</span>
-            ${labelSel}
+      <div id="refresh-progress-zone"></div>`;
+  }
+
+  // ── Fenêtre Options (modal dédié, remplace l'ancien menu repliable) ──
+  _optionsHTML() {
+    const labelSel = `
+      <div class="seg3" id="seg-labelmode" role="group" aria-label="Repères 3D">
+        ${[["plate", "🏷️", "Étiquette"], ["bubble", "🔵", "Bulle"], ["both", "⊕", "Les deux"]]
+          .map(([v, icon, lbl]) =>
+            `<button type="button" class="seg3-btn ${this._labelMode === v ? "active" : ""}" data-mode="${v}" title="${lbl}">${icon}<span class="seg3-lbl">${lbl}</span></button>`)
+          .join("")}
+      </div>`;
+    return `
+      <div class="mm-header">
+        <span class="mm-title">⚙️ Options</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        <div class="mm-opt-list">
+          <button class="mm-opt-item" id="btn-refresh">
+            <span class="mm-opt-emoji">♻️</span>
+            <span class="mm-opt-txt"><b>Compléter les fiches</b><small>Fusionne les doublons puis remplit les champs vides via l'IA</small></span>
+          </button>
+          <button class="mm-opt-item" id="btn-sensors">
+            <span class="mm-opt-emoji">🌡️</span>
+            <span class="mm-opt-txt"><b>Capteurs T° / humidité</b><small>Associer les sondes de la cave</small></span>
+          </button>
+          <button class="mm-opt-item" id="btn-import">
+            <span class="mm-opt-emoji">📥</span>
+            <span class="mm-opt-txt"><b>Importer des données</b><small>Fichier millesime_import_vinotag.csv</small></span>
+          </button>
+          <div class="mm-opt-item mm-opt-static">
+            <span class="mm-opt-emoji">🧊</span>
+            <span class="mm-opt-txt"><b>Repères 3D</b><small>Affichage des noms sur les casiers en vue 3D</small></span>
           </div>
+          <div class="mm-opt-seg">${labelSel}</div>
         </div>
       </div>`;
+  }
+
+  _bindOptionsModal(box) {
+    // Repères 3D (sélecteur segmenté)
+    box.querySelectorAll("#seg-labelmode .seg3-btn").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        this._labelMode = btn.dataset.mode;
+        try { localStorage.setItem("millesime-labelmode", this._labelMode); } catch (err) {}
+        box.querySelectorAll("#seg-labelmode .seg3-btn").forEach(b => b.classList.toggle("active", b === btn));
+        if (this._view === "3d") this._render();
+      })
+    );
+    box.querySelector("#btn-import")?.addEventListener("click", async () => {
+      const ok = await this._confirm(
+        "Importer le fichier millesime_import_vinotag.csv (export Vinotag) ? " +
+        "Les bouteilles seront placées automatiquement dans les emplacements libres " +
+        "et le fichier sera effacé après import."
+      );
+      if (!ok) return;
+      if (await this._callService("import_vinotag", {}))
+        this._showToast("success", "Import Vinotag effectué ✓");
+    });
+    box.querySelector("#btn-refresh")?.addEventListener("click", async () => {
+      const res = await this._confirm(
+        "Rafraîchir toutes les fiches ? Les doublons (même nom, millésime, type) seront " +
+        "fusionnés avec regroupement des emplacements, puis les champs vides seront " +
+        "complétés via Gemini. Les données saisies ne sont jamais écrasées — sauf le " +
+        "prix si l'option ci-dessous est cochée. " +
+        "L'opération peut prendre plusieurs minutes selon le nombre de vins.",
+        { checkbox: "💰 Mettre à jour les prix (prix moyen constaté par Gemini)" }
+      );
+      if (!res) return;
+      this._showToast("info", "Rafraîchissement lancé — suivez la progression sous l'en-tête…");
+      await this._callService("refresh_wines", { update_prices: !!res.checked });
+    });
+    box.querySelector("#btn-sensors")?.addEventListener("click", () => this._openModal("sensors"));
   }
 
   // Compresse une image (File ou data URL) : redimensionne à ~600px max,
@@ -3503,7 +4021,7 @@ class MillesimeCard extends HTMLElement {
     const fams = Object.keys(FOOD_LIBRARY);
     const famOpts = fams.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join("");
     return `
-      <div class="acc-hint">Tapez un plat, ou parcourez les catégories : l'app propose les bouteilles de votre cave qui s'accordent le mieux.</div>
+      <div class="acc-hint">🍽️ <b>${FOOD_COUNT} plats référencés</b> — tapez un plat, ou parcourez les catégories : l'app propose les bouteilles de votre cave qui s'accordent le mieux.</div>
       <div class="acc-searchwrap">
         <input type="text" class="mm-input acc-search" id="acc-search" placeholder="🍽️ Quel plat ? (ex. bœuf bourguignon, curry de poulet, raclette…)" autocomplete="off">
         <button class="acc-go" id="acc-go">Trouver</button>
@@ -5104,50 +5622,11 @@ class MillesimeCard extends HTMLElement {
       try { localStorage.setItem("millesime-view", this._view); } catch (err) {}
       this._render();
     });
-    s.getElementById("btn-options")?.addEventListener("click", () => {
-      this._optionsOpen = !this._optionsOpen;
-      const el = this.shadowRoot.getElementById("header-options");
-      const logo = this.shadowRoot.getElementById("btn-options");
-      if (el) el.classList.toggle("open", this._optionsOpen);
-      if (logo) logo.classList.toggle("active", this._optionsOpen);
-    });
-    // Sélecteur segmenté 3 positions des repères 3D
-    s.querySelectorAll("#seg-labelmode .seg3-btn").forEach((btn) =>
-      btn.addEventListener("click", () => {
-        this._labelMode = btn.dataset.mode;
-        try { localStorage.setItem("millesime-labelmode", this._labelMode); } catch (err) {}
-        s.querySelectorAll("#seg-labelmode .seg3-btn").forEach(b => b.classList.toggle("active", b === btn));
-        if (this._view === "3d") this._render();
-      })
-    );
+    s.getElementById("btn-options")?.addEventListener("click", () => this._openModal("options"));
     s.getElementById("btn-bottlelist")?.addEventListener("click", () => this._openModal("bottlelist"));
     s.getElementById("btn-racklist")?.addEventListener("click", () => this._openModal("racklist"));
     s.getElementById("btn-journal")?.addEventListener("click", () => this._openModal("journal"));
-    s.getElementById("btn-import")?.addEventListener("click", async () => {
-      const ok = await this._confirm(
-        "Importer le fichier millesime_import_vinotag.csv (export Vinotag) ? " +
-        "Les bouteilles seront placées automatiquement dans les emplacements libres " +
-        "et le fichier sera effacé après import."
-      );
-      if (!ok) return;
-      if (await this._callService("import_vinotag", {}))
-        this._showToast("success", "Import Vinotag effectué ✓");
-    });
-    s.getElementById("btn-refresh")?.addEventListener("click", async () => {
-      const res = await this._confirm(
-        "Rafraîchir toutes les fiches ? Les doublons (même nom, millésime, type) seront " +
-        "fusionnés avec regroupement des emplacements, puis les champs vides seront " +
-        "complétés via Gemini. Les données saisies ne sont jamais écrasées — sauf le " +
-        "prix si l'option ci-dessous est cochée. " +
-        "L'opération peut prendre plusieurs minutes selon le nombre de vins.",
-        { checkbox: "💰 Mettre à jour les prix (prix moyen constaté par Gemini)" }
-      );
-      if (!res) return;
-      this._showToast("info", "Rafraîchissement lancé — suivez la progression en bas…");
-      await this._callService("refresh_wines", { update_prices: !!res.checked });
-    });
     s.getElementById("btn-add-rack")?.addEventListener("click",   () => this._openModal("rack"));
-    s.getElementById("btn-sensors")?.addEventListener("click",    () => this._openModal("sensors"));
 
     s.getElementById("btn-add-bottle")?.addEventListener("click", () => {
       if (!data.cellar.racks.length) {
@@ -5398,28 +5877,9 @@ const CARD_CSS = `<style>
 .header-actions .view-select { padding:0 4px; font-size:0.82em; }
 
 /* ── Ligne d'options repliable (sous le verre du logo) ── */
-.header-options {
-  max-height:0; overflow:hidden; opacity:0;
-  transition:max-height 0.28s ease, opacity 0.22s ease, padding 0.28s ease;
-  background:var(--bg-1); border-bottom:1px solid transparent; padding:0 14px;
-}
-.header-options.open {
-  max-height:230px; opacity:1; padding:10px 14px;
-  border-bottom:1px solid var(--border);
-}
-.opt-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; align-items:center; }
-.opt-btn {
-  padding:9px 12px; border-radius:8px; border:1px solid var(--border);
-  background:var(--bg-2); color:var(--cream); font-size:0.78em; font-weight:600;
-  cursor:pointer; transition:all 0.15s; white-space:nowrap; width:100%; box-sizing:border-box;
-}
-.opt-btn:hover { background:var(--bg-3); border-color:var(--header-accent,var(--red)); }
-.opt-btn-accent { background:color-mix(in srgb,var(--accent) 22%,var(--bg-2) 78%); border-color:var(--accent); }
-.opt-btn-accent:hover { background:color-mix(in srgb,var(--accent) 34%,var(--bg-2) 66%); }
-.opt-select-compact { flex:1; min-width:0; background:transparent; border:none; padding:9px 0; }
-.opt-field { display:flex; align-items:center; gap:7px; width:100%;
-  background:var(--bg-2); border:1px solid var(--border); border-radius:8px; padding:0 10px; height:100%; box-sizing:border-box; }
-.opt-field-label { font-size:0.6em; color:var(--muted); text-transform:uppercase; letter-spacing:1px; white-space:nowrap; }
+/* Zone de progression « Compléter les fiches » (sous l'en-tête) */
+#refresh-progress-zone { padding:0 14px; }
+#refresh-progress-zone .refresh-progress { margin:8px 0; }
 .opt-select {
   flex:1; padding:7px 9px; border-radius:8px; border:1px solid var(--border);
   background:var(--bg-2); color:var(--cream); font-size:0.78em; cursor:pointer;
@@ -5803,6 +6263,31 @@ const MODAL_CSS = `
 .acc-aibadge { font-size:0.78em; color:#C9A84C; font-weight:600; margin-bottom:10px; }
 .acc-reason { font-size:0.74em; color:var(--mm-muted); font-style:italic; margin:-4px 0 8px 4px; line-height:1.35; }
 .acc-loading { display:flex; align-items:center; gap:10px; justify-content:center; padding:24px 8px; color:var(--mm-muted); font-size:0.86em; }
+/* Fenêtre Options */
+.mm-opt-list { display:flex; flex-direction:column; gap:10px; }
+.mm-opt-item {
+  display:flex; align-items:center; gap:13px; width:100%; text-align:left;
+  padding:13px 14px; border-radius:12px; border:1px solid var(--mm-border);
+  background:var(--mm-bg2); color:var(--mm-text); cursor:pointer; transition:border-color 0.13s;
+}
+.mm-opt-item:hover { border-color:var(--mm-accent); }
+.mm-opt-static { cursor:default; border-bottom-left-radius:4px; border-bottom-right-radius:4px; margin-bottom:-6px; }
+.mm-opt-static:hover { border-color:var(--mm-border); }
+.mm-opt-emoji { font-size:1.35em; flex-shrink:0; }
+.mm-opt-txt { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.mm-opt-txt b { font-size:0.92em; }
+.mm-opt-txt small { font-size:0.74em; color:var(--mm-muted); line-height:1.3; }
+.mm-opt-seg { padding:0 2px; }
+.mm-opt-seg .seg3 { display:flex; width:100%; border:1px solid var(--mm-border); border-radius:10px; overflow:hidden; background:var(--mm-bg2); }
+.mm-opt-seg .seg3-btn {
+  flex:1; display:flex; align-items:center; justify-content:center; gap:6px;
+  padding:11px 4px; border:none; border-right:1px solid var(--mm-border);
+  background:transparent; color:var(--mm-muted); font-size:0.84em; cursor:pointer; transition:all 0.13s;
+}
+.mm-opt-seg .seg3-btn:last-child { border-right:none; }
+.mm-opt-seg .seg3-btn:hover { color:var(--mm-text); }
+.mm-opt-seg .seg3-btn.active { background:var(--mm-accent); color:#fff; font-weight:600; }
+.mm-opt-seg .seg3-lbl { font-size:0.92em; }
 /* Description sous les menus (disposition, orientation) : petit, gris clair, italique */
 .mm-hint { font-size:0.74em; font-style:italic; color:#c8c8c8; margin-top:7px; line-height:1.4; }
 .mm-header {
