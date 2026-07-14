@@ -112,7 +112,7 @@ Multi-caves, disposition « Superposition », refonte des accords mets/vin.
 - **Disposition « Superposition »** : 2 à 4 niveaux de bouteilles par clayette (capacité = colonnes × étagères × niveaux), rendu 3D avec une planche par étagère physique et libellés `ét. X · niv. Y · n°Z`
 - **Accords mets/vin refondus** : famille « Styles de cuisine » supprimée, combinaisons génériques remplacées par ~75 **pièces de boucherie nommées** (côte de bœuf, onglet, hampe, araignée, pluma, souris d'agneau…) dans 6 nouvelles catégories, **tri alphabétique** des catégories et des plats — 913 plats au total
 - **Fenêtre Options harmonisée** : le sélecteur des Repères 3D est intégré à sa tuile, plus de débordement sur mobile
-- **Correctifs** : le choix des capteurs n'est plus écrasé par le service suivant (cache mémoire synchronisé) ; les capteurs HA bouteilles/valeur/casiers lisaient des clés obsolètes et retournaient 0
+- **Correctifs** : appareil photo Android — repli `getUserMedia` (la carte ouvre elle-même la caméra dans un modal si la WebView ignore l'attribut `capture`, issue #7) ; le choix des capteurs n'est plus écrasé par le service suivant (cache mémoire synchronisé) ; les capteurs HA bouteilles/valeur/casiers lisaient des clés obsolètes et retournaient 0
 
 ### [6.9.0] — 2026-07
 Fenêtre Options, vue 3D par défaut, carte pleine largeur, appareil photo Android et 1000+ accords.
