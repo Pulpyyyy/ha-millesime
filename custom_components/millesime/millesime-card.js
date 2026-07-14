@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.8.0
+ * Millésime Card v6.9.1
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.9.0";
+const MILLESIME_CARD_VERSION = "6.9.1";
 
 const DOMAIN = "millesime";
 
@@ -31,30 +31,12 @@ const EVENT_TYPES = [
 const EVENT_LABEL = Object.fromEntries(EVENT_TYPES.map(e => [e.v, e]));
 
 // ── Bibliothèque d'accords mets/vin (locale, hors-ligne) ─────────────────────
-// 3 grandes familles → catégories → plats. Pour chaque plat :
+// 2 familles (Aliments, Recettes) → catégories → plats. Pour chaque plat :
 //   kw    = mots-clés cherchés dans le champ food_pairing (généré par l'IA à l'ajout)
 //   types = types de vin idéaux (red/white/rose/sparkling/dessert)
 //   notes = mots-clés cherchés dans les notes de dégustation (caractéristiques)
 const FOOD_LIBRARY_BASE = {
   "Aliments": {
-    "Viandes rouges": {
-      "Bœuf grillé / steak":   { kw:["boeuf","bœuf","steak","entrecôte","grillade","viande rouge","bavette","côte de bœuf"], types:["red"], notes:["tannique","corsé","puissant"] },
-      "Agneau":                { kw:["agneau","gigot","mouton"], types:["red"], notes:["tannique","épicé","corsé"] },
-      "Gibier":                { kw:["gibier","chevreuil","sanglier","venaison","biche"], types:["red"], notes:["puissant","épicé","corsé"] },
-      "Viande en sauce":       { kw:["sauce","mijoté","mijotée","daube","bourguignon","ragoût","ragout"], types:["red"], notes:["charpenté","corsé"] },
-      "Bœuf cru (tartare/carpaccio)": { kw:["tartare","carpaccio","cru","boeuf","bœuf"], types:["red","white"], notes:["fruité","léger"] },
-    },
-    "Volailles": {
-      "Poulet rôti":           { kw:["poulet","volaille","poule","rôti","roti"], types:["white","red"], notes:["souple","fruité"] },
-      "Canard":                { kw:["canard","magret","confit"], types:["red"], notes:["fruité","épicé"] },
-      "Dinde / chapon":        { kw:["dinde","chapon","volaille"], types:["white","red"], notes:["rond","souple"] },
-      "Volaille à la crème":   { kw:["crème","creme","blanquette","fricassée","volaille"], types:["white"], notes:["rond","gras","beurré"] },
-    },
-    "Porc & charcuterie": {
-      "Porc / rôti de porc":   { kw:["porc","rôti","échine","filet mignon"], types:["red","white","rose"], notes:["fruité","souple"] },
-      "Charcuterie":           { kw:["charcuterie","saucisson","jambon","pâté","terrine","rillettes"], types:["red","white","rose"], notes:["fruité","vif"] },
-      "Saucisse / andouillette":{ kw:["saucisse","andouillette","boudin"], types:["red","white"], notes:["vif","fruité"] },
-    },
     "Poissons": {
       "Poisson blanc":         { kw:["poisson blanc","cabillaud","bar","sole","dorade","colin","merlu","poisson"], types:["white"], notes:["vif","frais","minéral"] },
       "Poisson gras / saumon": { kw:["saumon","thon","maquereau","sardine","poisson gras"], types:["white","rose"], notes:["gras","rond","fruité"] },
@@ -144,29 +126,6 @@ const FOOD_LIBRARY_BASE = {
       "Salade de fruits":      { kw:["fruits","salade de fruits"], types:["dessert","sparkling"], notes:["fruité","frais"] },
     },
   },
-  "Styles de cuisine": {
-    "Cuisines du monde": {
-      "Italienne":             { kw:["italien","pâtes","pizza","tomate","parmesan","risotto"], types:["red","white"], notes:["fruité","souple"] },
-      "Française traditionnelle": { kw:["sauce","mijoté","crème","beurre","terroir"], types:["red","white"], notes:["charpenté","rond"] },
-      "Méditerranéenne":       { kw:["méditerranéen","huile d'olive","légumes","herbes","tomate"], types:["rose","white","red"], notes:["fruité","frais"] },
-      "Espagnole / tapas":     { kw:["tapas","chorizo","paella","jambon","espagnol"], types:["red","rose"], notes:["fruité","épicé"] },
-      "Américaine / BBQ":      { kw:["barbecue","bbq","burger","ribs","grillé"], types:["red"], notes:["fruité","corsé"] },
-    },
-    "Cuisine asiatique": {
-      "Japonaise":             { kw:["sushi","sashimi","japonais","soja","poisson cru"], types:["white","sparkling"], notes:["vif","minéral","frais"] },
-      "Thaïe":                 { kw:["thaï","thai","curry","coco","citronnelle","épicé"], types:["white","rose"], notes:["aromatique","fruité","demi-sec"] },
-      "Chinoise":              { kw:["chinois","wok","aigre-doux","nouilles","soja"], types:["white","red"], notes:["fruité","souple","demi-sec"] },
-      "Indienne / curry":      { kw:["indien","curry","épices","tandoori","masala","épicé"], types:["white","rose"], notes:["aromatique","fruité","demi-sec"] },
-      "Vietnamienne":          { kw:["vietnamien","pho","bo bun","nem","herbes"], types:["white","rose"], notes:["vif","frais"] },
-    },
-    "Autres": {
-      "Marocaine / tajine":    { kw:["tajine","couscous","marocain","épices","semoule"], types:["red","rose"], notes:["épicé","fruité"] },
-      "Libanaise / mezze":     { kw:["mezze","libanais","houmous","taboulé","grillade"], types:["rose","white"], notes:["vif","frais","fruité"] },
-      "Mexicaine":             { kw:["mexicain","chili","piment","tacos","haricot","épicé"], types:["red","rose"], notes:["fruité","épicé"] },
-      "Végétarienne":          { kw:["végétarien","légumes","tofu","céréales"], types:["white","rose","red"], notes:["fruité","frais"] },
-      "Cuisine épicée (général)": { kw:["épicé","piment","relevé","pimenté"], types:["rose","white"], notes:["fruité","demi-sec","frais"] },
-    },
-  },
 };
 
 // ── Table d'ingrédients / préparations / cuisines → profil de vin ─────────────
@@ -175,10 +134,10 @@ const FOOD_LIBRARY_BASE = {
 // Chaque entrée : [ [synonymes], { types:[...], notes:[...] } ]
 const PAIR_KEYWORDS = [
   // Viandes
-  [["boeuf","bœuf","steak","entrecôte","bavette","rumsteck","faux-filet","tournedos","chateaubriand"], { types:["red"], notes:["tannique","corsé","charpenté"] }],
-  [["agneau","gigot","mouton","souris d'agneau"], { types:["red"], notes:["tannique","épicé","corsé"] }],
+  [["boeuf","bœuf","steak","entrecôte","bavette","rumsteck","faux-filet","tournedos","chateaubriand","onglet","hampe","araignée","paleron","picanha","rosbif"], { types:["red"], notes:["tannique","corsé","charpenté"] }],
+  [["agneau","gigot","mouton","souris d'agneau","carré d'agneau","côtelette"], { types:["red"], notes:["tannique","épicé","corsé"] }],
   [["veau","escalope","osso buco","blanquette"], { types:["white","red"], notes:["rond","souple"] }],
-  [["porc","échine","filet mignon","rôti de porc","travers","jambon"], { types:["red","white","rose"], notes:["fruité","souple"] }],
+  [["porc","échine","filet mignon","rôti de porc","travers","jambon","pluma","secreto","presa","jambonneau"], { types:["red","white","rose"], notes:["fruité","souple"] }],
   [["canard","magret","confit","cuisse de canard"], { types:["red"], notes:["fruité","épicé","corsé"] }],
   [["poulet","volaille","poule","chapon","pintade","coquelet"], { types:["white","red"], notes:["souple","fruité"] }],
   [["dinde","oie"], { types:["white","red"], notes:["rond","souple"] }],
@@ -249,7 +208,7 @@ const PAIR_KEYWORDS = [
   [["apéritif","apéro","aperitif","amuse-bouche","tapas","chips","cacahuète","olive"], { types:["sparkling","white","rose"], notes:["vif","léger","frais"] }],
 ];
 
-// ── Bibliothèque d'accords GÉNÉRÉE (1000+ plats) ──────────────────────────────
+// ── Bibliothèque d'accords GÉNÉRÉE (~850 plats, tri alphabétique) ─────────────
 // Construite par combinaison au chargement (protéines × préparations réelles,
 // fromages nommés, desserts, cuisines du monde…). Les profils de vin sont
 // dérivés par règles, puis la bibliothèque manuelle (FOOD_LIBRARY_BASE) est
@@ -266,40 +225,95 @@ const FOOD_LIBRARY = (() => {
   const acc = (base, g, pl) => base + (g === "f" ? "e" : "") + (pl ? "s" : "");
   const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
-  // — VIANDES : [nom, genre, catégorie, kw, types, notes] —
-  const MEATS = [
-    ["bœuf","m","Viandes rouges",["boeuf","bœuf"],["red"],["tannique","corsé"]],
-    ["veau","m","Viandes blanches",["veau"],["white","red"],["rond","souple"]],
-    ["agneau","m","Viandes rouges",["agneau"],["red"],["tannique","épicé"]],
-    ["porc","m","Porc",["porc"],["red","white"],["fruité","souple"]],
-    ["poulet","m","Volailles",["poulet","volaille"],["white","red"],["souple","fruité"]],
-    ["canard","m","Volailles",["canard"],["red"],["fruité","corsé"]],
-    ["dinde","f","Volailles",["dinde","volaille"],["white","red"],["rond","souple"]],
-    ["lapin","m","Viandes blanches",["lapin"],["white","red"],["souple","fruité"]],
-    ["pintade","f","Volailles",["pintade","volaille"],["red","white"],["fruité","souple"]],
-  ];
-  // Préparations : [base, accordable, kwΔ, notesΔ, typesOverride|null]
-  const MEAT_PREPS = [
-    ["grillé",1,["grillade"],["fruité"],null],
-    ["rôti",1,["rôti"],["souple"],null],
-    ["braisé",1,["braisé","mijoté"],["charpenté"],null],
-    ["mijoté",1,["mijoté","sauce"],["charpenté"],null],
-    ["poêlé",1,[],["fruité"],null],
-    ["sauté",1,[],["fruité"],null],
-    ["mariné grillé",0,["mariné","grillade"],["épicé"],null],
-    ["en sauce",0,["sauce"],["charpenté"],null],
-    ["au four",0,["four"],["souple"],null],
-    ["en brochettes",0,["brochette","grillade"],["fruité"],null],
-    ["à la plancha",0,["plancha","grillade"],["fruité"],null],
-    ["au curry",0,["curry"],["demi-sec","aromatique"],["white","rose"]],
-    ["à la crème",0,["crème"],["rond","gras"],["white"]],
-    ["à la moutarde",0,["moutarde"],["vif"],null],
-    ["en cocotte",0,["cocotte","mijoté"],["souple","charpenté"],null],
-    ["au poivre",0,["poivre","sauce"],["corsé","épicé"],null],
-  ];
-  for (const [n, g, cat, kw, ty, no] of MEATS)
-    for (const [p, a, pkw, pno, pty] of MEAT_PREPS)
-      add("Aliments", cat, cap(`${n} ${a ? acc(p, g, false) : p}`), [...kw, ...pkw], pty || ty, [...no, ...pno]);
+  // — VIANDES : pièces de boucherie nommées, profil de vin par pièce —
+  // Fini les combinaisons génériques « animal × cuisson » : chaque pièce réelle
+  // a sa propre entrée ; la préparation n'apparaît que lorsqu'elle est canonique
+  // (joue braisée, souris confite, travers caramélisés…).
+  const CUT = (cat, arr) => arr.forEach(([n, kw, ty, no]) => add("Aliments", cat, n, kw, ty, no));
+  CUT("Bœuf", [
+    ["Côte de bœuf",              ["côte de bœuf","boeuf","grillade"],       ["red"], ["tannique","puissant"]],
+    ["Entrecôte",                 ["entrecôte","boeuf","grillade"],          ["red"], ["tannique","corsé"]],
+    ["Faux-filet",                ["faux-filet","boeuf","grillade"],         ["red"], ["tannique","corsé"]],
+    ["Filet de bœuf",             ["filet","boeuf"],                          ["red"], ["élégant","souple"]],
+    ["Tournedos",                 ["tournedos","filet","boeuf"],             ["red"], ["élégant","corsé"]],
+    ["Chateaubriand",             ["chateaubriand","filet","boeuf"],         ["red"], ["élégant","puissant"]],
+    ["Rumsteck",                  ["rumsteck","boeuf","grillade"],           ["red"], ["fruité","corsé"]],
+    ["Bavette à l'échalote",      ["bavette","échalote","boeuf"],            ["red"], ["fruité","tannique"]],
+    ["Onglet à l'échalote",       ["onglet","échalote","boeuf"],             ["red"], ["fruité","corsé"]],
+    ["Hampe grillée",             ["hampe","boeuf","grillade"],              ["red"], ["fruité","corsé"]],
+    ["Araignée de bœuf",          ["araignée","boeuf","grillade"],           ["red"], ["fruité","souple"]],
+    ["Poire de bœuf",             ["poire","boeuf","grillade"],              ["red"], ["fruité","souple"]],
+    ["Merlan de bœuf",            ["merlan","boeuf","grillade"],             ["red"], ["fruité","souple"]],
+    ["Paleron braisé",            ["paleron","braisé","boeuf"],              ["red"], ["charpenté","corsé"]],
+    ["Joue de bœuf braisée",      ["joue","braisé","boeuf"],                 ["red"], ["charpenté","puissant"]],
+    ["Queue de bœuf en ragoût",   ["queue de bœuf","ragoût","boeuf"],        ["red"], ["charpenté","corsé"]],
+    ["Jarret de bœuf mijoté",     ["jarret","mijoté","boeuf"],               ["red"], ["charpenté","corsé"]],
+    ["Plat de côtes",             ["plat de côtes","boeuf","mijoté"],        ["red"], ["corsé","rustique"]],
+    ["Macreuse braisée",          ["macreuse","braisé","boeuf"],             ["red"], ["charpenté","souple"]],
+    ["Tartare de bœuf",           ["tartare","cru","boeuf"],                 ["red","white"], ["fruité","léger"]],
+    ["Rosbif",                    ["rosbif","rôti","boeuf"],                 ["red"], ["fruité","corsé"]],
+    ["Picanha grillée",           ["picanha","boeuf","grillade"],            ["red"], ["fruité","corsé"]],
+    ["T-bone",                    ["t-bone","boeuf","grillade"],             ["red"], ["tannique","puissant"]],
+    ["Côte de bœuf maturée",      ["maturé","côte de bœuf","boeuf"],         ["red"], ["puissant","complexe"]],
+  ]);
+  CUT("Veau", [
+    ["Escalope de veau",          ["escalope","veau"],                        ["white","red"], ["rond","souple"]],
+    ["Côte de veau",              ["côte de veau","veau"],                    ["white","red"], ["rond","souple"]],
+    ["Filet mignon de veau",      ["filet mignon","veau"],                    ["white","red"], ["élégant","souple"]],
+    ["Grenadin de veau",          ["grenadin","veau"],                        ["white","red"], ["rond","élégant"]],
+    ["Tendron de veau",           ["tendron","veau","mijoté"],                ["white","red"], ["rond","souple"]],
+    ["Quasi de veau rôti",        ["quasi","rôti","veau"],                    ["red","white"], ["souple","fruité"]],
+    ["Noix de veau",              ["noix de veau","veau"],                    ["white","red"], ["rond","élégant"]],
+    ["Épaule de veau confite",    ["épaule","confit","veau"],                 ["red","white"], ["souple","rond"]],
+    ["Jarret de veau",            ["jarret","veau","mijoté"],                 ["white","red"], ["rond","souple"]],
+  ]);
+  CUT("Agneau", [
+    ["Gigot d'agneau",            ["gigot","agneau"],                         ["red"], ["tannique","épicé"]],
+    ["Carré d'agneau",            ["carré","agneau"],                         ["red"], ["élégant","épicé"]],
+    ["Côtelettes d'agneau grillées", ["côtelette","agneau","grillade"],       ["red"], ["fruité","épicé"]],
+    ["Souris d'agneau confite",   ["souris","confit","agneau"],               ["red"], ["charpenté","épicé"]],
+    ["Épaule d'agneau confite",   ["épaule","confit","agneau"],               ["red"], ["charpenté","épicé"]],
+    ["Selle d'agneau",            ["selle","agneau"],                         ["red"], ["élégant","corsé"]],
+    ["Filet d'agneau",            ["filet","agneau"],                         ["red"], ["élégant","fruité"]],
+    ["Collier d'agneau mijoté",   ["collier","mijoté","agneau"],              ["red"], ["charpenté","épicé"]],
+  ]);
+  CUT("Porc", [
+    ["Araignée de porc",          ["araignée","porc","grillade"],             ["red","rose"], ["fruité","souple"]],
+    ["Échine de porc",            ["échine","porc"],                          ["red","white"], ["fruité","souple"]],
+    ["Filet mignon de porc",      ["filet mignon","porc"],                    ["white","red"], ["rond","fruité"]],
+    ["Côte de porc",              ["côte de porc","porc","grillade"],         ["red","rose"], ["fruité","souple"]],
+    ["Travers de porc caramélisés", ["travers","caramélisé","porc"],          ["red"], ["fruité","épicé"]],
+    ["Pluma ibérique",            ["pluma","ibérique","porc"],                ["red"], ["fruité","élégant"]],
+    ["Secreto ibérique",          ["secreto","ibérique","porc"],              ["red"], ["fruité","corsé"]],
+    ["Presa ibérique",            ["presa","ibérique","porc"],                ["red"], ["fruité","corsé"]],
+    ["Palette de porc à la diable", ["palette","diable","porc"],              ["red","white"], ["fruité","vif"]],
+    ["Rôti de porc au four",      ["rôti","four","porc"],                     ["red","white"], ["fruité","souple"]],
+    ["Poitrine de porc laquée",   ["poitrine","laqué","porc"],                ["red"], ["fruité","épicé"]],
+    ["Jarret de porc (jambonneau)", ["jarret","jambonneau","porc"],           ["white","red"], ["vif","fruité"]],
+    ["Carré de porc",             ["carré","porc"],                           ["red","white"], ["fruité","souple"]],
+    ["Joue de porc confite",      ["joue","confit","porc"],                   ["red"], ["charpenté","souple"]],
+    ["Cochon de lait rôti",       ["cochon de lait","rôti","porc"],           ["red","white"], ["fruité","élégant"]],
+  ]);
+  CUT("Volailles", [
+    ["Suprême de volaille",       ["suprême","volaille","poulet"],            ["white"], ["rond","élégant"]],
+    ["Cuisses de poulet rôties",  ["cuisse","rôti","poulet"],                 ["white","red"], ["souple","fruité"]],
+    ["Ailes de poulet grillées",  ["aile","grillé","poulet"],                 ["red","rose"], ["fruité","souple"]],
+    ["Coquelet rôti",             ["coquelet","rôti","volaille"],             ["white","red"], ["souple","fruité"]],
+    ["Chapon rôti",               ["chapon","rôti","volaille"],               ["white","red"], ["rond","élégant"]],
+    ["Dinde rôtie farcie",        ["dinde","farci","rôti"],                   ["white","red"], ["rond","souple"]],
+    ["Aiguillettes de canard",    ["aiguillette","canard"],                   ["red"], ["fruité","souple"]],
+    ["Cuisse de canard confite",  ["confit","cuisse","canard"],               ["red"], ["corsé","fruité"]],
+    ["Foie gras poêlé",           ["foie gras","poêlé"],                      ["dessert","white"], ["liquoreux","rond"]],
+    ["Pintade aux choux",         ["pintade","chou","volaille"],              ["red","white"], ["fruité","souple"]],
+    ["Râble de lapin",            ["râble","lapin"],                          ["white","red"], ["souple","fruité"]],
+  ]);
+  CUT("Abats", [
+    ["Ris de veau",               ["ris de veau","abats"],                    ["white","red"], ["rond","élégant"]],
+    ["Rognons de veau",           ["rognon","veau","abats"],                  ["red"], ["corsé","épicé"]],
+    ["Foie de veau",              ["foie de veau","abats"],                   ["red"], ["fruité","souple"]],
+    ["Langue de bœuf sauce piquante", ["langue","sauce piquante","abats"],    ["red","white"], ["vif","souple"]],
+    ["Gésiers confits",           ["gésier","confit","abats"],                ["red","rose"], ["fruité","corsé"]],
+  ]);
 
   // — POISSONS : nom (genre, pluriel) × préparations —
   const FISHES = [
@@ -703,7 +717,17 @@ const FOOD_LIBRARY = (() => {
         add(tFam, CAT_MAP[cat] || cat, name, prof.kw, prof.types, prof.notes);
       }
 
-  return L;
+  // — Tri alphabétique (fr) : catégories puis plats ; familles en ordre fixe —
+  const sorted = {};
+  for (const fam of Object.keys(L)) {
+    sorted[fam] = {};
+    for (const cat of Object.keys(L[fam]).sort((a, b) => a.localeCompare(b, "fr"))) {
+      sorted[fam][cat] = {};
+      for (const name of Object.keys(L[fam][cat]).sort((a, b) => a.localeCompare(b, "fr")))
+        sorted[fam][cat][name] = L[fam][cat][name];
+    }
+  }
+  return sorted;
 })();
 // Nombre total de plats référencés (affiché dans l'onglet Accords)
 const FOOD_COUNT = Object.values(FOOD_LIBRARY)
@@ -1198,13 +1222,47 @@ class MillesimeCard extends HTMLElement {
     if (!this._hass) return;
     if (this._squelchUpdates) return;  // séquence multi-services en cours (permutation…)
     try {
-      this._data = await this._hass.connection.sendMessagePromise({ type: "millesime/get_data" });
+      const raw = await this._hass.connection.sendMessagePromise({ type: "millesime/get_data" });
+      this._data = this._projectCellar(raw);
     } catch (err) {
       console.error("[Millésime] fetchData:", err);
       this._data = this._data || DEFAULT_DATA();
     }
     if (!this._modal) this._render();
     else this._pendingRender = true;
+  }
+
+  // ── Projection multi-caves ───────────────────────────────────────────────
+  // Le backend renvoie cellars[] + wines[] (globaux). La carte travaille sur UNE
+  // cave à la fois : la cave active est projetée sur data.cellar et les vins sont
+  // filtrés sur ses casiers — tout le reste du code fonctionne ainsi à l'identique.
+  // Choix de la cave : YAML cellar_id (carte épinglée) > localStorage > 1re cave.
+  _projectCellar(raw) {
+    const cellars = (raw?.cellars?.length ? raw.cellars : (raw?.cellar ? [{ id: "main", ...raw.cellar }] : []))
+      .map(c => ({ ...c, id: c.id || "main" }));
+    if (!cellars.length) cellars.push({ id: "main", name: "Millésime", racks: [] });
+    let cid = this._config?.cellar_id || this._cellarId;
+    if (!cid) { try { cid = localStorage.getItem("millesime-cellar"); } catch (e) {} }
+    const cellar = cellars.find(c => c.id === cid) || cellars[0];
+    this._cellarId = cellar.id;
+    const rackIds = new Set((cellar.racks || []).map(r => r.id));
+    // Vins de la cave active : slots restreints à ses casiers ; les vins jamais
+    // placés (aucun slot) restent visibles partout, en attente de placement.
+    const wines = (raw?.wines || []).flatMap(w => {
+      const all = w.slots || [];
+      const slots = all.filter(s => rackIds.has(s.rack_id));
+      if (!slots.length && all.length) return [];
+      return [{ ...w, slots }];
+    });
+    return { cellar, cellars, wines, tasting_log: raw?.tasting_log || [] };
+  }
+
+  // Changement de cave active (sélecteur d'en-tête ou fenêtre de gestion)
+  _switchCellar(cid) {
+    if (!cid || cid === this._cellarId) return;
+    this._cellarId = cid;
+    try { localStorage.setItem("millesime-cellar", cid); } catch (e) {}
+    this._fetchData();
   }
 
   _subscribeUpdates() {
@@ -1444,6 +1502,7 @@ class MillesimeCard extends HTMLElement {
     if (type === "options")   box.innerHTML = this._optionsHTML();
     if (type === "moverack") box.innerHTML = this._moveRackHTML(opts.rack);
     if (type === "sensors")   box.innerHTML = this._sensorsHTML();
+    if (type === "cellars")   box.innerHTML = this._cellarsHTML();
     if (type === "envhistory") box.innerHTML = this._envHistoryHTML(opts.entity, opts.kind);
 
     overlay.appendChild(box);
@@ -1463,6 +1522,7 @@ class MillesimeCard extends HTMLElement {
     }
     if (type === "drink")     this._bindDrinkForm(box, opts.wine);
     if (type === "journal")   this._bindJournal(box);
+    if (type === "cellars")   this._bindCellars(box);
     if (type === "search")    this._bindSearchModal(box);
     if (type === "bottlelist") this._bindBottleList(box);
     if (type === "racklist")  this._bindRackList(box);
@@ -1513,8 +1573,16 @@ class MillesimeCard extends HTMLElement {
             <option value="alternating_2d" ${rack?.layout === "alternating_2d" ? "selected" : ""}>Tête-bêche alterné</option>
             <option value="quinconce"      ${rack?.layout === "quinconce"      ? "selected" : ""}>Quinconce</option>
             <option value="semi_lying"     ${rack?.layout === "semi_lying"     ? "selected" : ""}>Semi-couché</option>
+            <option value="stacked"        ${rack?.layout === "stacked"        ? "selected" : ""}>Superposition</option>
           </select>
           <div class="mm-hint" id="fl-layout-hint"></div>
+        </div>
+        <div class="mm-field" id="fl-levels-field" style="display:${rack?.layout === "stacked" ? "block" : "none"}">
+          <label class="mm-label">Niveaux par clayette</label>
+          <select class="mm-input" id="fl-levels">
+            ${[2, 3, 4].map(n => `<option value="${n}" ${(rack?.levels || 2) === n ? "selected" : ""}>${n} niveaux</option>`).join("")}
+          </select>
+          <div class="mm-hint">Les bouteilles s'empilent sur chaque clayette. Capacité = colonnes × étagères × niveaux.</div>
         </div>
         <div class="mm-field">
           <label class="mm-label" id="fl-orient-label">Orientation</label>
@@ -1586,10 +1654,12 @@ class MillesimeCard extends HTMLElement {
         if (v !== "") style[key] = v === "1";
       });
       const orientation = box.querySelector("#fl-orientation").value;
+      const levels = layout === "stacked"
+        ? (parseInt(box.querySelector("#fl-levels")?.value) || 2) : 1;
       if (rack) {
-        await this._callService("update_rack", { rack_id: rack.id, name, columns: cols, shelves, layout, orientation, style });
+        await this._callService("update_rack", { rack_id: rack.id, name, columns: cols, shelves, layout, levels, orientation, style });
       } else {
-        await this._callService("add_rack", { name, columns: cols, shelves, layout, orientation, slots: cols * shelves, style });
+        await this._callService("add_rack", { cellar_id: this._cellarId || undefined, name, columns: cols, shelves, layout, levels, orientation, slots: cols * shelves * levels, style });
       }
     });
 
@@ -1600,6 +1670,7 @@ class MillesimeCard extends HTMLElement {
       alternating_2d: "Alternance en damier : aucune voisine (haut/bas/gauche/droite) n'a le même sens. Imbrication optimale.",
       quinconce:      "Rangs décalés d'une demi-bouteille, façon nid d'abeille : gain de place maximal.",
       semi_lying:     "Bouteilles couchées et inclinées (~32°), une extrémité posée et l'autre relevée vers l'arrière, comme sur une clayette en pente.",
+      stacked:        "Bouteilles empilées en 2 à 4 niveaux sur chaque clayette, comme dans les caves à forte densité.",
     };
     const layoutSel = box.querySelector("#fl-layout");
     const orientSel = box.querySelector("#fl-orientation");
@@ -1607,9 +1678,11 @@ class MillesimeCard extends HTMLElement {
     const hintL = box.querySelector("#fl-layout-hint");
     const hintO = box.querySelector("#fl-orient-hint");
     const isAlt = (v) => v === "alternating" || v === "alternating_2d" || v === "quinconce";
+    const levelsField = box.querySelector("#fl-levels-field");
     const refresh = () => {
       const v = layoutSel.value;
       if (hintL) hintL.textContent = LAYOUT_HINTS[v] || "";
+      if (levelsField) levelsField.style.display = v === "stacked" ? "block" : "none";
       // Pour les dispositions tête-bêche, l'orientation pilote par quoi on COMMENCE
       const alt = isAlt(v);
       if (lblOrient) lblOrient.textContent = alt ? "Première bouteille" : "Orientation";
@@ -2210,11 +2283,18 @@ class MillesimeCard extends HTMLElement {
     }
 
     const selArr = [...selected].sort((a, b) => a - b);
-    // Affichage humain (1-based) : « ét. X · n°Y », l'étagère omise s'il n'y en a qu'une
-    const multiShelf = (rack.shelves || Math.ceil(total / cols)) > 1;
-    const fmtSlot = (n) => multiShelf
-      ? `ét. ${Math.floor(n / cols) + 1} · n°${(n % cols) + 1}`
-      : `n°${(n % cols) + 1}`;
+    // Affichage humain (1-based) : « ét. X · n°Y » (+ niveau en superposition),
+    // l'étagère omise s'il n'y en a qu'une
+    const pkLevels = rack.layout === "stacked" ? Math.max(1, Math.min(4, rack.levels || 1)) : 1;
+    const multiShelf = (rack.shelves || Math.ceil(total / (cols * pkLevels))) > 1;
+    const fmtSlot = (n) => {
+      const pos = (n % cols) + 1;
+      if (pkLevels > 1) {
+        const vr = Math.floor(n / cols);
+        return `ét. ${Math.floor(vr / pkLevels) + 1} · niv. ${(vr % pkLevels) + 1} · n°${pos}`;
+      }
+      return multiShelf ? `ét. ${Math.floor(n / cols) + 1} · n°${pos}` : `n°${pos}`;
+    };
     const label = multiSelect
       ? `${selArr.length} emplacement${selArr.length > 1 ? "s" : ""} sélectionné${selArr.length > 1 ? "s" : ""} : <strong>${selArr.map(fmtSlot).join(", ")}</strong>`
       : `Emplacement sélectionné : <strong>${fmtSlot(selArr[0])}</strong>`;
@@ -2246,9 +2326,19 @@ class MillesimeCard extends HTMLElement {
     const rack = (this._data?.cellar?.racks || []).find(f => f.id === s.rack_id);
     if (!rack) return `${s.rack_id} · n°${(s.slot || 0) + 1}`;
     const cols    = rack.columns || 8;
-    const shelves = rack.shelves || Math.ceil((rack.slots || cols) / cols);
-    const sh  = Math.floor(s.slot / cols) + 1;
+    const levels  = rack.layout === "stacked" ? Math.max(1, Math.min(4, rack.levels || 1)) : 1;
+    const shelves = rack.shelves || Math.ceil((rack.slots || cols) / (cols * levels));
     const pos = (s.slot % cols) + 1;
+    if (levels > 1) {
+      // Superposition : rangée virtuelle → étagère physique + niveau (1 = haut de pile)
+      const vr = Math.floor(s.slot / cols);
+      const sh = Math.floor(vr / levels) + 1;
+      const lv = (vr % levels) + 1;
+      return shelves > 1
+        ? `${rack.name} · ét. ${sh} · niv. ${lv} · n°${pos}`
+        : `${rack.name} · niv. ${lv} · n°${pos}`;
+    }
+    const sh = Math.floor(s.slot / cols) + 1;
     return shelves > 1
       ? `${rack.name} · ét. ${sh} · n°${pos}`
       : `${rack.name} · n°${pos}`;
@@ -2547,7 +2637,7 @@ class MillesimeCard extends HTMLElement {
   // ── Journal de dégustation ────────────────────────────────────────────────────
 
   _journalHTML() {
-    const log = (this._data?.cellar?.tasting_log || []).slice().reverse();
+    const log = (this._data?.tasting_log || []).slice().reverse();
     const totalSpent = log.reduce((s, e) => s + (parseFloat(e.price) || 0), 0);
     const rated = log.filter(e => (e.my_rating || 0) > 0);
     const avg = rated.length ? (rated.reduce((s, e) => s + e.my_rating, 0) / rated.length) : 0;
@@ -3114,11 +3204,70 @@ class MillesimeCard extends HTMLElement {
 
   // ── Capteurs température / hygrométrie ──────────────────────────────────────
 
+  // ── Gestion des caves (multi-caves) ──────────────────────────────────────────
+
+  _cellarsHTML() {
+    const cellars = this._data?.cellars || [];
+    const rows = cellars.map(c => {
+      const nRacks = (c.racks || []).length;
+      const deletable = cellars.length > 1 && nRacks === 0;
+      return `
+        <div class="mm-cave-row" data-cid="${esc(c.id)}">
+          <input class="mm-input mm-cave-name" type="text" value="${esc(c.name || "Cave")}" maxlength="40">
+          <span class="mm-cave-meta">${nRacks} casier${nRacks > 1 ? "s" : ""}${c.id === this._cellarId ? " · active" : ""}</span>
+          <button class="mm-cave-btn" data-save-cave title="Renommer">💾</button>
+          <button class="mm-cave-btn ${deletable ? "" : "mm-cave-btn--off"}" data-del-cave
+            title="${deletable ? "Supprimer cette cave" : "Suppression impossible : videz d'abord la cave (et gardez-en au moins une)"}">🗑️</button>
+        </div>`;
+    }).join("");
+    return `
+      <div class="mm-header">
+        <span class="mm-title">🏰 Gérer les caves</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        <p class="mm-hint" style="margin-bottom:12px">Chaque cave possède ses casiers, ses capteurs T°/hygro et son historique de valeur. Le journal de dégustation reste commun.</p>
+        <div class="mm-cave-list">${rows}</div>
+      </div>
+      <div class="mm-footer">
+        <button class="mm-btn mm-btn-ghost" data-close>Fermer</button>
+        <button class="mm-btn mm-btn-primary" id="cave-add">➕ Ajouter une cave</button>
+      </div>`;
+  }
+
+  _bindCellars(box) {
+    box.querySelectorAll(".mm-cave-row").forEach(row => {
+      const cid = row.dataset.cid;
+      row.querySelector("[data-save-cave]")?.addEventListener("click", async () => {
+        const name = row.querySelector(".mm-cave-name")?.value.trim();
+        if (!name) return;
+        if (await this._callService("rename_cellar", { cellar_id: cid, name }))
+          this._showToast("success", "Cave renommée ✓");
+      });
+      row.querySelector("[data-del-cave]:not(.mm-cave-btn--off)")?.addEventListener("click", async () => {
+        const ok = await this._confirm("Supprimer cette cave (vide) ? Cette action est définitive.");
+        if (!ok) return;
+        if (cid === this._cellarId) this._cellarId = null;   // rebascule sur la 1re cave
+        if (await this._callService("remove_cellar", { cellar_id: cid })) {
+          this._showToast("success", "Cave supprimée ✓");
+          this._closeModal();
+        }
+      });
+    });
+    box.querySelector("#cave-add")?.addEventListener("click", async () => {
+      const n = (this._data?.cellars?.length || 0) + 1;
+      if (await this._callService("add_cellar", { name: `Cave ${n}` })) {
+        this._showToast("success", "Cave créée ✓ — renommez-la puis sélectionnez-la dans l'en-tête");
+        this._closeModal();
+      }
+    });
+  }
+
   _sensorsHTML() {
     const cellar = this._data?.cellar || {};
     return `
       <div class="mm-header">
-        <span class="mm-title">🌡️ Capteurs de la cave</span>
+        <span class="mm-title">🌡️ Capteurs — ${esc(cellar.name || "Cave")}</span>
         <button class="mm-close" data-close>✕</button>
       </div>
       <div class="mm-body">
@@ -3168,6 +3317,7 @@ class MillesimeCard extends HTMLElement {
       try {
         await this._hass.connection.sendMessagePromise({
           type: "millesime/set_sensors",
+          cellar_id: this._cellarId || null,
           temp_entity: tSel.value || null,
           humid_entity: hSel.value || null,
         });
@@ -3713,8 +3863,13 @@ class MillesimeCard extends HTMLElement {
         <div class="header-left">
           <div class="header-glass">${GLASS_SVG}</div>
           <div class="header-meta">
-            <div class="header-name">${esc(data.cellar?.name || "Millésime")}</div>
-            <div class="header-tagline">Cave à vin</div>
+            ${(data.cellars?.length || 0) > 1 && !this._config?.cellar_id
+              ? `<select class="cellar-select" id="sel-cellar" title="Changer de cave">
+                  ${data.cellars.map(c =>
+                    `<option value="${esc(c.id)}" ${c.id === this._cellarId ? "selected" : ""}>${esc(c.name || "Cave")}</option>`).join("")}
+                </select>`
+              : `<div class="header-name">${esc(data.cellar?.name || "Millésime")}</div>`}
+            <div class="header-tagline">Cave à vin${(data.cellars?.length || 0) > 1 ? ` · ${data.cellars.length} caves` : ""}</div>
           </div>
         </div>
         <div class="header-right">
@@ -3746,6 +3901,7 @@ class MillesimeCard extends HTMLElement {
             `<button type="button" class="seg3-btn ${this._labelMode === v ? "active" : ""}" data-mode="${v}" title="${lbl}">${icon}<span class="seg3-lbl">${lbl}</span></button>`)
           .join("")}
       </div>`;
+    const cellarName = esc(this._data?.cellar?.name || "Millésime");
     return `
       <div class="mm-header">
         <span class="mm-title">⚙️ Options</span>
@@ -3757,19 +3913,25 @@ class MillesimeCard extends HTMLElement {
             <span class="mm-opt-emoji">♻️</span>
             <span class="mm-opt-txt"><b>Compléter les fiches</b><small>Fusionne les doublons puis remplit les champs vides via l'IA</small></span>
           </button>
+          <button class="mm-opt-item" id="btn-cellars">
+            <span class="mm-opt-emoji">🏰</span>
+            <span class="mm-opt-txt"><b>Gérer les caves</b><small>Ajouter, renommer ou supprimer des caves</small></span>
+          </button>
           <button class="mm-opt-item" id="btn-sensors">
             <span class="mm-opt-emoji">🌡️</span>
-            <span class="mm-opt-txt"><b>Capteurs T° / humidité</b><small>Associer les sondes de la cave</small></span>
+            <span class="mm-opt-txt"><b>Capteurs T° / humidité</b><small>Associer les sondes de « ${cellarName} »</small></span>
           </button>
           <button class="mm-opt-item" id="btn-import">
             <span class="mm-opt-emoji">📥</span>
-            <span class="mm-opt-txt"><b>Importer des données</b><small>Fichier millesime_import_vinotag.csv</small></span>
+            <span class="mm-opt-txt"><b>Importer des données</b><small>Fichier millesime_import_vinotag.csv → ${cellarName}</small></span>
           </button>
           <div class="mm-opt-item mm-opt-static">
             <span class="mm-opt-emoji">🧊</span>
-            <span class="mm-opt-txt"><b>Repères 3D</b><small>Affichage des noms sur les casiers en vue 3D</small></span>
+            <span class="mm-opt-txt">
+              <b>Repères 3D</b><small>Affichage des noms sur les casiers en vue 3D</small>
+              ${labelSel}
+            </span>
           </div>
-          <div class="mm-opt-seg">${labelSel}</div>
         </div>
       </div>`;
   }
@@ -3791,7 +3953,7 @@ class MillesimeCard extends HTMLElement {
         "et le fichier sera effacé après import."
       );
       if (!ok) return;
-      if (await this._callService("import_vinotag", {}))
+      if (await this._callService("import_vinotag", { cellar_id: this._cellarId || undefined }))
         this._showToast("success", "Import Vinotag effectué ✓");
     });
     box.querySelector("#btn-refresh")?.addEventListener("click", async () => {
@@ -3807,6 +3969,7 @@ class MillesimeCard extends HTMLElement {
       this._showToast("info", "Rafraîchissement lancé — suivez la progression sous l'en-tête…");
       await this._callService("refresh_wines", { update_prices: !!res.checked });
     });
+    box.querySelector("#btn-cellars")?.addEventListener("click", () => this._openModal("cellars"));
     box.querySelector("#btn-sensors")?.addEventListener("click", () => this._openModal("sensors"));
   }
 
@@ -4938,9 +5101,16 @@ class MillesimeCard extends HTMLElement {
 
     racks.forEach((rack, fi) => {
       const cols  = rack.columns || 8;
-      const total = rack.slots || cols * (rack.shelves || 2);
-      const shelves  = Math.ceil(total / cols);
       const layout = rack.layout || "side_by_side";
+      // Superposition : les bouteilles s'empilent en 2 à 4 couches par clayette.
+      // La grille de slots reste linéaire : chaque « rangée virtuelle » est une
+      // couche ; `levels` rangées consécutives partagent la même planche.
+      const levels = layout === "stacked" ? Math.max(1, Math.min(4, rack.levels || 1)) : 1;
+      const LAYER_DY = 0.95;                                   // hauteur d'une couche (≈ diamètre)
+      const shelfStep = SHELF_DY + (levels - 1) * LAYER_DY;    // pas entre clayettes
+      const total = rack.slots || cols * (rack.shelves || 2) * levels;
+      const shelves  = Math.ceil(total / cols);                // rangées virtuelles
+      const physShelves = Math.max(1, Math.ceil(shelves / levels));
       const orient = rack.orientation === "neck" ? 0 : 1;     // punt(piqûre)=1→retourné→piqûre devant ; neck(goulot)=0→défaut→goulot devant
       const tilt   = layout === "semi_lying";
       const TILT_A = 0.56;                                      // ~32° (semi-couché)
@@ -4956,10 +5126,15 @@ class MillesimeCard extends HTMLElement {
       const plaqueEdge = new THREE.MeshStandardMaterial({ color: st.accent, roughness: 0.5, metalness: 0.2 });
 
       for (let r = 0; r < shelves; r++) {
-        const shelfY = yTop - r * SHELF_DY;
+        // Étagère physique + niveau dans la pile (niveau 0 = haut de pile)
+        const psh = Math.floor(r / levels), lv = r % levels;
+        const shelfY = yTop - psh * shelfStep - lv * LAYER_DY;
+        const isBase = lv === levels - 1;   // couche posée sur la planche
 
         // Étagère : planche en bois (dessus affleurant le repos des bouteilles),
-        // ou tôle fine sombre pour les caves en fer forgé
+        // ou tôle fine sombre pour les caves en fer forgé — une seule planche
+        // par étagère physique (sous la couche de base de la pile)
+        if (isBase) {
         const plank = new THREE.Mesh(
           new THREE.BoxGeometry(plankW, isIron ? 0.10 : PLANK_H, 4.0),
           isIron ? ironMat : [wm.side, wm.side, wm.top, wm.side, wm.side, wm.side]
@@ -4978,7 +5153,7 @@ class MillesimeCard extends HTMLElement {
         // Plaque-étiquette accrochée au chant avant : nom du casier + position de
         // l'étagère (si plusieurs) — taille indépendante de l'épaisseur de la planche
         if (showPlate) {
-          const lblTxt = shelves > 1 ? `${rackName} · ${r + 1}` : rackName;
+          const lblTxt = physShelves > 1 ? `${rackName} · ${psh + 1}` : rackName;
           const pw = Math.min(plankW - 0.6, Math.max(1.4, lblTxt.length * 0.17 + 0.5));
           const ph = 0.42;
           const plaque = new THREE.Mesh(
@@ -4990,6 +5165,7 @@ class MillesimeCard extends HTMLElement {
           plaque.position.set(0, shelfY - 0.245, 2.02);
           scene.add(plaque);
         }
+        }  // fin isBase (planche / lisse / plaque)
 
         for (let c = 0; c < cols; c++) {
           const i = r * cols + c;
@@ -5048,7 +5224,7 @@ class MillesimeCard extends HTMLElement {
           cap.visible = cork.visible = lbl.visible = !filtered;
           // Collerette masquée en disposition semi-couchée (demande utilisateur)
           col.visible = !filtered && !tilt;
-          if (!filtered) {
+          if (!filtered && isBase) {
             const csh = new THREE.Mesh(contactGeo, contactMat);
             csh.position.set(x, shelfY + 0.011, stag);
             scene.add(csh);
@@ -5149,7 +5325,7 @@ class MillesimeCard extends HTMLElement {
         }
       }
 
-      const yBot = yTop - (shelves - 1) * SHELF_DY;
+      const yBot = yTop - (physShelves - 1) * shelfStep - (levels - 1) * LAYER_DY;
 
       // ── Cadre du casier : éléments composables (montants / croisillons / toit /
       // caisson / pieds), tous rendus dans le matériau du casier (bois ou fer) ──
@@ -5626,6 +5802,7 @@ class MillesimeCard extends HTMLElement {
     s.getElementById("btn-bottlelist")?.addEventListener("click", () => this._openModal("bottlelist"));
     s.getElementById("btn-racklist")?.addEventListener("click", () => this._openModal("racklist"));
     s.getElementById("btn-journal")?.addEventListener("click", () => this._openModal("journal"));
+    s.getElementById("sel-cellar")?.addEventListener("change", (e) => this._switchCellar(e.target.value));
     s.getElementById("btn-add-rack")?.addEventListener("click",   () => this._openModal("rack"));
 
     s.getElementById("btn-add-bottle")?.addEventListener("click", () => {
@@ -5787,7 +5964,7 @@ class MillesimeCard extends HTMLElement {
 
 // ── Utilitaires ────────────────────────────────────────────────────────────────
 
-const DEFAULT_DATA = () => ({ cellar: { name: "Millésime", racks: [] }, wines: [] });
+const DEFAULT_DATA = () => ({ cellar: { id: "main", name: "Millésime", racks: [] }, cellars: [{ id: "main", name: "Millésime", racks: [] }], wines: [], tasting_log: [] });
 
 function _drow(label, value) {
   if (!value) return "";
@@ -5847,6 +6024,13 @@ const CARD_CSS = `<style>
 @keyframes float-anim { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
 .header-meta { text-align:center; }
 .header-name { font-family:var(--font-serif); font-size:0.82em; color:var(--cream); line-height:1.2; }
+.cellar-select {
+  font-family:var(--font-serif); font-size:0.82em; color:var(--cream); line-height:1.2;
+  background:transparent; border:none; border-bottom:1px dashed rgba(255,255,255,0.25);
+  padding:0 2px 1px 0; cursor:pointer; max-width:180px;
+}
+.cellar-select:focus { outline:none; border-bottom-color:var(--accent); }
+.cellar-select option { background:#241a1a; color:#f0e6d2; }
 .header-tagline { font-size:0.55em; color:var(--red); text-transform:uppercase; letter-spacing:1.5px; margin-top:2px; }
 /* Colonne droite : stats en haut, boutons en dessous */
 .header-right { display:flex; flex-direction:column; gap:7px; flex:1; min-width:0; }
@@ -6271,23 +6455,35 @@ const MODAL_CSS = `
   background:var(--mm-bg2); color:var(--mm-text); cursor:pointer; transition:border-color 0.13s;
 }
 .mm-opt-item:hover { border-color:var(--mm-accent); }
-.mm-opt-static { cursor:default; border-bottom-left-radius:4px; border-bottom-right-radius:4px; margin-bottom:-6px; }
+.mm-opt-static { cursor:default; align-items:flex-start; }
 .mm-opt-static:hover { border-color:var(--mm-border); }
+.mm-opt-static .mm-opt-txt { flex:1; min-width:0; }
+.mm-opt-static .seg3 { margin-top:9px; }
+/* Fenêtre Gérer les caves */
+.mm-cave-list { display:flex; flex-direction:column; gap:10px; }
+.mm-cave-row {
+  display:grid; grid-template-columns:1fr auto auto auto; align-items:center; gap:8px;
+  padding:10px 12px; border:1px solid var(--mm-border); border-radius:12px; background:var(--mm-bg2);
+}
+.mm-cave-row .mm-cave-name { min-width:0; }
+.mm-cave-meta { font-size:0.74em; color:var(--mm-muted); white-space:nowrap; }
+.mm-cave-btn { background:none; border:1px solid var(--mm-border); border-radius:8px; padding:6px 8px; cursor:pointer; font-size:1em; transition:border-color 0.13s; }
+.mm-cave-btn:hover { border-color:var(--mm-accent); }
+.mm-cave-btn--off { opacity:0.3; cursor:not-allowed; }
 .mm-opt-emoji { font-size:1.35em; flex-shrink:0; }
-.mm-opt-txt { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.mm-opt-txt { display:flex; flex-direction:column; gap:2px; min-width:0; flex:1; }
 .mm-opt-txt b { font-size:0.92em; }
 .mm-opt-txt small { font-size:0.74em; color:var(--mm-muted); line-height:1.3; }
-.mm-opt-seg { padding:0 2px; }
-.mm-opt-seg .seg3 { display:flex; width:100%; border:1px solid var(--mm-border); border-radius:10px; overflow:hidden; background:var(--mm-bg2); }
-.mm-opt-seg .seg3-btn {
+.mm-opt-list .seg3 { display:flex; width:100%; border:1px solid var(--mm-border); border-radius:10px; overflow:hidden; background:var(--mm-bg2); }
+.mm-opt-list .seg3-btn {
   flex:1; display:flex; align-items:center; justify-content:center; gap:6px;
   padding:11px 4px; border:none; border-right:1px solid var(--mm-border);
   background:transparent; color:var(--mm-muted); font-size:0.84em; cursor:pointer; transition:all 0.13s;
 }
-.mm-opt-seg .seg3-btn:last-child { border-right:none; }
-.mm-opt-seg .seg3-btn:hover { color:var(--mm-text); }
-.mm-opt-seg .seg3-btn.active { background:var(--mm-accent); color:#fff; font-weight:600; }
-.mm-opt-seg .seg3-lbl { font-size:0.92em; }
+.mm-opt-list .seg3-btn:last-child { border-right:none; }
+.mm-opt-list .seg3-btn:hover { color:var(--mm-text); }
+.mm-opt-list .seg3-btn.active { background:var(--mm-accent); color:#fff; font-weight:600; }
+.mm-opt-list .seg3-lbl { font-size:0.92em; }
 /* Description sous les menus (disposition, orientation) : petit, gris clair, italique */
 .mm-hint { font-size:0.74em; font-style:italic; color:#c8c8c8; margin-top:7px; line-height:1.4; }
 .mm-header {
