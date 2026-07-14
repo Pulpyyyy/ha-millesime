@@ -1,5 +1,5 @@
 /**
- * Millésime Card v6.9.1
+ * Millésime Card v6.9.2
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "6.9.1";
+const MILLESIME_CARD_VERSION = "6.9.2";
 
 const DOMAIN = "millesime";
 
@@ -6383,6 +6383,13 @@ const MODAL_CSS = `
 @keyframes mm-fade  { from{opacity:0} to{opacity:1} }
 @keyframes mm-slide { from{opacity:0;transform:translateY(-18px)} to{opacity:1;transform:translateY(0)} }
 @keyframes mm-spin  { to{transform:rotate(360deg)} }
+
+/* box-sizing universel, scopé au modal (monté dans document.body, hors shadow
+   root : la règle * de la carte ne s'y applique pas). Sans lui, les <div> en
+   width:100% + padding débordent à droite — les <button> non, car la feuille
+   de style des navigateurs les met déjà en border-box. Corrige le décalage de
+   la tuile « Repères 3D » dans la fenêtre Options. */
+.mm-overlay, .mm-overlay * { box-sizing:border-box; }
 
 .mm-overlay {
   position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:99999;
