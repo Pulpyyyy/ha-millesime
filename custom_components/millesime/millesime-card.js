@@ -1925,10 +1925,18 @@ class MillesimeCard extends HTMLElement {
     // création de l'input (les WebView Android ignorent un setAttribute dynamique
     // et ouvraient la pellicule à la place de l'appareil photo).
     const photoFileCam = box.querySelector("#bt-photo-file-cam");
-    box.querySelector("#bt-photo-cam")?.addEventListener("click", () => photoFileCam?.click());
+    box.querySelector("#bt-photo-cam")?.addEventListener("click", async () => {
+      if (this._cameraSupported()) {
+        const shot = await this._captureViaCamera();
+        if (shot instanceof File) { onPhotoFile(shot); return; }
+        if (shot === "cancel") return;
+      }
+      photoFileCam?.click();
+    });
     box.querySelector("#bt-photo-pick")?.addEventListener("click", () => photoFile?.click());
+    // Accepte un <input type=file> ou directement un File (modal caméra)
     const onPhotoFile = async (inp) => {
-      const file = inp.files?.[0];
+      const file = inp instanceof File ? inp : inp.files?.[0];
       if (!file) return;
       try {
         const compressed = await this._compressImage(file);
@@ -1938,7 +1946,7 @@ class MillesimeCard extends HTMLElement {
       } catch (e) {
         this._showToast("error", "Impossible de lire cette image");
       }
-      inp.value = "";   // permet de reprendre la même photo ensuite
+      if (!(inp instanceof File)) inp.value = "";   // permet de reprendre la même photo ensuite
     };
     photoFile?.addEventListener("change", () => onPhotoFile(photoFile));
     photoFileCam?.addEventListener("change", () => onPhotoFile(photoFileCam));
@@ -2071,8 +2079,14 @@ class MillesimeCard extends HTMLElement {
           <button type="button" class="mm-scan-btn" id="scan-cam">📷 Prendre une photo</button>
           <button type="button" class="mm-scan-btn" id="scan-lib">🖼️ Galerie</button>
         </div>`;
-      banner.querySelector("#scan-cam")?.addEventListener("click", () => {
+      banner.querySelector("#scan-cam")?.addEventListener("click", async () => {
         banner.innerHTML = "";
+        if (this._cameraSupported()) {
+          const shot = await this._captureViaCamera();
+          if (shot instanceof File) { onScanFile(shot); return; }
+          if (shot === "cancel") return;
+          // null → échec technique, repli sur l'input statique ci-dessous
+        }
         fileInputCam?.click();   // input statique avec capture → appareil photo direct
       });
       banner.querySelector("#scan-lib")?.addEventListener("click", () => {
@@ -2081,8 +2095,10 @@ class MillesimeCard extends HTMLElement {
       });
     });
 
+    // Accepte un <input type=file> (parcours classique) ou directement un File
+    // (photo issue du modal caméra getUserMedia)
     const onScanFile = async (inp) => {
-      const file = inp.files?.[0];
+      const file = inp instanceof File ? inp : inp.files?.[0];
       if (!file) return;
 
       // Aperçu immédiat
@@ -2161,7 +2177,7 @@ class MillesimeCard extends HTMLElement {
         showResults({ results: wines, error: null, source: "gemini" });
         this._showToast("info", "📷 Plusieurs vins possibles — sélectionnez le bon");
       }
-      inp.value = "";   // permet de re-scanner la même photo ensuite
+      if (!(inp instanceof File)) inp.value = "";   // permet de re-scanner la même photo ensuite
     };
     fileInput?.addEventListener("change", () => onScanFile(fileInput));
     fileInputCam?.addEventListener("change", () => onScanFile(fileInputCam));
@@ -3975,6 +3991,73 @@ class MillesimeCard extends HTMLElement {
 
   // Compresse une image (File ou data URL) : redimensionne à ~600px max,
   // JPEG qualité 0.7 → ~40-80 Ko, pour ne pas alourdir le stockage HA.
+  // ── Repli caméra via getUserMedia (Android, issue #7) ────────────────────────
+  // Sur certains appareils Android, la WebView ouvre la galerie même avec un
+  // input statique portant l'attribut capture. Quand getUserMedia est disponible
+  // (contexte sécurisé requis : HTTPS, app compagnon ou localhost), la carte
+  // ouvre elle-même la caméra dans un modal et capture la photo. Dans tous les
+  // autres cas (HTTP local, permission refusée…), repli sur l'input statique.
+  _cameraSupported() {
+    return /Android/i.test(navigator.userAgent || "")
+      && !!navigator.mediaDevices?.getUserMedia
+      && window.isSecureContext;
+  }
+
+  // Résout avec : File (photo capturée) | "cancel" (fermé par l'utilisateur)
+  // | null (échec technique → l'appelant retombe sur l'input statique).
+  async _captureViaCamera() {
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      });
+    } catch (err) {
+      console.warn("[Millésime] getUserMedia indisponible :", err);
+      return null;
+    }
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.style.cssText = "position:fixed;inset:0;z-index:100000;background:#000;display:flex;flex-direction:column;";
+      const video = document.createElement("video");
+      video.autoplay = true; video.playsInline = true; video.muted = true;
+      video.style.cssText = "flex:1;min-height:0;width:100%;object-fit:contain;background:#000;";
+      video.srcObject = stream;
+      const bar = document.createElement("div");
+      bar.style.cssText = "display:flex;gap:14px;justify-content:center;align-items:center;background:#111;" +
+        "padding:16px 16px calc(env(safe-area-inset-bottom, 0px) + 16px);";
+      const mkBtn = (txt, primary) => {
+        const b = document.createElement("button");
+        b.type = "button"; b.textContent = txt;
+        b.style.cssText = "border:none;border-radius:999px;padding:14px 26px;font-size:1em;cursor:pointer;" +
+          (primary ? "background:#7B1D2E;color:#fff;font-weight:600;" : "background:#333;color:#ddd;");
+        return b;
+      };
+      const btnShot = mkBtn("📷 Capturer", true);
+      const btnCancel = mkBtn("Annuler", false);
+      const done = (result) => {
+        try { stream.getTracks().forEach((t) => t.stop()); } catch (err) {}
+        overlay.remove();
+        resolve(result);
+      };
+      btnShot.addEventListener("click", () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth || 1280;
+        canvas.height = video.videoHeight || 720;
+        canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+          done(blob ? new File([blob], "capture.jpg", { type: "image/jpeg" }) : null);
+        }, "image/jpeg", 0.92);
+      });
+      btnCancel.addEventListener("click", () => done("cancel"));
+      bar.appendChild(btnCancel);
+      bar.appendChild(btnShot);
+      overlay.appendChild(video);
+      overlay.appendChild(bar);
+      document.body.appendChild(overlay);
+    });
+  }
+
   _compressImage(fileOrDataUrl, maxSize = 600, quality = 0.7) {
     return new Promise((resolve, reject) => {
       const img = new Image();
