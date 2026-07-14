@@ -1,7 +1,7 @@
 # 🍷 Millésime — Cave à vin pour Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-6.9.1-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
+[![version](https://img.shields.io/badge/version-6.9.2-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
 [![Offrir un verre de vin](https://img.shields.io/badge/🍷_Offrir_un_verre_de_vin-PayPal-7B1D2E.svg?style=flat-square)](https://paypal.me/Redsklns)
 
 **Millésime** transforme Home Assistant en gestionnaire de cave à vin complet : visualisez vos bouteilles dans une scène **3D réaliste**, scannez les étiquettes par **photo**, suivez la valeur de votre collection et tenez un **journal de dégustation**.
@@ -104,6 +104,11 @@ L'intégralité de Millésime a été conçue et développée en collaboration a
 ## 📝 Changelog
 
 *Les 30 derniers jours — l'historique complet est disponible dans les [releases GitHub](https://github.com/Redsklns/ha-millesime/releases).*
+
+### [6.9.2] — 2026-07
+Correctif d'affichage de la fenêtre Options.
+
+- **Tuile « Repères 3D » décalée à droite** : le modal (monté hors shadow root) n'avait pas de règle `box-sizing` universelle — les `<div>` en `width:100%` + padding débordaient à droite, contrairement aux `<button>`. Règle `box-sizing:border-box` ajoutée, scopée au modal ; corrige aussi le même défaut latent dans la fenêtre « Gérer les caves »
 
 ### [6.9.1] — 2026-07
 Multi-caves, disposition « Superposition », refonte des accords mets/vin.
