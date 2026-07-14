@@ -1,11 +1,13 @@
-"""Millésime v6.8.0 — Cave à Vin pour Home Assistant.
+"""Millésime v6.9.1 — Cave à Vin pour Home Assistant.
 
 Recherche texte : gemini-3.1-flash-lite (tier gratuit)
 Lecture photo   : gemini-3-flash (tier gratuit)
 Repli           : génération 2.5 si modèle 3 indisponible (404)
 Sans clé        : Open Food Facts (illimité)
 
-Modèle de données : wines[] + slots[] + racks[] (étagères internes).
+Modèle de données : cellars[] (multi-caves) + wines[] + slots[] + racks[].
+Le journal de dégustation (tasting_log) est global ; l'historique de valeur
+(value_history) et les capteurs T°/hygro sont propres à chaque cave.
 Fonctions issues d'une contribution communautaire (fork v5.5.1) fusionnées.
 """
 from __future__ import annotations
@@ -34,7 +36,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN    = "millesime"
 PLATFORMS = ["sensor"]
 DATA_FILE = "millesime_data.json"
-VERSION   = "6.9.0"
+VERSION   = "6.9.1"
 
 OFF_UA       = f"Millesime-HA/{VERSION} (github.com/Redsklns/ha-millesime)"
 # Deux modèles séparés = deux pools de quota indépendants (free tier)
@@ -63,8 +65,9 @@ ERR_UNAVAILABLE    = "service_unavailable"  # HTTP 5xx / timeout
 ERR_PARSE_ERROR    = "parse_error"      # JSON invalide dans la réponse
 
 DEFAULT_DATA: dict = {
-    "cellar": {"name": "Millésime", "racks": []},
+    "cellars": [{"id": "main", "name": "Millésime", "racks": []}],
     "wines": [],
+    "tasting_log": [],
 }
 
 
@@ -116,19 +119,50 @@ def _migrate(data: dict) -> dict:
     return data
 
 
+def _migrate_cellars(data: dict) -> bool:
+    """Migre le format mono-cave (cellar: {...}) vers le multi-caves (cellars: [...]).
+
+    - L'ancienne cave devient cellars[0] (id « main » conservé pour les capteurs).
+    - Le journal de dégustation, global par nature, remonte à la racine.
+    Retourne True si les données ont été modifiées."""
+    changed = False
+    if "cellars" not in data:
+        old = data.pop("cellar", None) or {}
+        old.setdefault("id", "main")
+        old.setdefault("name", "Millésime")
+        old.setdefault("racks", [])
+        data["cellars"] = [old]
+        changed = True
+        _LOGGER.info("Millésime — migration mono-cave → multi-caves effectuée")
+    for c in data["cellars"]:
+        if "id" not in c:
+            c["id"] = _uid()
+            changed = True
+        c.setdefault("name", "Cave")
+        c.setdefault("racks", [])
+    # Journal de dégustation : global (les dégustations ne dépendent pas d'une cave)
+    if "tasting_log" not in data:
+        log: list = []
+        for c in data["cellars"]:
+            log.extend(c.pop("tasting_log", []))
+        data["tasting_log"] = sorted(log, key=lambda t: t.get("drunk_date", ""))[-1000:]
+        changed = True
+    return changed
+
+
 def _migrate_racks(data: dict) -> bool:
     """Migre la nomenclature héritée floors/rows/floor_id vers racks/shelves/rack_id.
 
     Retourne True si les données ont été modifiées."""
     changed = False
-    cellar = data.setdefault("cellar", {})
-    if "floors" in cellar:
-        cellar["racks"] = cellar.pop("floors")
-        changed = True
-    for r in cellar.get("racks", []):
-        if "rows" in r:
-            r["shelves"] = r.pop("rows")
+    for cellar in data.get("cellars", []):
+        if "floors" in cellar:
+            cellar["racks"] = cellar.pop("floors")
             changed = True
+        for r in cellar.get("racks", []):
+            if "rows" in r:
+                r["shelves"] = r.pop("rows")
+                changed = True
     for w in data.get("wines", []):
         for s in w.get("slots", []):
             if "floor_id" in s:
@@ -148,6 +182,8 @@ def _load(hass: HomeAssistant) -> dict:
             changed = False
             if "bottles" in data:
                 data = _migrate(data)
+                changed = True
+            if _migrate_cellars(data):
                 changed = True
             if _migrate_racks(data):
                 changed = True
@@ -169,6 +205,37 @@ def _save(hass: HomeAssistant, data: dict) -> None:
 
 def _uid() -> str:
     return str(uuid.uuid4())[:8]
+
+
+# ── Helpers multi-caves ───────────────────────────────────────────────────────
+
+def _cellars(d: dict) -> list[dict]:
+    """Liste des caves ; garantit qu'il en existe toujours au moins une."""
+    cs = d.setdefault("cellars", [])
+    if not cs:
+        cs.append({"id": "main", "name": "Millésime", "racks": []})
+    return cs
+
+
+def _cellar(d: dict, cellar_id: str | None = None) -> dict:
+    """Cave d'identifiant donné, ou la première cave à défaut."""
+    cs = _cellars(d)
+    if cellar_id:
+        for c in cs:
+            if c.get("id") == cellar_id:
+                return c
+    return cs[0]
+
+
+def _all_racks(d: dict) -> list[dict]:
+    """Tous les casiers, toutes caves confondues (les rack_id restent uniques)."""
+    return [r for c in _cellars(d) for r in c.get("racks", [])]
+
+
+def _rack_capacity(rk: dict) -> int:
+    """Capacité d'un casier : colonnes × étagères × niveaux (superposition)."""
+    levels = max(1, min(4, int(rk.get("levels", 1) or 1)))
+    return rk.get("columns", 8) * rk.get("shelves", 2) * levels
 
 
 def _slot_taken(d: dict, rack_id: str, slot: int,
@@ -905,7 +972,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     @websocket_api.async_response
     async def ws_get_data(hass: HomeAssistant, connection, msg: dict) -> None:
         result = await hass.async_add_executor_job(_load, hass)
-        connection.send_result(msg["id"], result)
+        # Copie superficielle : alias « cellar » (1re cave) pour une carte en cache
+        # d'une version antérieure — jamais persisté dans le fichier de données.
+        payload = dict(result)
+        payload["cellar"] = _cellar(result)
+        connection.send_result(msg["id"], payload)
 
     websocket_api.async_register_command(hass, ws_get_data)
 
@@ -939,17 +1010,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # ── WebSocket : enregistrer les entités capteurs choisies ─────────────────
     @websocket_api.websocket_command({
         vol.Required("type"): "millesime/set_sensors",
+        vol.Optional("cellar_id"): vol.Any(str, None),
         vol.Optional("temp_entity"): vol.Any(str, None),
         vol.Optional("humid_entity"): vol.Any(str, None),
     })
     @websocket_api.async_response
     async def ws_set_sensors(hass: HomeAssistant, connection, msg: dict) -> None:
         data = await hass.async_add_executor_job(_load, hass)
-        cellar = data.setdefault("cellar", {})
+        cellar = _cellar(data, msg.get("cellar_id"))
         if "temp_entity" in msg:
             cellar["temp_entity"] = msg["temp_entity"] or ""
         if "humid_entity" in msg:
             cellar["humid_entity"] = msg["humid_entity"] or ""
+        # Rafraîchir le cache en mémoire AVANT d'écrire : sans cela, le prochain
+        # service passant par _get() repartirait d'un état antérieur au choix des
+        # capteurs et l'écraserait à sa propre sauvegarde.
+        hass.data[DOMAIN][entry.entry_id]["data"] = data
         await hass.async_add_executor_job(_save, hass, data)
         hass.bus.async_fire(f"{DOMAIN}_updated", {})
         connection.send_result(msg["id"], {"ok": True})
@@ -957,11 +1033,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     websocket_api.async_register_command(hass, ws_set_sensors)
 
     # ── WebSocket : état courant des capteurs configurés ──────────────────────
-    @websocket_api.websocket_command({vol.Required("type"): "millesime/sensor_states"})
+    @websocket_api.websocket_command({
+        vol.Required("type"): "millesime/sensor_states",
+        vol.Optional("cellar_id"): vol.Any(str, None),
+    })
     @websocket_api.async_response
     async def ws_sensor_states(hass: HomeAssistant, connection, msg: dict) -> None:
         data = await hass.async_add_executor_job(_load, hass)
-        cellar = data.get("cellar", {})
+        cellar = _cellar(data, msg.get("cellar_id"))
         out = {}
         for key, ent in (("temperature", cellar.get("temp_entity")), ("humidity", cellar.get("humid_entity"))):
             if ent:
@@ -1137,46 +1216,68 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         v = call.data.get("style")
         return {k: v[k] for k in _STYLE_KEYS if k in v} if isinstance(v, dict) else None
 
+    def _call_levels(call: ServiceCall, layout: str) -> int:
+        """Niveaux de superposition : 1 à 4, uniquement pour la disposition « stacked »."""
+        if layout != "stacked":
+            return 1
+        try:
+            return max(1, min(4, int(call.data.get("levels", 2))))
+        except (TypeError, ValueError):
+            return 2
+
     async def svc_add_rack(call: ServiceCall) -> None:
         d = _get()
+        cellar = _cellar(d, call.data.get("cellar_id"))
         cols = int(call.data.get("columns", 8))
         shelves = int(call.data.get("shelves", call.data.get("rows", 2)))
+        layout = call.data.get("layout", "side_by_side")
+        levels = _call_levels(call, layout)
         rack = {
             "id":      _uid(),
-            "name":    call.data.get("name", f"Casier {len(d['cellar']['racks']) + 1}"),
-            "columns": cols, "shelves": shelves, "slots": cols * shelves,
-            "layout":  call.data.get("layout", "side_by_side"),
+            "name":    call.data.get("name", f"Casier {len(cellar['racks']) + 1}"),
+            "columns": cols, "shelves": shelves, "levels": levels,
+            "slots":   cols * shelves * levels,
+            "layout":  layout,
             "orientation": call.data.get("orientation", "punt"),
         }
         style = _rack_style(call)
         if style:
             rack["style"] = style
-        d["cellar"]["racks"].append(rack)
+        cellar["racks"].append(rack)
         await _persist(d)
 
     async def svc_update_rack(call: ServiceCall) -> None:
         d = _get()
-        for f in d["cellar"]["racks"]:
+        for f in _all_racks(d):
             if f["id"] == _call_rack_id(call):
                 for k in ["name", "columns", "shelves", "layout", "orientation"]:
                     if k in call.data:
                         f[k] = call.data[k]
                 if "rows" in call.data and "shelves" not in call.data:  # alias déprécié
                     f["shelves"] = call.data["rows"]
+                if "levels" in call.data or "layout" in call.data:
+                    if f.get("layout") != "stacked":
+                        f["levels"] = 1
+                    else:
+                        try:
+                            f["levels"] = max(1, min(4, int(call.data.get("levels", f.get("levels", 2)))))
+                        except (TypeError, ValueError):
+                            f["levels"] = max(1, min(4, int(f.get("levels", 2) or 2)))
                 if "style" in call.data:
                     style = _rack_style(call)
                     if style:
                         f["style"] = style
                     else:
                         f.pop("style", None)
-                f["slots"] = f.get("columns", 8) * f.get("shelves", 2)
+                f["slots"] = _rack_capacity(f)
                 break
         await _persist(d)
 
     async def svc_remove_rack(call: ServiceCall) -> None:
         d = _get()
         fid = _call_rack_id(call)
-        d["cellar"]["racks"] = [f for f in d["cellar"]["racks"] if f["id"] != fid]
+        for c in _cellars(d):
+            c["racks"] = [f for f in c["racks"] if f["id"] != fid]
         for w in d["wines"]:
             w["slots"] = [s for s in w["slots"] if s["rack_id"] != fid]
         d["wines"] = [w for w in d["wines"] if w["slots"]]
@@ -1362,26 +1463,58 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def svc_rename_cellar(call: ServiceCall) -> None:
         d = _get()
-        d["cellar"]["name"] = call.data.get("name", "Millésime")
+        cellar = _cellar(d, call.data.get("cellar_id"))
+        cellar["name"] = call.data.get("name", "Millésime")
+        await _persist(d)
+
+    async def svc_add_cellar(call: ServiceCall) -> None:
+        """Crée une nouvelle cave (vide) dans l'instance."""
+        d = _get()
+        cs = _cellars(d)
+        cs.append({
+            "id":    _uid(),
+            "name":  call.data.get("name", f"Cave {len(cs) + 1}"),
+            "racks": [],
+        })
+        await _persist(d)
+
+    async def svc_remove_cellar(call: ServiceCall) -> None:
+        """Supprime une cave. Refusé si c'est la dernière ou si elle contient des casiers."""
+        d = _get()
+        cid = call.data.get("cellar_id")
+        cs = _cellars(d)
+        target = next((c for c in cs if c.get("id") == cid), None)
+        if not target:
+            raise HomeAssistantError(f"Cave introuvable : {cid}")
+        if len(cs) <= 1:
+            raise HomeAssistantError("Impossible de supprimer la dernière cave.")
+        if target.get("racks"):
+            raise HomeAssistantError(
+                "Cette cave contient encore des casiers : déplacez ou supprimez-les d'abord."
+            )
+        d["cellars"] = [c for c in cs if c.get("id") != cid]
         await _persist(d)
 
     async def svc_value_snapshot(call: ServiceCall) -> None:
-        """Enregistre la valeur actuelle de la cave dans l'historique."""
+        """Enregistre la valeur actuelle de CHAQUE cave dans son historique."""
         d = _get()
         wines = d.get("wines", [])
-        total_value   = sum(float(w.get("price", 0)) * len(w.get("slots", [])) for w in wines)
-        total_bottles = sum(len(w.get("slots", [])) for w in wines)
         today = datetime.now().strftime("%Y-%m-%d")
-        history = d["cellar"].setdefault("value_history", [])
-        # Remplacer si même date, sinon ajouter
-        history = [h for h in history if h.get("date") != today]
-        history.append({
-            "date":     today,
-            "value":    round(total_value, 2),
-            "bottles":  total_bottles,
-        })
-        # Garder les 365 derniers points
-        d["cellar"]["value_history"] = sorted(history, key=lambda x: x["date"])[-365:]
+        for cellar in _cellars(d):
+            rack_ids = {r["id"] for r in cellar.get("racks", [])}
+            value = bottles = 0
+            for w in wines:
+                n = sum(1 for s in w.get("slots", []) if s.get("rack_id") in rack_ids)
+                bottles += n
+                value   += float(w.get("price", 0)) * n
+            history = [h for h in cellar.get("value_history", []) if h.get("date") != today]
+            history.append({
+                "date":     today,
+                "value":    round(value, 2),
+                "bottles":  bottles,
+            })
+            # Garder les 365 derniers points
+            cellar["value_history"] = sorted(history, key=lambda x: x["date"])[-365:]
         await _persist(d)
 
     async def svc_drink_bottle(call: ServiceCall) -> None:
@@ -1407,7 +1540,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         drunk_on = call.data.get("drunk_date") or datetime.now().strftime("%Y-%m-%d")
 
         drunk_slot = src["slots"][slot_idx]
-        log = d["cellar"].setdefault("tasting_log", [])
+        log = d.setdefault("tasting_log", [])
         log.append({
             "id":            _uid(),
             "name":          src.get("name", ""),
@@ -1431,7 +1564,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "my_comment":    comment,
         })
         # Garder les 1000 dernières dégustations
-        d["cellar"]["tasting_log"] = log[-1000:]
+        d["tasting_log"] = log[-1000:]
         # Retirer l'emplacement bu ; supprimer le vin si c'était le dernier
         if len(src["slots"]) <= 1:
             d["wines"].remove(src)
@@ -1439,7 +1572,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             src["slots"].pop(slot_idx)
         await _persist(d)
 
-    async def _import_vinotag_run() -> None:
+    async def _import_vinotag_run(cellar_id: str | None = None) -> None:
         """Importe <config>/millesime_import_vinotag.csv puis efface le fichier."""
         path = hass.config.path("millesime_import_vinotag.csv")
         if not os.path.exists(path):
@@ -1457,11 +1590,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             raise HomeAssistantError("millesime_import_vinotag.csv : aucune ligne de vin valide (export Vinotag attendu).")
 
         d = _get()
-        # Auto-placement : emplacements libres dans l'ordre des casiers
+        # Auto-placement : emplacements libres dans l'ordre des casiers de la cave cible
+        cellar = _cellar(d, cellar_id)
         occ = {(s["rack_id"], s["slot"]) for w in d["wines"] for s in w.get("slots", [])}
         free: list[tuple[str, int]] = []
-        for rk in d["cellar"]["racks"]:
-            total = rk.get("slots") or rk.get("columns", 8) * rk.get("shelves", 2)
+        for rk in cellar["racks"]:
+            total = rk.get("slots") or _rack_capacity(rk)
             free.extend((rk["id"], i) for i in range(total) if (rk["id"], i) not in occ)
         need = sum(max(1, int(_vt_num(r.get("bottle_quantity")) or 1)) for r in rows)
         if len(free) < need:
@@ -1469,8 +1603,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             cols = 8
             shelves = max(1, -(-(need - len(free)) // cols))
             rack = {"id": _uid(), "name": "Import", "columns": cols,
-                    "shelves": shelves, "slots": cols * shelves, "layout": "side_by_side"}
-            d["cellar"]["racks"].append(rack)
+                    "shelves": shelves, "levels": 1,
+                    "slots": cols * shelves, "layout": "side_by_side"}
+            cellar["racks"].append(rack)
             free.extend((rack["id"], i) for i in range(cols * shelves))
 
         cursor = 0
@@ -1515,7 +1650,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.info("Millésime — import Vinotag : %d vins (%d bouteilles), fichier effacé", len(rows), need)
 
     async def svc_import_vinotag(call: ServiceCall) -> None:
-        await _import_vinotag_run()
+        await _import_vinotag_run(call.data.get("cellar_id"))
 
     async def svc_refresh_wines(call: ServiceCall) -> None:
         """Dédoublonne la cave puis complète les fiches via Gemini.
@@ -1599,8 +1734,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Supprime une entrée du journal de dégustation."""
         d = _get()
         tid = call.data["tasting_id"]
-        log = d["cellar"].get("tasting_log", [])
-        d["cellar"]["tasting_log"] = [t for t in log if t.get("id") != tid]
+        log = d.get("tasting_log", [])
+        d["tasting_log"] = [t for t in log if t.get("id") != tid]
         await _persist(d)
 
     hass.services.async_register(DOMAIN, "add_rack",         svc_add_rack)
@@ -1614,6 +1749,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.services.async_register(DOMAIN, "update_slot",       svc_update_slot)
     hass.services.async_register(DOMAIN, "remove_wine",       svc_remove_wine)
     hass.services.async_register(DOMAIN, "rename_cellar",     svc_rename_cellar)
+    hass.services.async_register(DOMAIN, "add_cellar",        svc_add_cellar)
+    hass.services.async_register(DOMAIN, "remove_cellar",     svc_remove_cellar)
     hass.services.async_register(DOMAIN, "value_snapshot",    svc_value_snapshot)
     hass.services.async_register(DOMAIN, "drink_bottle",      svc_drink_bottle)
     hass.services.async_register(DOMAIN, "delete_tasting",    svc_delete_tasting)
