@@ -1,7 +1,7 @@
 # 🍷 Millésime — Cave à vin pour Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-6.9.2-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
+[![version](https://img.shields.io/badge/version-7.0.0-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
 [![Offrir un verre de vin](https://img.shields.io/badge/🍷_Offrir_un_verre_de_vin-PayPal-7B1D2E.svg?style=flat-square)](https://paypal.me/Redsklns)
 
 **Millésime** transforme Home Assistant en gestionnaire de cave à vin complet : visualisez vos bouteilles dans une scène **3D réaliste**, scannez les étiquettes par **photo**, suivez la valeur de votre collection et tenez un **journal de dégustation**.
@@ -16,7 +16,9 @@ Intégration 100 % locale (vos données restent chez vous), pensée **mobile-fir
 - **Trois vues** au choix : 🍾 Bouteilles 2D, ⠿ Pastilles, 🧊 **Scène 3D** (WebGL/Three.js)
 - **Rendu 3D réaliste** : bouteilles modelées par forme (bordelaise, bourguignonne, champenoise avec muselet et bouchon champignon, flûte d'Alsace, ligérienne), verre teinté transparent laissant voir la robe du vin, étiquette nominative sur chaque bouteille, ombres de contact douces
 - **Casiers configurables** : meuble complet avec étagères internes, 5 essences de bois (chêne, noyer, merisier, grisé, wengé) ou structure en **fer forgé**, montants, pieds, croisillons et toit optionnels
-- **Dispositions** : côte à côte, tête-bêche, semi-couché, **superposition** (2 à 4 niveaux de bouteilles par clayette)
+- **Dispositions** : côte à côte, tête-bêche, semi-couché, superposition (2 à 4 niveaux de bouteilles par clayette)
+- **Glisser-déposer** (souris ET tactile) : déplacer une bouteille sur une case vide, ou la **permuter** avec une bouteille déjà en place — fonctionne même cave pleine
+- **Responsive par largeur de carte** (container queries) : la carte s'adapte à sa colonne, pas à l'écran — utilisable en pleine largeur, demi-colonne ou panneau latéral
 - **Drag & drop** en 3D pour déplacer ou permuter les bouteilles
 - Vue mémorisée d'une session à l'autre, et configurable via YAML (`default_view`)
 - S'adapte au **thème** Home Assistant (clair / sombre)
@@ -31,6 +33,23 @@ Intégration 100 % locale (vos données restent chez vous), pensée **mobile-fir
 - **Déplacement d'un casier entier** 📦 en un clic
 - **Rafraîchissement des fiches** ♻️ : fusion des doublons et complétion automatique des champs vides
 - **Accords mets/vin** 🍽️ : ~900 plats classés par ordre alphabétique — pièces de boucherie nommées (côte de bœuf, onglet, araignée de porc…), poissons, fromages, recettes du monde — plus recherche libre et renfort IA
+
+### Sommelier IA
+- **Accord sur le repas complet** 🍷 : entrée / plat / dessert → l'IA choisit 1 à 2 bouteilles **de votre cave** qui couvrent tout le menu, avec conseils de service — et les met en surbrillance dans la cave
+- **Conseil d'achat** 🛒 : audit de l'équilibre de la cave (styles, trous et embouteillages d'apogée) et 5 suggestions précises sous budget, avec région prioritaire facultative
+- **Analyse d'opportunité** 🏪 : en magasin, saisissez ou **scannez** la bouteille repérée — verdict doublon/manque, millésime et prix à viser (indicatifs)
+- **Profil aromatique** 🌸 : répartition sur 11 familles pour chaque vin, affichée en radar ou en barres (au choix dans ⚙️ Options)
+- **IA automatique dans les accords** ✨ : la sélection d'un plat lance directement l'affinage Gemini (désactivable), fenêtre de progression avec **consommation de tokens** (appel + cumul du jour)
+
+### Apogée & garde
+- **Profil de garde** 📈 : graphique dépliant, un segment horizontal par vin couvrant sa fenêtre d'apogée, ligne « aujourd'hui »
+- **Top 10 à ouvrir en priorité**, trié par urgence de fin de fenêtre
+- Fenêtres d'apogée **resserrées et réalistes** générées par l'IA (fini les 2025-2045)
+
+### Mobile & affichage
+- **Glisser-déposer tactile** : appui long ~260 ms pour saisir une bouteille, dépôt sur case vide (déplacement) ou occupée (**permutation atomique**, fonctionne cave pleine)
+- **Responsive à la largeur de carte** (container queries) : la carte s'adapte à sa colonne, typographie fluide, compatible card-mod (`--fs-base`)
+- **3D fiabilisée** : récupération automatique du contexte WebGL, gestion de la rotation d'écran, largeur plafonnée sur grand écran
 
 ### Multi-caves
 - **Plusieurs caves** dans la même instance : sélecteur dans l'en-tête de la carte, gestion (ajout, renommage, suppression) via ⚙️ Options
@@ -105,10 +124,36 @@ L'intégralité de Millésime a été conçue et développée en collaboration a
 
 *Les 30 derniers jours — l'historique complet est disponible dans les [releases GitHub](https://github.com/Redsklns/ha-millesime/releases).*
 
-### [6.9.2] — 2026-07
+### [7.0.0] — 2026-07
+Portage des améliorations visuelles et tactiles de la [PR #6](https://github.com/Redsklns/ha-millesime/pull/6) (contribution **Pulpyyyy**), adaptées à l'architecture multi-caves/superposition de la v6.9.x.
+
+- **Permutation atomique** : nouveau service `swap_slots`, échange la position de deux bouteilles en une seule opération — fonctionne même cave pleine (fini le détour par un emplacement libre temporaire)
+- **Glisser-déposer tactile** : sur mobile, appui maintenu (~260 ms, avec vibration) pour saisir une bouteille puis glisser jusqu'à la case cible ; distingue proprement le défilement (abandon si mouvement > 10 px avant l'appui long) et le tap d'aperçu existant
+- **Récupération WebGL** : la vue 3D se remonte automatiquement après une perte de contexte (mise en arrière-plan, pression mémoire) et après une rotation d'écran, au lieu de rester figée ou noire
+- **Responsive par container queries** : tous les contrôles (en-tête, filtres, boutons, casiers, pastilles) répondent désormais à la largeur de la carte plutôt qu'à celle de l'écran, avec une typographie fluide sans palier brusque ; `--fs-base` exposé en `:host` pour les utilisateurs de card-mod
+
+**Note de chantier** : cette version couvre la phase 1 (portage PR #6) du programme v7.0.0. Les fonctions du sommelier IA (profil aromatique, accord menu complet, audit de cave, analyse d'opportunité — inspirées du projet [ha-cellier-ia](https://github.com/aldoushx/ha-cellier-ia) d'**aldoushx**) et la refonte de l'onglet Apogée arrivent dans une prochaine mise à jour.
+
+
+
+*Les 30 derniers jours — l'historique complet est disponible dans les [releases GitHub](https://github.com/Redsklns/ha-millesime/releases).*
+
+### [7.0.0] — 2026-07
+Version majeure : sommelier IA complet + refonte mobile. Merci à **Pulpyyyy** (PR #6, portée et fusionnée) et **aldoushx** (concepts sommelier de ha-cellier-ia, réimplémentés).
+
+- **Sommelier IA** : accord sur le repas complet (3 champs, 1-2 bouteilles de la cave, surbrillance), conseil d'achat (audit + 5 suggestions sous budget/région), analyse d'opportunité en magasin (avec scan d'étiquette). Nouvelle fenêtre 🧠 Sommelier dans ⚙️ Options
+- **Profil aromatique** : 11 familles par vin (rempli par « Compléter les fiches »), graphique radar ou barres au choix, section repliable dans la fiche
+- **IA automatique dans les accords** : plus de bouton « Affiner » — le résultat local s'affiche instantanément et l'IA l'affine dans la foulée (interrupteur dans ⚙️ Options)
+- **Fenêtre de progression IA universelle** : étapes nommées, tokens de l'appel + cumul du jour (compteur remis à zéro à minuit, visible dans ⚙️ Options)
+- **Apogée** : fenêtres resserrées par l'IA, états corrigés (fin de fenêtre = à boire en priorité), top 10, graphique de garde en segments dans un dépliant
+- **Mobile (PR #6)** : glisser-déposer tactile, permutation atomique `swap_slots` (cave pleine OK), responsive container queries, typo fluide, récupération WebGL, rotation d'écran, plafond 3D desktop, déplacement via la fiche
+- Nouveaux websockets `pair_menu`, `audit_cellar`, `opportunity`, `ai_usage` ; nouveau service `swap_slots`
+
+### [6.9.3] — 2026-07
 Correctif d'affichage de la fenêtre Options.
 
-- **Tuile « Repères 3D » décalée à droite** : le modal (monté hors shadow root) n'avait pas de règle `box-sizing` universelle — les `<div>` en `width:100%` + padding débordaient à droite, contrairement aux `<button>`. Règle `box-sizing:border-box` ajoutée, scopée au modal ; corrige aussi le même défaut latent dans la fenêtre « Gérer les caves »
+- **Tuile « Repères 3D » décalée à droite** : le modal (monté hors shadow root) n'avait pas de règle `box-sizing` universelle — les `<div>` en `width:100%` + padding débordaient à droite, contrairement aux `<button>`. Règle `box-sizing:border-box` scopée au modal + explicite sur les tuiles, débordement horizontal verrouillé (`overflow-x:hidden`) ; corrige aussi le même défaut latent dans la fenêtre « Gérer les caves »
+- **Mise en forme de la tuile Repères 3D** : le sélecteur Étiquette/Bulle/Les deux occupe désormais toute la largeur de la tuile, sous le titre, au lieu d'être indenté sous le texte
 
 ### [6.9.1] — 2026-07
 Multi-caves, disposition « Superposition », refonte des accords mets/vin.
