@@ -209,6 +209,21 @@ update_rack:
     orientation:
       description: Sens de départ
 
+swap_slots:
+  name: Permuter deux emplacements
+  description: Échange atomiquement les positions de deux bouteilles (fonctionne cave pleine).
+  fields:
+    wine_id_a:
+      description: ID du premier vin
+      required: true
+    slot_idx_a:
+      description: Index de l'emplacement dans les slots du premier vin (défaut 0)
+    wine_id_b:
+      description: ID du second vin
+      required: true
+    slot_idx_b:
+      description: Index de l'emplacement dans les slots du second vin (défaut 0)
+
 remove_rack:
   name: Supprimer un casier
   description: Supprime un casier et retire ses bouteilles.
