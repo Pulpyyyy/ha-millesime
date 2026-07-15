@@ -2020,9 +2020,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "food_pairing", "drink_from", "drink_until", "aroma_profile",
             "image_url", "vivino_url", "vivino_rating",
         ]
-        # Option de la popup ♻️ : mise à jour des prix avec le prix moyen
-        # constaté par Gemini — opt-in car elle écrase un prix déjà saisi
-        update_prices = bool(call.data.get("update_prices", False))
+        # Options opt-in de la popup ♻️ : ces deux réglages ÉCRASENT une donnée déjà
+        # saisie (par défaut, seuls les champs VIDES sont complétés) — cochés
+        # explicitement par l'utilisateur, comme convenu.
+        update_prices   = bool(call.data.get("update_prices", False))
+        tighten_apogee  = bool(call.data.get("tighten_apogee", False))
+        # Fenêtre d'apogée « trop large » : > 12 ans, la limite que notre PROMPT
+        # impose lui-même à l'IA ("JAMAIS plus de 12 ans d'écart"). Une fenêtre
+        # existante plus large que ça vient forcément d'avant ce garde-fou de
+        # prompt (ou d'une saisie manuelle très vague) → candidate au resserrement.
+        MAX_SANE_SPAN = 12
+
+        def _apogee_too_wide(wine: dict) -> bool:
+            try:
+                f, u = int(wine.get("drink_from") or 0), int(wine.get("drink_until") or 0)
+            except (TypeError, ValueError):
+                return False
+            return bool(f and u and (u - f) > MAX_SANE_SPAN)
+
         updated = 0
         total = len(d["wines"])
         done = 0
@@ -2030,8 +2045,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for w in d["wines"]:
             done += 1
             hass.bus.async_fire(f"{DOMAIN}_refresh_progress", {"done": done, "total": total})
-            if not update_prices and not any(not w.get(f) for f in FIELDS):
-                continue                        # fiche déjà complète
+            needs_tighten = tighten_apogee and _apogee_too_wide(w)
+            if not update_prices and not needs_tighten and not any(not w.get(f) for f in FIELDS):
+                continue                        # fiche déjà complète, rien à resserrer
             query = " ".join(filter(None, [w.get("name", ""), str(w.get("vintage", ""))]))
             if len(query) < 3:
                 continue
@@ -2045,8 +2061,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 continue
             changed = False
             for f in FIELDS:
+                if f in ("drink_from", "drink_until"):
+                    continue                    # traité séparément ci-dessous
                 if not w.get(f) and best.get(f):
                     w[f] = best[f]
+                    changed = True
+            # Fenêtre d'apogée : complétée si vide, RESSERRÉE si l'option est cochée
+            # et l'ancienne fenêtre dépasse la limite — sinon jamais écrasée.
+            if best.get("drink_from") and best.get("drink_until"):
+                if not w.get("drink_from") or not w.get("drink_until"):
+                    w["drink_from"], w["drink_until"] = best["drink_from"], best["drink_until"]
+                    changed = True
+                elif needs_tighten and not _apogee_too_wide({
+                        "drink_from": best["drink_from"], "drink_until": best["drink_until"]}):
+                    # Ne remplace que si le NOUVEAU résultat est lui-même raisonnable
+                    # (évite d'échanger une fenêtre large contre une autre fenêtre large)
+                    w["drink_from"], w["drink_until"] = best["drink_from"], best["drink_until"]
                     changed = True
             if update_prices:
                 new_price = round(float(best.get("price") or 0), 2)
