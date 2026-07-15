@@ -1,4 +1,4 @@
-"""Capteurs Millésime v6.9.2 — globaux + par cave.
+"""Capteurs Millésime v7.0.0 — globaux + par cave.
 
 Capteurs globaux (toutes caves confondues) :
   - millesime_bottles : nombre total de bouteilles
