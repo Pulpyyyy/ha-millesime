@@ -1552,9 +1552,29 @@ class MillesimeCard extends HTMLElement {
         lbl.append(check, document.createTextNode(opts.checkbox));
         box.append(lbl);
       }
+      // Cases à cocher supplémentaires (v7.0.0) : opts.checkboxes = [{key, label, checked}]
+      const extraChecks = [];
+      if (Array.isArray(opts.checkboxes)) {
+        for (const c of opts.checkboxes) {
+          const lbl2 = document.createElement("label");
+          lbl2.style.cssText = "display:flex;align-items:center;gap:8px;margin:0 0 14px;cursor:pointer;font-size:0.95em";
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.checked = !!c.checked;
+          lbl2.append(cb, document.createTextNode(c.label));
+          box.append(lbl2);
+          extraChecks.push({ key: c.key, el: cb });
+        }
+      }
       const done = val => { overlay.remove(); resolve(val); };
       cancel.onclick = () => done(false);
-      ok.onclick = () => done(check ? { checked: check.checked } : true);
+      ok.onclick = () => {
+        if (!check && !extraChecks.length) { done(true); return; }
+        const out = {};
+        if (check) out.checked = check.checked;
+        for (const c of extraChecks) out[c.key] = c.el.checked;
+        done(out);
+      };
       overlay.onclick = e => { if (e.target === overlay) done(false); };
       btns.append(cancel, ok);
       box.append(btns);
@@ -4481,14 +4501,23 @@ class MillesimeCard extends HTMLElement {
       const res = await this._confirm(
         "Rafraîchir toutes les fiches ? Les doublons (même nom, millésime, type) seront " +
         "fusionnés avec regroupement des emplacements, puis les champs vides seront " +
-        "complétés via Gemini. Les données saisies ne sont jamais écrasées — sauf le " +
-        "prix si l'option ci-dessous est cochée. " +
+        "complétés via Gemini. Les données saisies ne sont jamais écrasées — sauf si l'une " +
+        "des options ci-dessous est cochée. " +
         "L'opération peut prendre plusieurs minutes selon le nombre de vins.",
-        { checkbox: "💰 Mettre à jour les prix (prix moyen constaté par Gemini)" }
+        {
+          checkbox: "💰 Mettre à jour les prix (prix moyen constaté par Gemini)",
+          checkboxes: [{
+            key: "tighten_apogee",
+            label: "📐 Resserrer les fenêtres d'apogée trop larges (> 12 ans d'écart)",
+          }],
+        }
       );
       if (!res) return;
       this._showToast("info", "Rafraîchissement lancé — suivez la progression sous l'en-tête…");
-      await this._callService("refresh_wines", { update_prices: !!res.checked });
+      await this._callService("refresh_wines", {
+        update_prices: !!res.checked,
+        tighten_apogee: !!res.tighten_apogee,
+      });
     });
     box.querySelector("#btn-cellars")?.addEventListener("click", () => this._openModal("cellars"));
     box.querySelector("#btn-sensors")?.addEventListener("click", () => this._openModal("sensors"));
