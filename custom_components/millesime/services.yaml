@@ -270,3 +270,28 @@ delete_tasting:
     tasting_id:
       description: ID de l'entrée du journal
       required: true
+
+refresh_wines:
+  name: Rafraîchir les fiches
+  description: >
+    Fusionne les doublons (même nom, millésime, type) puis complète les fiches
+    via Gemini. Ne complète que les champs vides, sauf options ci-dessous.
+  fields:
+    update_prices:
+      description: Écrase le prix existant par le prix moyen constaté par Gemini
+      example: false
+    tighten_apogee:
+      description: >
+        Recalcule la fenêtre d'apogée (drink_from/drink_until) des vins dont
+        l'écart dépasse 12 ans, si le nouveau résultat est lui-même raisonnable
+      example: false
+
+import_vinotag:
+  name: Importer un export Vinotag
+  description: >
+    Importe le fichier millesime_import_vinotag.csv déposé dans le dossier de
+    configuration ; placement automatique dans les emplacements libres de la
+    cave cible (un casier « Import » est créé si la capacité manque).
+  fields:
+    cellar_id:
+      description: ID de la cave cible (optionnel, première cave par défaut)
