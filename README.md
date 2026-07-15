@@ -125,29 +125,15 @@ L'intégralité de Millésime a été conçue et développée en collaboration a
 *Les 30 derniers jours — l'historique complet est disponible dans les [releases GitHub](https://github.com/Redsklns/ha-millesime/releases).*
 
 ### [7.0.0] — 2026-07
-Portage des améliorations visuelles et tactiles de la [PR #6](https://github.com/Redsklns/ha-millesime/pull/6) (contribution **Pulpyyyy**), adaptées à l'architecture multi-caves/superposition de la v6.9.x.
+Version majeure : sommelier IA complet + refonte mobile. Merci à **Pulpyyyy** (PR #6, portée et fusionnée) et **aldoushx** (concepts sommelier de ha-cellier-ia, réimplémentés — prompts et code réécrits, aucune consultation de site externe).
 
-- **Permutation atomique** : nouveau service `swap_slots`, échange la position de deux bouteilles en une seule opération — fonctionne même cave pleine (fini le détour par un emplacement libre temporaire)
-- **Glisser-déposer tactile** : sur mobile, appui maintenu (~260 ms, avec vibration) pour saisir une bouteille puis glisser jusqu'à la case cible ; distingue proprement le défilement (abandon si mouvement > 10 px avant l'appui long) et le tap d'aperçu existant
-- **Récupération WebGL** : la vue 3D se remonte automatiquement après une perte de contexte (mise en arrière-plan, pression mémoire) et après une rotation d'écran, au lieu de rester figée ou noire
-- **Responsive par container queries** : tous les contrôles (en-tête, filtres, boutons, casiers, pastilles) répondent désormais à la largeur de la carte plutôt qu'à celle de l'écran, avec une typographie fluide sans palier brusque ; `--fs-base` exposé en `:host` pour les utilisateurs de card-mod
-
-**Note de chantier** : cette version couvre la phase 1 (portage PR #6) du programme v7.0.0. Les fonctions du sommelier IA (profil aromatique, accord menu complet, audit de cave, analyse d'opportunité — inspirées du projet [ha-cellier-ia](https://github.com/aldoushx/ha-cellier-ia) d'**aldoushx**) et la refonte de l'onglet Apogée arrivent dans une prochaine mise à jour.
-
-
-
-*Les 30 derniers jours — l'historique complet est disponible dans les [releases GitHub](https://github.com/Redsklns/ha-millesime/releases).*
-
-### [7.0.0] — 2026-07
-Version majeure : sommelier IA complet + refonte mobile. Merci à **Pulpyyyy** (PR #6, portée et fusionnée) et **aldoushx** (concepts sommelier de ha-cellier-ia, réimplémentés).
-
-- **Sommelier IA** : accord sur le repas complet (3 champs, 1-2 bouteilles de la cave, surbrillance), conseil d'achat (audit + 5 suggestions sous budget/région), analyse d'opportunité en magasin (avec scan d'étiquette). Nouvelle fenêtre 🧠 Sommelier dans ⚙️ Options
-- **Profil aromatique** : 11 familles par vin (rempli par « Compléter les fiches »), graphique radar ou barres au choix, section repliable dans la fiche
+- **Sommelier IA** : accord sur le repas complet (3 champs Entrée/Plat/Dessert, 1-2 bouteilles de la cave choisies, surbrillance dans la cave), conseil d'achat (audit + 5 suggestions sous budget/région), analyse d'opportunité en magasin (avec scan d'étiquette réutilisé). Nouvelle fenêtre 🧠 Sommelier dans ⚙️ Options
+- **Profil aromatique** : 11 familles par vin (rempli par « Compléter les fiches »), graphique radar ou barres au choix (réglage dans ⚙️ Options), section repliable dans la fiche
 - **IA automatique dans les accords** : plus de bouton « Affiner » — le résultat local s'affiche instantanément et l'IA l'affine dans la foulée (interrupteur dans ⚙️ Options)
 - **Fenêtre de progression IA universelle** : étapes nommées, tokens de l'appel + cumul du jour (compteur remis à zéro à minuit, visible dans ⚙️ Options)
-- **Apogée** : fenêtres resserrées par l'IA, états corrigés (fin de fenêtre = à boire en priorité), top 10, graphique de garde en segments dans un dépliant
-- **Mobile (PR #6)** : glisser-déposer tactile, permutation atomique `swap_slots` (cave pleine OK), responsive container queries, typo fluide, récupération WebGL, rotation d'écran, plafond 3D desktop, déplacement via la fiche
-- Nouveaux websockets `pair_menu`, `audit_cellar`, `opportunity`, `ai_usage` ; nouveau service `swap_slots`
+- **Apogée** : fenêtres resserrées par le prompt IA (largeur réaliste selon le potentiel de garde, jamais plus de 12 ans d'écart) ; nouvelle option « Resserrer les fenêtres trop larges » dans Compléter les fiches pour corriger les vins déjà enregistrés ; états corrigés (fin de fenêtre proche = à boire en priorité), top 10, graphique de garde en segments dans un dépliant
+- **Mobile (PR #6)** : glisser-déposer tactile, permutation atomique `swap_slots` (cave pleine OK), responsive container queries, typo fluide, récupération WebGL, rotation d'écran
+- Nouveaux websockets `pair_menu`, `audit_cellar`, `opportunity`, `ai_usage` ; nouveau service `swap_slots` ; `refresh_wines` et `import_vinotag` désormais documentés dans `services.yaml`
 
 ### [6.9.3] — 2026-07
 Correctif d'affichage de la fenêtre Options.
