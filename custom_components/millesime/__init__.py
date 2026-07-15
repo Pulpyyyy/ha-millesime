@@ -1,4 +1,4 @@
-"""Millésime v6.9.2 — Cave à Vin pour Home Assistant.
+"""Millésime v7.0.0 — Cave à Vin pour Home Assistant.
 
 Recherche texte : gemini-3.1-flash-lite (tier gratuit)
 Lecture photo   : gemini-3-flash (tier gratuit)
@@ -36,7 +36,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN    = "millesime"
 PLATFORMS = ["sensor"]
 DATA_FILE = "millesime_data.json"
-VERSION   = "6.9.2"
+VERSION   = "7.0.0"
 
 OFF_UA       = f"Millesime-HA/{VERSION} (github.com/Redsklns/ha-millesime)"
 # Deux modèles séparés = deux pools de quota indépendants (free tier)
@@ -333,15 +333,27 @@ Tu es un expert mondial en vins et sommelière.
 Retourne UNIQUEMENT un tableau JSON valide [], sans markdown ni backticks.
 Chaque objet doit avoir exactement ces champs (string, jamais null) :
   name, vintage, type, shape, appellation, region, country, producer,
-  tasting_notes, food_pairing, drink_from, drink_until, vivino_rating, price
+  tasting_notes, food_pairing, drink_from, drink_until, vivino_rating, price,
+  aroma_profile
 Règles :
 - type : "red" | "white" | "rose" | "sparkling" | "dessert" uniquement
 - shape : forme de la bouteille, "bordeaux" | "bourgogne" | "champagne" | "flute" | "rose" | "loire" | "" (vide si incertain). Bordeaux=épaules marquées ; bourgogne=épaules tombantes ; champagne=épaisse à base large ; flute=fine et haute (Alsace) ; rose=type Provence ; loire=ligérienne
 - vintage / drink_from / drink_until : "YYYY" ou ""
+- drink_from / drink_until : fenêtre d'apogée RESSERRÉE et réaliste, calculée depuis
+  le millésime selon le potentiel de garde réel (appellation, classement, millésime).
+  Largeur typique 3 à 6 ans (vins courants), 6 à 10 ans (grands vins de garde),
+  1 à 3 ans (primeurs, rosés, blancs vifs). JAMAIS plus de 12 ans d'écart.
+  Exemples : Beaujolais 2023 → 2024-2026 ; Chablis 1er cru 2020 → 2023-2028 ;
+  Margaux grand cru 2015 → 2025-2035. Éviter les fenêtres vagues type 2025-2045.
 - vivino_rating : décimal 0.0–5.0 (0 si inconnu)
 - price : prix moyen constaté en euros, UNIQUEMENT le nombre décimal (ex: 18.5). 0.0 si inconnu. Jamais de texte.
 - tasting_notes : 1–2 phrases en français (arômes, texture, finale)
 - food_pairing : 2–3 accords en français séparés par des virgules
+- aroma_profile : répartition aromatique du vin sur EXACTEMENT ces 11 familles
+  (dans cet ordre, séparées par |, total = 100, familles à 0 omises) :
+  Fruité, Floral, Boisé, Épicé, Minéral, Végétal, Grillé, Animal, Lacté, Terreux, Tertiaire.
+  Format STRICT "Famille:NN" — exemple : "Fruité:45|Boisé:20|Épicé:15|Minéral:10|Tertiaire:10".
+  Estimation typique du profil au stade actuel du vin ; "" si vraiment inconnu.
 - Couvrir différents millésimes si possible
 - Priorité : vins français > européens > mondiaux\
 """
@@ -393,12 +405,45 @@ def _parse_gemini_response(raw: str, source: str) -> tuple[list[dict], str | Non
             "food_pairing":  str(w.get("food_pairing", "") or ""),
             "drink_from":    str(w.get("drink_from", "") or ""),
             "drink_until":   str(w.get("drink_until", "") or ""),
+            "aroma_profile": str(w.get("aroma_profile", "") or ""),
             "vivino_rating": round(_safe_float(w.get("vivino_rating")), 1),
             "price":         round(_safe_float(w.get("price")), 2),
             "image_url":     "",
             "vivino_url":    "",
         })
     return results, None
+
+
+def _bump_ai_usage(hass: HomeAssistant, api_data: dict | None) -> dict:
+    """Cumule la consommation de tokens Gemini du jour (usageMetadata) dans le
+    fichier de données, SANS émettre d'événement (pas de re-rendu de la carte).
+    Remise à zéro automatique au changement de date. Retourne le cumul du jour
+    et l'usage de l'appel courant, pour affichage dans la fenêtre de progression."""
+    meta = (api_data or {}).get("usageMetadata", {}) or {}
+    call_usage = {
+        "prompt": int(meta.get("promptTokenCount", 0) or 0),
+        "output": int(meta.get("candidatesTokenCount", 0) or 0),
+    }
+    today = datetime.now().strftime("%Y-%m-%d")
+    day = {"date": today, "prompt": 0, "output": 0, "calls": 0}
+    try:
+        for v in (hass.data.get(DOMAIN) or {}).values():
+            if isinstance(v, dict) and "data" in v:
+                d = v["data"]
+                au = d.setdefault("ai_usage", {})
+                if au.get("date") != today:
+                    au.clear()
+                    au.update({"date": today, "prompt": 0, "output": 0, "calls": 0})
+                au["prompt"] += call_usage["prompt"]
+                au["output"] += call_usage["output"]
+                au["calls"]  += 1
+                day = dict(au)
+                # Persistance silencieuse (fréquence faible : appels manuels)
+                hass.async_create_task(hass.async_add_executor_job(_save, hass, d))
+                break
+    except Exception as exc:  # le compteur ne doit jamais casser un appel IA
+        _LOGGER.debug("Millésime — compteur tokens: %s", exc)
+    return {"call": call_usage, "day": day}
 
 
 def _gemini_error_code(status: int) -> str:
@@ -451,6 +496,7 @@ async def _gemini_search_text(
                     _LOGGER.warning("Gemini texte HTTP %s ('%s') → %s", resp.status, query, code)
                     return [], code
                 data = await resp.json(content_type=None)
+                _bump_ai_usage(hass, data)
                 break
         except asyncio.TimeoutError:
             _LOGGER.warning("Gemini texte timeout (%s) pour '%s'", _model, query)
@@ -475,6 +521,159 @@ async def _gemini_search_text(
     except Exception as exc:
         _LOGGER.warning("Gemini texte erreur pour '%s': %s", query, exc)
         return [], ERR_UNAVAILABLE
+
+
+# ── Sommelier IA v7.0.0 : helper générique + accord menu, audit, opportunité ──
+# Concepts inspirés du projet ha-cellier-ia d'aldoushx (prompts réécrits) ;
+# aucune consultation de site externe : connaissance du modèle uniquement,
+# les prix sont donc INDICATIFS et présentés comme tels côté carte.
+
+async def _gemini_json(
+    hass: HomeAssistant, api_key: str, system: str, user_text: str,
+    *, temperature: float = 0.3, max_tokens: int = 2048, timeout: int = 25,
+) -> tuple[dict | None, dict, str | None]:
+    """Appel Gemini générique en JSON strict, avec repli de modèle 3 → 2.5 et
+    comptage de tokens. Retourne (objet_json | None, usage, code_erreur | None)."""
+    session = async_get_clientsession(hass)
+    body = {
+        "system_instruction": {"parts": [{"text": system}]},
+        "contents": [{"parts": [{"text": user_text}]}],
+        "generationConfig": {
+            "temperature":      temperature,
+            "maxOutputTokens":  max_tokens,
+            "responseMimeType": "application/json",
+        },
+    }
+    data = None
+    for _model in (GEMINI_TEXT_MODEL, GEMINI_TEXT_FALLBACK):
+        try:
+            async with session.post(
+                f"{GEMINI_BASE_URL}{_model}:generateContent",
+                params={"key": api_key},
+                json=body,
+                headers={"Content-Type": "application/json"},
+                timeout=timeout,
+            ) as resp:
+                if resp.status == 404:
+                    _LOGGER.warning("Gemini sommelier: modèle %s indisponible (404), repli", _model)
+                    continue
+                if resp.status != 200:
+                    return None, {}, _gemini_error_code(resp.status)
+                data = await resp.json(content_type=None)
+                break
+        except asyncio.TimeoutError:
+            _LOGGER.warning("Gemini sommelier timeout (%s)", _model)
+        except Exception as exc:
+            _LOGGER.warning("Gemini sommelier erreur (%s): %s", _model, exc)
+    if data is None:
+        return None, {}, ERR_UNAVAILABLE
+    usage = _bump_ai_usage(hass, data)
+    try:
+        raw = (data.get("candidates", [{}])[0].get("content", {})
+                   .get("parts", [{}])[0].get("text", ""))
+        return json.loads(raw), usage, None
+    except Exception as exc:
+        _LOGGER.warning("Gemini sommelier: JSON invalide (%s)", exc)
+        return None, usage, ERR_UNAVAILABLE
+
+
+def _cellar_ai_summary(wines: list[dict]) -> list[dict]:
+    """Résumé compact de la cave pour les prompts sommelier : une entrée par vin,
+    uniquement les champs utiles au raisonnement (limite la taille des requêtes)."""
+    out = []
+    for w in wines:
+        qty = len(w.get("slots", []))
+        if qty <= 0:
+            continue
+        out.append({
+            "id":          w.get("id"),
+            "name":        w.get("name", ""),
+            "vintage":     w.get("vintage", ""),
+            "type":        w.get("type", ""),
+            "appellation": w.get("appellation", ""),
+            "region":      w.get("region", ""),
+            "price":       w.get("price", 0),
+            "qty":         qty,
+            "apogee":      f"{w.get('drink_from','?')}-{w.get('drink_until','?')}",
+            "aromas":      w.get("aroma_profile", ""),
+        })
+    return out
+
+
+async def _gemini_pair_menu(
+    hass: HomeAssistant, api_key: str, menu: dict, wines: list[dict]
+) -> tuple[dict | None, dict, str | None]:
+    """Accord sur un REPAS complet : choisit 1 à 2 bouteilles DE LA CAVE qui
+    couvrent au mieux l'ensemble du menu, avec conseils de service."""
+    sys = (
+        "Tu es sommelier de la maison : tu composes avec la cave EXISTANTE, pour un repas complet. "
+        "On te donne un menu (certains services peuvent être vides) et la liste des vins disponibles avec leur id. "
+        "Choisis 1 bouteille si un vin polyvalent couvre bien l'ensemble, 2 au maximum si l'écart entre services l'exige "
+        "(petit repas = éviter d'ouvrir trop de bouteilles). Privilégie, à accord équivalent, les vins DANS leur fenêtre "
+        "d'apogée, surtout ceux proches de la fin de fenêtre. N'invente aucun vin : uniquement les id fournis. "
+        "Réponds STRICTEMENT en JSON : "
+        '{"choices":[{"id":"...","covers":"entrée + plat","reason":"une phrase"}],'
+        '"service":"ordre de service, carafage et températures en 1-2 phrases",'
+        '"note":"1 phrase si un service reste mal couvert, sinon \"\""}'
+    )
+    user = (
+        f"Menu :\n- Entrée : {menu.get('starter') or '(aucune)'}\n"
+        f"- Plat : {menu.get('main') or '(aucun)'}\n"
+        f"- Dessert : {menu.get('dessert') or '(aucun)'}\n\n"
+        f"Vins disponibles (JSON) :\n{json.dumps(_cellar_ai_summary(wines), ensure_ascii=False)}"
+    )
+    return await _gemini_json(hass, api_key, sys, user, temperature=0.3, max_tokens=1024)
+
+
+async def _gemini_audit_cellar(
+    hass: HomeAssistant, api_key: str, wines: list[dict],
+    budget: float, region: str,
+) -> tuple[dict | None, dict, str | None]:
+    """Audit stratégique : équilibre de la cave + 5 suggestions d'achat pour
+    combler les trous d'apogée et de style, sous contrainte de budget/région."""
+    sys = (
+        "Tu es sommelier-conseil : tu audites une cave et tu recommandes des ACHATS pour l'équilibrer. "
+        "Analyse la répartition (couleurs, styles, régions) et surtout l'ÉCHELONNEMENT DES APOGÉES : "
+        "repère les années sans rien à boire (trous) et les années surchargées (embouteillages). "
+        "Propose exactement 5 achats précis et achetables en France, chacun comblant un manque identifié. "
+        "Les prix sont des estimations de ta connaissance générale, PAS des cotations : reste prudent et arrondi. "
+        "Réponds STRICTEMENT en JSON : "
+        '{"balance":"bilan de la cave en 2-3 phrases (équilibre, trous d\'apogée, styles manquants)",'
+        '"suggestions":[{"name":"...","appellation":"...","color":"red|white|rose|sparkling|dessert",'
+        '"price":"prix indicatif €","vintages":"millésimes à viser","qty":2,"reason":"le manque comblé, 1 phrase"}]}'
+    )
+    user = (
+        f"Budget maximum par bouteille : {budget:.0f} €\n"
+        f"Région prioritaire : {region or 'toutes régions'}\n\n"
+        f"Cave actuelle (JSON) :\n{json.dumps(_cellar_ai_summary(wines), ensure_ascii=False)}"
+    )
+    return await _gemini_json(hass, api_key, sys, user, temperature=0.4, max_tokens=1536)
+
+
+async def _gemini_opportunity(
+    hass: HomeAssistant, api_key: str, wine_text: str, wines: list[dict]
+) -> tuple[dict | None, dict, str | None]:
+    """Analyse d'opportunité en magasin : le vin repéré est-il un doublon, un
+    vrai manque, un risque d'embouteillage d'apogée ? Verdict et quantité."""
+    sys = (
+        "Tu es sommelier-conseil : l'utilisateur est EN MAGASIN devant un vin et hésite à l'acheter. "
+        "Confronte ce vin à sa cave : ressemblances de style, redondance, échelonnement des apogées "
+        "(si plusieurs vins de la cave culminent les mêmes années, oriente vers un millésime décalé). "
+        "Le prix indiqué est une estimation de ta connaissance générale, PAS une cotation en direct. "
+        "Réponds STRICTEMENT en JSON : "
+        '{"closest":"le vin de la cave le plus proche et en quoi (1 phrase, \"aucun\" si rien de proche)",'
+        '"redundant":true,'
+        '"verdict":"achat conseillé|achat possible|achat déconseillé",'
+        '"price_hint":"prix indicatif raisonnable en €",'
+        '"vintage_advice":"millésime(s) à viser compte tenu des apogées de la cave",'
+        '"qty":2,'
+        '"reason":"justification en 2 phrases maximum"}'
+    )
+    user = (
+        f'Vin repéré en magasin : "{wine_text}"\n\n'
+        f"Cave actuelle (JSON) :\n{json.dumps(_cellar_ai_summary(wines), ensure_ascii=False)}"
+    )
+    return await _gemini_json(hass, api_key, sys, user, temperature=0.3, max_tokens=768)
 
 
 # ── Lecture d'étiquette par photo ─────────────────────────────────────────────
@@ -527,6 +726,7 @@ async def _gemini_analyze_photo(
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json(content_type=None)
+                        _bump_ai_usage(hass, data)
                         _LOGGER.info("Gemini photo: modele %s OK", model)
                         break
                     last_code = _gemini_error_code(resp.status)
@@ -637,6 +837,7 @@ async def _gemini_pair_food(
                 if resp.status != 200:
                     return [], _gemini_error_code(resp.status)
                 data = await resp.json(content_type=None)
+                _bump_ai_usage(hass, data)
                 break
         except asyncio.TimeoutError:
             _LOGGER.warning("Gemini accords timeout (%s) pour '%s'", _model, dish)
@@ -1154,6 +1355,112 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     websocket_api.async_register_command(hass, ws_pair_food)
 
+    # ── WebSockets sommelier IA v7.0.0 (accord menu, audit, opportunité) ──────
+    def _wines_of_cellar(d: dict, cellar_id: str | None) -> list[dict]:
+        """Vins de la cave donnée (mêmes règles que la projection de la carte :
+        slots dans les casiers de la cave, ou vins jamais placés)."""
+        cellar = _cellar(d, cellar_id)
+        rack_ids = {r["id"] for r in cellar.get("racks", [])}
+        out = []
+        for w in d.get("wines", []):
+            slots = w.get("slots", [])
+            if not slots or any(s.get("rack_id") in rack_ids for s in slots):
+                out.append(w)
+        return out
+
+    def _gemini_key() -> str:
+        return hass.data[DOMAIN][entry.entry_id].get("gemini_key", "")
+
+    @websocket_api.websocket_command({
+        vol.Required("type"): "millesime/pair_menu",
+        vol.Optional("starter"): vol.Any(str, None),
+        vol.Optional("main"): vol.Any(str, None),
+        vol.Optional("dessert"): vol.Any(str, None),
+        vol.Optional("cellar_id"): vol.Any(str, None),
+    })
+    @websocket_api.async_response
+    async def ws_pair_menu(hass: HomeAssistant, connection, msg: dict) -> None:
+        gkey = _gemini_key()
+        if not gkey:
+            connection.send_result(msg["id"], {"error": "no_key"})
+            return
+        d = await hass.async_add_executor_job(_load, hass)
+        wines = _wines_of_cellar(d, msg.get("cellar_id"))
+        menu = {"starter": (msg.get("starter") or "").strip(),
+                "main":    (msg.get("main") or "").strip(),
+                "dessert": (msg.get("dessert") or "").strip()}
+        if not any(menu.values()):
+            connection.send_result(msg["id"], {"error": "empty_menu"})
+            return
+        if not wines:
+            connection.send_result(msg["id"], {"error": "empty_cellar"})
+            return
+        result, usage, err = await _gemini_pair_menu(hass, gkey, menu, wines)
+        connection.send_result(msg["id"],
+            {"error": err} if err else {"result": result, "usage": usage})
+
+    @websocket_api.websocket_command({
+        vol.Required("type"): "millesime/audit_cellar",
+        vol.Optional("budget"): vol.Any(int, float, str, None),
+        vol.Optional("region"): vol.Any(str, None),
+        vol.Optional("cellar_id"): vol.Any(str, None),
+    })
+    @websocket_api.async_response
+    async def ws_audit_cellar(hass: HomeAssistant, connection, msg: dict) -> None:
+        gkey = _gemini_key()
+        if not gkey:
+            connection.send_result(msg["id"], {"error": "no_key"})
+            return
+        d = await hass.async_add_executor_job(_load, hass)
+        wines = _wines_of_cellar(d, msg.get("cellar_id"))
+        if not wines:
+            connection.send_result(msg["id"], {"error": "empty_cellar"})
+            return
+        try:
+            budget = max(1.0, float(msg.get("budget") or 30))
+        except (TypeError, ValueError):
+            budget = 30.0
+        result, usage, err = await _gemini_audit_cellar(
+            hass, gkey, wines, budget, (msg.get("region") or "").strip())
+        connection.send_result(msg["id"],
+            {"error": err} if err else {"result": result, "usage": usage})
+
+    @websocket_api.websocket_command({
+        vol.Required("type"): "millesime/opportunity",
+        vol.Required("wine_text"): str,
+        vol.Optional("cellar_id"): vol.Any(str, None),
+    })
+    @websocket_api.async_response
+    async def ws_opportunity(hass: HomeAssistant, connection, msg: dict) -> None:
+        gkey = _gemini_key()
+        if not gkey:
+            connection.send_result(msg["id"], {"error": "no_key"})
+            return
+        wine_text = (msg.get("wine_text") or "").strip()
+        if len(wine_text) < 3:
+            connection.send_result(msg["id"], {"error": "empty_query"})
+            return
+        d = await hass.async_add_executor_job(_load, hass)
+        wines = _wines_of_cellar(d, msg.get("cellar_id"))
+        result, usage, err = await _gemini_opportunity(hass, gkey, wine_text, wines)
+        connection.send_result(msg["id"],
+            {"error": err} if err else {"result": result, "usage": usage})
+
+    @websocket_api.websocket_command({vol.Required("type"): "millesime/ai_usage"})
+    @websocket_api.async_response
+    async def ws_ai_usage(hass: HomeAssistant, connection, msg: dict) -> None:
+        d = await hass.async_add_executor_job(_load, hass)
+        today = datetime.now().strftime("%Y-%m-%d")
+        au = d.get("ai_usage", {})
+        if au.get("date") != today:
+            au = {"date": today, "prompt": 0, "output": 0, "calls": 0}
+        connection.send_result(msg["id"], {"usage": au})
+
+    websocket_api.async_register_command(hass, ws_pair_menu)
+    websocket_api.async_register_command(hass, ws_audit_cellar)
+    websocket_api.async_register_command(hass, ws_opportunity)
+    websocket_api.async_register_command(hass, ws_ai_usage)
+
     # ── WebSocket : estimate_price ────────────────────────────────────────────
     @websocket_api.websocket_command({
         vol.Required("type"):  "millesime/estimate_price",
@@ -1385,6 +1692,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 # Préserve les clés annexes (commentaire de bouteille…) lors du déplacement
                 w["slots"][slot_idx] = {**w["slots"][slot_idx], "rack_id": new_rack, "slot": new_slot}
                 break
+        await _persist(d)
+
+    async def svc_swap_slots(call: ServiceCall) -> None:
+        """Permute DEUX emplacements occupés (échange de position). Atomique : ne
+        nécessite AUCUN emplacement libre → fonctionne même cave pleine.
+        Porté de la PR #6 (contribution Pulpyyyy)."""
+        d = _get()
+        wa = call.data["wine_id_a"]; ia = int(call.data.get("slot_idx_a", 0))
+        wb = call.data["wine_id_b"]; ib = int(call.data.get("slot_idx_b", 0))
+        sa = sb = None
+        for w in d["wines"]:
+            if w["id"] == wa and ia < len(w.get("slots", [])):
+                sa = w["slots"][ia]
+            if w["id"] == wb and ib < len(w.get("slots", [])):
+                sb = w["slots"][ib]
+        if sa is None or sb is None:
+            raise HomeAssistantError("Emplacement introuvable pour la permutation.")
+        if sa is sb:
+            return  # même emplacement : rien à faire
+        # Échange uniquement la POSITION (casier + numéro) ; le format/commentaire
+        # propres à chaque bouteille restent sur leur bouteille.
+        sa["rack_id"], sb["rack_id"] = sb["rack_id"], sa["rack_id"]
+        sa["slot"], sb["slot"] = sb["slot"], sa["slot"]
         await _persist(d)
 
     async def svc_remove_slot(call: ServiceCall) -> None:
@@ -1687,8 +2017,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         gemini_key = hass.data[DOMAIN][entry.entry_id].get("gemini_key", "")
         FIELDS = [
             "appellation", "region", "producer", "country", "tasting_notes",
-            "food_pairing", "drink_from", "drink_until", "image_url",
-            "vivino_url", "vivino_rating",
+            "food_pairing", "drink_from", "drink_until", "aroma_profile",
+            "image_url", "vivino_url", "vivino_rating",
         ]
         # Option de la popup ♻️ : mise à jour des prix avec le prix moyen
         # constaté par Gemini — opt-in car elle écrase un prix déjà saisi
@@ -1745,6 +2075,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.services.async_register(DOMAIN, "update_wine",       svc_update_wine)
     hass.services.async_register(DOMAIN, "add_slot",          svc_add_slot)
     hass.services.async_register(DOMAIN, "move_slot",         svc_move_slot)
+    hass.services.async_register(DOMAIN, "swap_slots",        svc_swap_slots)
     hass.services.async_register(DOMAIN, "remove_slot",       svc_remove_slot)
     hass.services.async_register(DOMAIN, "update_slot",       svc_update_slot)
     hass.services.async_register(DOMAIN, "remove_wine",       svc_remove_wine)
