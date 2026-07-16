@@ -1,5 +1,5 @@
 /**
- * Millésime Card v7.0.1
+ * Millésime Card v7.0.2
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "7.0.1";
+const MILLESIME_CARD_VERSION = "7.0.2";
 
 // ── Budget quotidien Gemini (free tier) ─────────────────────────────────────
 // Estimation codée en dur : ~250 requêtes/jour (Gemini 2.5 Flash, quotas
@@ -758,11 +758,14 @@ const safeUrl = url => /^https?:\/\//i.test(url ?? "") ? url : "#";
 // Diamètre max STRICTEMENT identique partout (normalisation BOTTLE_R ci-dessous) :
 // seules les silhouettes diffèrent, l'espacement entre bouteilles reste constant.
 const BOTTLE_PROFILES = {
-  // Bordelaise : fût droit élancé, épaule marquée, goulot long et fin avec bague
+  // Bordelaise (affinée v7.0.2, calée sur une 75 cl réelle ~30 cm × ⌀7,5 cm) :
+  // fût cylindrique DROIT sur ~60 % de la hauteur, épaule HAUTE et COURTE
+  // (le trait distinctif de la bordelaise), col fin, bague discrète
   bordeaux: [
     [0.00, 0.30], [0.19, 0.12], [0.32, 0.05], [0.405, 0.03], [0.44, 0.12], [0.445, 0.35],
-    [0.445, 1.90], [0.435, 2.10], [0.40, 2.30], [0.33, 2.47], [0.24, 2.61], [0.17, 2.73],
-    [0.14, 2.85], [0.132, 3.48], [0.13, 3.62], [0.155, 3.65], [0.155, 3.71], [0.14, 3.72],
+    [0.445, 2.20], [0.44, 2.32], [0.415, 2.44], [0.355, 2.56], [0.27, 2.66], [0.19, 2.74],
+    [0.15, 2.82], [0.135, 2.96], [0.13, 3.48], [0.128, 3.62], [0.152, 3.65], [0.152, 3.71],
+    [0.138, 3.72],
     [0.00, 3.72],
   ],
   // Champenoise : verre épais, fût bombé (point le plus large au tiers bas),
@@ -804,12 +807,36 @@ const BOTTLE_PROFILES = {
     [0.00, 3.72],
   ],
 };
-const TYPE_SHAPE = { red: "bourgogne", white: "flute", rose: "rose", sparkling: "champagne", dessert: "loire" };
+// v7.0.2 : bordelaise par DÉFAUT pour rouges et blancs — c'est la forme la plus
+// répandue et celle attendue dans une cave à dominante bordelaise. Les autres
+// silhouettes restent choisies par la fiche (champ shape, détecté par Gemini ou
+// manuel) ou déduites de la RÉGION via shapeKindOf ci-dessous.
+const TYPE_SHAPE = { red: "bordeaux", white: "bordeaux", rose: "rose", sparkling: "champagne", dessert: "loire" };
+
+// Déduction de la silhouette par région (v7.0.2) — appliquée UNIQUEMENT quand la
+// fiche ne précise pas de forme : un bourgogne reste bourguignon, un alsace en
+// flûte, un sauternes en bordelaise… Testée sur le champ region normalisé
+// (minuscules sans accents). Source unique pour la 3D ET la 2D.
+const REGION_SHAPES = [
+  [/bourgogne|beaujolais|chablis|macon|mercurey|pommard|meursault|volnay|gevrey|nuits|beaune|rhone|chateauneuf|gigondas|vacqueyras|hermitage|cote.?rotie|cornas|crozes|saint.?joseph|condrieu/, "bourgogne"],
+  [/alsace|riesling|gewurz/, "flute"],
+  [/sauternes|barsac|monbazillac|loupiac|cadillac|sainte.?croix/, "bordeaux"],
+  [/champagne|cremant|prosecco|cava|bulle/, "champagne"],
+];
+const shapeKindOf = (wine) => {
+  if (wine?.shape && BOTTLE_PROFILES[wine.shape]) return wine.shape;   // choix explicite de la fiche
+  if ((wine?.type || "red") === "sparkling") return "champagne";       // verre épais obligatoire
+  const reg = normKey(wine?.region || "") + " " + normKey(wine?.appellation || "");
+  if (reg.trim()) for (const [re, kind] of REGION_SHAPES) if (re.test(reg)) return kind;
+  return TYPE_SHAPE[wine?.type || "red"] || "bordeaux";
+};
 
 // Rayon de fût COMMUN : toutes les bouteilles ont le même diamètre max — l'espacement
 // entre deux bouteilles est donc constant, quel que soit leur sens (tête-bêche ou non).
 // Chaque profil est normalisé radialement à la lecture (2D comme 3D).
-const BOTTLE_R = 0.43;
+// v7.0.2 : 0.43 → 0.41 — bouteilles légèrement plus fines, proportions plus
+// réalistes par rapport à la clayette (elles paraissaient trop massives).
+const BOTTLE_R = 0.41;
 const _normProfile = (pts) => {
   const k = BOTTLE_R / Math.max(...pts.map((p) => p[0]));
   return pts.map(([r, y]) => [+(r * k).toFixed(3), y]);
@@ -4392,11 +4419,14 @@ class MillesimeCard extends HTMLElement {
     const total  = wines.reduce((s, w) => s + (w.slots?.length || 0), 0);
     const value  = wines.reduce((s, w) => s + (w.price || 0) * (w.slots?.length || 0), 0);
     const nRack = data.cellar?.racks?.length || 0;
-    // v7.0.1 : le sélecteur de vue (bouteilles/pastilles/3D) est parti dans la
-    // fenêtre ⚙️ Options ; sa place est prise par le bouton Sommelier IA —
-    // même cellule de grille, donc même taille et alignement que Casier / Vin.
+    // v7.0.2 : rouge Millésime + icône verre à vin SVG (colorable, contrairement
+    // à l'emoji) — même cellule de grille que l'ancien sélecteur de vue, donc
+    // même taille et alignement que Casier / Vin.
     const somBtn = `
-      <button class="btn-rack btn-sommelier" id="btn-sommelier-top" title="Sommelier IA : conseil d'achat &amp; opportunité">🧠 Sommelier</button>`;
+      <button class="btn-rack btn-sommelier" id="btn-sommelier-top" title="Sommelier IA : conseil d'achat &amp; opportunité">
+        <svg class="somm-ico" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8 21h8"/><path d="M12 15v6"/><path d="M7 3h10l-.7 6.3a4.6 4.6 0 0 1-8.6 0z"/>
+        </svg>Sommelier</button>`;
     // Menu déroulant des repères 3D : désormais dans la fenêtre Options (_optionsHTML)
 
     return `
@@ -4450,22 +4480,11 @@ class MillesimeCard extends HTMLElement {
       </div>
       <div class="mm-body">
         <div class="mm-opt-list">
+          <!-- v7.0.2 : ACTIONS cliquables d'abord, RÉGLAGES à choix ensuite -->
           <button class="mm-opt-item" id="btn-refresh">
             <span class="mm-opt-emoji">♻️</span>
             <span class="mm-opt-txt"><b>Compléter les fiches</b><small>Fusionne les doublons puis remplit les champs vides via l'IA</small></span>
           </button>
-          <div class="mm-opt-item mm-opt-static">
-            <div class="mm-opt-row">
-              <span class="mm-opt-emoji">👁️</span>
-              <span class="mm-opt-txt"><b>Mode d'affichage</b><small>Rendu de la cave sur la carte (mémorisé sur cet appareil)</small></span>
-            </div>
-            <div class="seg3" id="seg-viewmode" role="group" aria-label="Mode d'affichage">
-              ${[["2d", "▦", "Bouteilles"], ["dot", "⠿", "Pastilles"], ["3d", "🧊", "3D"]]
-                .map(([v, icon, lbl]) =>
-                  `<button type="button" class="seg3-btn ${this._view === v ? "active" : ""}" data-mode="${v}" title="${lbl}">${icon}<span class="seg3-lbl">${lbl}</span></button>`)
-                .join("")}
-            </div>
-          </div>
           <button class="mm-opt-item" id="btn-cellars">
             <span class="mm-opt-emoji">🏰</span>
             <span class="mm-opt-txt"><b>Gérer les caves</b><small>Ajouter, renommer ou supprimer des caves</small></span>
@@ -4478,6 +4497,28 @@ class MillesimeCard extends HTMLElement {
             <span class="mm-opt-emoji">📥</span>
             <span class="mm-opt-txt"><b>Importer des données</b><small>Fichier millesime_import_vinotag.csv → ${cellarName}</small></span>
           </button>
+          <div class="mm-opt-item mm-opt-static">
+            <div class="mm-opt-row">
+              <span class="mm-opt-emoji">👁️</span>
+              <span class="mm-opt-txt"><b>Mode d'affichage</b><small>Rendu de la cave sur la carte (mémorisé sur cet appareil)</small></span>
+            </div>
+            <div class="seg3" id="seg-viewmode" role="group" aria-label="Mode d'affichage">
+              ${[["2d", "▦", "Bouteilles"], ["dot", "⠿", "Pastilles"], ["3d", "🧊", "3D"]]
+                .map(([v, icon, lbl]) =>
+                  `<button type="button" class="seg3-btn ${this._view === v ? "active" : ""}" data-mode="${v}" title="${lbl}">${icon}<span class="seg3-lbl">${lbl}</span></button>`)
+                .join("")}
+            </div>
+            <!-- v7.0.2 : espacement des clayettes — déplié UNIQUEMENT en vue 3D,
+                 appliqué en direct sur la scène, mémorisé par appareil -->
+            <div class="opt-gap ${this._view === "3d" ? "" : "opt-gap--hidden"}" id="opt-gap">
+              <div class="opt-gap-head">
+                <span>↕️ Espacement des clayettes</span>
+                <b id="opt-gap-val">${this._shelfGapPct()} %</b>
+              </div>
+              <input type="range" id="opt-gap-range" min="60" max="180" step="5" value="${this._shelfGapPct()}" aria-label="Espacement des clayettes">
+              <small class="opt-gap-hint">Appliqué en direct · mémorisé sur cet appareil</small>
+            </div>
+          </div>
           <div class="mm-opt-item mm-opt-static">
             <div class="mm-opt-row">
               <span class="mm-opt-emoji">🧊</span>
@@ -4510,6 +4551,16 @@ class MillesimeCard extends HTMLElement {
       </div>`;
   }
 
+  // Espacement des clayettes en % (v7.0.2) — 100 = espacement historique
+  _shelfGapPct() {
+    if (this._shelfGap == null) {
+      let v = 100;
+      try { v = parseInt(localStorage.getItem("millesime-shelf-gap")) || 100; } catch (e) {}
+      this._shelfGap = Math.max(60, Math.min(180, v));
+    }
+    return this._shelfGap;
+  }
+
   _bindOptionsModal(box) {
     // Mode d'affichage (v7.0.1 : déplacé depuis le header)
     box.querySelectorAll("#seg-viewmode .seg3-btn").forEach((btn) =>
@@ -4518,9 +4569,23 @@ class MillesimeCard extends HTMLElement {
         this._view = btn.dataset.mode;
         try { localStorage.setItem("millesime-view", this._view); } catch (err) {}
         box.querySelectorAll("#seg-viewmode .seg3-btn").forEach(b => b.classList.toggle("active", b === btn));
+        // v7.0.2 : le réglage d'espacement n'a de sens qu'en 3D
+        box.querySelector("#opt-gap")?.classList.toggle("opt-gap--hidden", this._view !== "3d");
         this._render();   // la carte derrière la fenêtre bascule immédiatement
       })
     );
+    // v7.0.2 : espacement des clayettes — libellé en direct pendant le glissé,
+    // application (re-rendu 3D) au relâchement pour rester fluide sur iPhone
+    const gapRange = box.querySelector("#opt-gap-range");
+    gapRange?.addEventListener("input", () => {
+      const el = box.querySelector("#opt-gap-val");
+      if (el) el.textContent = `${gapRange.value} %`;
+    });
+    gapRange?.addEventListener("change", () => {
+      this._shelfGap = Math.max(60, Math.min(180, parseInt(gapRange.value) || 100));
+      try { localStorage.setItem("millesime-shelf-gap", String(this._shelfGap)); } catch (err) {}
+      if (this._view === "3d") this._render();
+    });
     box.querySelectorAll("#seg-aromamode .seg3-btn").forEach((btn) =>
       btn.addEventListener("click", () => {
         this._aromaMode = btn.dataset.mode;
@@ -4775,7 +4840,7 @@ class MillesimeCard extends HTMLElement {
       <div class="mm-body">
         <div class="sub-tabs">
           <button class="sub-tab ${tab === "accords" ? "active" : ""}" data-tab="accords">🍽️ Accords</button>
-          <button class="sub-tab ${tab === "envie" ? "active" : ""}" data-tab="envie">💜 Envie de…</button>
+          <button class="sub-tab ${tab === "envie" ? "active" : ""}" data-tab="envie">🍷 Envie de…</button>
           <button class="sub-tab ${tab === "apogee" ? "active" : ""}" data-tab="apogee">🕐 Apogée</button>
           <button class="sub-tab ${tab === "occasions" ? "active" : ""}" data-tab="occasions">🥂 Occasions</button>
         </div>
@@ -5244,7 +5309,7 @@ class MillesimeCard extends HTMLElement {
         le sommelier propose <b>une seule bouteille</b> de votre cave, au bon profil et à la bonne apogée — avec son prix.</div>
       <div class="envie-chips" id="envie-chips">${chips}</div>
       <select class="mm-input envie-color" id="envie-color">${colorOpts}</select>
-      <button class="acc-go envie-go" id="envie-go">💜 Envie de… trouver mon vin</button>
+      <button class="acc-go envie-go" id="envie-go">🍷 Envie de… trouver mon vin</button>
       <div class="acc-list" id="envie-result"></div>`;
   }
 
@@ -5622,7 +5687,7 @@ class MillesimeCard extends HTMLElement {
       const bottleContent = wine
         ? (isCircle
             ? `<svg class="dot-svg-c" viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block"><circle cx="5" cy="5" r="5" fill="${wt.color}"/><circle cx="5" cy="5" r="5" fill="white" opacity="0.12"/><ellipse cx="3.5" cy="3.5" rx="1.5" ry="1" fill="white" opacity="0.2"/></svg>`
-            : BOTTLE_MINI(wt.color, null, wine.type, alt, entry.size || wine.size, wine.shape || ""))
+            : BOTTLE_MINI(wt.color, null, wine.type, alt, entry.size || wine.size, shapeKindOf(wine)))
         : (isCircle
             ? `<svg class="dot-svg-c" viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block"><circle cx="5" cy="5" r="4.5" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="0.8" stroke-dasharray="1.8 1.2"/></svg>`
             : BOTTLE_GHOST());
@@ -5895,23 +5960,31 @@ class MillesimeCard extends HTMLElement {
       }
       return set;
     };
-    // Mêmes 5 formes que la vue 2D (profils partagés normalisés) : diamètre commun
-    // BOTTLE_R partout → rest et labelR identiques pour toutes les formes
-    const setBordeaux  = mkSet("bordeaux",  { rest: 0.43, capR: 0.158, capR2: 0.140, capH: 0.30, capY: 3.56, corkR: 0.125, corkH: 0.14, corkY: 3.55, colR: 0.15,  colH: 0.18, colY: 3.15, labelR: 0.44, labelH: 0.95, labelY: 1.05 });
-    const setLoire     = mkSet("loire",     { rest: 0.43, capR: 0.150, capR2: 0.140, capH: 0.30, capY: 3.56, corkR: 0.12,  corkH: 0.14, corkY: 3.55, colR: 0.16,  colH: 0.16, colY: 3.28, labelR: 0.44, labelH: 0.90, labelY: 1.00 });
-    const setFlute     = mkSet("flute",     { rest: 0.43, capR: 0.150, capR2: 0.135, capH: 0.30, capY: 3.56, corkR: 0.12,  corkH: 0.14, corkY: 3.55, colR: 0.155, colH: 0.16, colY: 3.30, labelR: 0.44, labelH: 0.85, labelY: 0.95 });
-    const setRose      = mkSet("rose",      { rest: 0.43, capR: 0.155, capR2: 0.138, capH: 0.32, capY: 3.55, corkR: 0.12,  corkH: 0.14, corkY: 3.55, colR: 0.148, colH: 0.18, colY: 3.05, labelR: 0.44, labelH: 0.90, labelY: 0.98 });
-    const setBourgogne = mkSet("bourgogne", { rest: 0.43, capR: 0.162, capR2: 0.148, capH: 0.30, capY: 3.56, corkR: 0.125, corkH: 0.14, corkY: 3.55, colR: 0.155, colH: 0.18, colY: 3.28, labelR: 0.44, labelH: 0.95, labelY: 1.00 });
+    // Mêmes formes que la vue 2D (profils partagés normalisés) : diamètre commun
+    // BOTTLE_R partout → rest et labelR identiques pour toutes les formes.
+    // v7.0.2 : rest/labelR DÉRIVÉS de BOTTLE_R (plus de littéraux à désynchroniser)
+    const REST = BOTTLE_R, LBL_R = BOTTLE_R + 0.01;
+    const setBordeaux  = mkSet("bordeaux",  { rest: REST, capR: 0.158, capR2: 0.140, capH: 0.30, capY: 3.56, corkR: 0.125, corkH: 0.14, corkY: 3.55, colR: 0.15,  colH: 0.18, colY: 3.15, labelR: LBL_R, labelH: 0.95, labelY: 1.05 });
+    const setLoire     = mkSet("loire",     { rest: REST, capR: 0.150, capR2: 0.140, capH: 0.30, capY: 3.56, corkR: 0.12,  corkH: 0.14, corkY: 3.55, colR: 0.16,  colH: 0.16, colY: 3.28, labelR: LBL_R, labelH: 0.90, labelY: 1.00 });
+    const setFlute     = mkSet("flute",     { rest: REST, capR: 0.150, capR2: 0.135, capH: 0.30, capY: 3.56, corkR: 0.12,  corkH: 0.14, corkY: 3.55, colR: 0.155, colH: 0.16, colY: 3.30, labelR: LBL_R, labelH: 0.85, labelY: 0.95 });
+    const setRose      = mkSet("rose",      { rest: REST, capR: 0.155, capR2: 0.138, capH: 0.32, capY: 3.55, corkR: 0.12,  corkH: 0.14, corkY: 3.55, colR: 0.148, colH: 0.18, colY: 3.05, labelR: LBL_R, labelH: 0.90, labelY: 0.98 });
+    const setBourgogne = mkSet("bourgogne", { rest: REST, capR: 0.162, capR2: 0.148, capH: 0.30, capY: 3.56, corkR: 0.125, corkH: 0.14, corkY: 3.55, colR: 0.155, colH: 0.18, colY: 3.28, labelR: LBL_R, labelH: 0.95, labelY: 1.00 });
     // Champenoise : coiffe conique épousant la pente du col, collerette en jupe
     // descendant loin sur le col (continuité avec la coiffe), bouchon champignon plus large
-    const setChampagne = mkSet("champagne", { rest: 0.43,
+    const setChampagne = mkSet("champagne", { rest: REST,
       capPts: [[0.195, 3.22], [0.175, 3.36], [0.163, 3.50], [0.162, 3.58], [0.174, 3.66], [0.197, 3.72], [0.21, 3.755], [0.205, 3.775], [0.12, 3.78]],
       corkR: 0.195, corkR2: 0.135, corkH: 0.18, corkY: 3.82,
       colR: 0.19, colR2: 0.26, colH: 0.60, colY: 2.92,
-      labelR: 0.44, labelH: 0.85, labelY: 0.95, muselet: true });
+      labelR: LBL_R, labelH: 0.85, labelY: 0.95, muselet: true });
+    // v7.0.2 : sélection UNIFIÉE par silhouette (shapeKindOf : fiche → région →
+    // type) — geoByKind indexe par forme, geoByType reste le repli par type.
+    const geoByKind = {
+      bordeaux: setBordeaux, bourgogne: setBourgogne, flute: setFlute,
+      rose: setRose, champagne: setChampagne, loire: setLoire,
+    };
     const geoByType = {
-      red:       setBourgogne,  // bourguignonne — corps large, épaule conique
-      white:     setBordeaux,   // bordelaise (verre clair, épaule marquée)
+      red:       setBordeaux,   // bordelaise (v7.0.2 : défaut — épaule haute typique)
+      white:     setBordeaux,   // bordelaise (Alsace/Bourgogne déduits de la région)
       rose:      setRose,       // bordelaise au col allongé (type Provence/Loire)
       sparkling: setChampagne,
       dessert:   setBordeaux,   // bordelaise aussi (Sauternes/Monbazillac)
@@ -6253,8 +6326,12 @@ class MillesimeCard extends HTMLElement {
     // espacement constant), étagères internes identiques.
     // Les casiers peuvent donc avoir des dimensions et dispositions différentes.
     const SPACING  = 1.06;                     // espacement des bouteilles (constant partout)
-    const SHELF_DY   = 2.0;                      // entre étagères d'un même casier
-    const RACK_GAP = 1.1;                     // espace entre casiers
+    // v7.0.2 : espacement des clayettes réglable (⚙️ Options, vue 3D) — le
+    // facteur module la distance ENTRE clayettes et entre casiers ; la hauteur
+    // d'emboîtement des piles (LAYER_DY) reste physique, donc inchangée.
+    const gapK = this._shelfGapPct() / 100;
+    const SHELF_DY   = 2.0 * gapK;               // entre étagères d'un même casier
+    const RACK_GAP = 1.1 * gapK;                 // espace entre casiers
     const pickables = [];
     const rackAnchors = [];                   // pour les overlays HTML
     let yCursor = 0;                           // haut du casier courant
@@ -6269,8 +6346,8 @@ class MillesimeCard extends HTMLElement {
       // v7.0.1 : empilement en PYRAMIDE — les couches supérieures reposent dans
       // les creux de la couche du dessous (décalage d'un demi-entraxe, géré plus
       // bas) ; la hauteur de couche correspond à l'emboîtement réel :
-      // dy = √((2r)² − (S/2)²) ≈ 0.68 pour r ≈ 0.43 et S = 1.06.
-      const LAYER_DY = 0.70;                                   // hauteur d'une couche emboîtée
+      // dy = √((2r)² − (S/2)²) ≈ 0.63 pour r = 0.41 (v7.0.2) et S = 1.06.
+      const LAYER_DY = 0.66;                                   // hauteur d'une couche emboîtée
       const shelfStep = SHELF_DY + (levels - 1) * LAYER_DY;    // pas entre clayettes
       const total = rack.slots || cols * (rack.shelves || 2) * levels;
       const shelves  = Math.ceil(total / cols);                // rangées virtuelles
@@ -6375,8 +6452,10 @@ class MillesimeCard extends HTMLElement {
             // Vin sélectionné dans la liste : on grise toutes les AUTRES bouteilles
             (this._selected && wine.id !== this._selected);
 
-          const shapeKey = (wine.shape && geoByType[wine.shape]) ? wine.shape : tp;
-          const set = geoByType[shapeKey] || geoByType[tp] || setBordeaux;
+          // v7.0.2 : silhouette via shapeKindOf (fiche → région → type) — même
+          // logique que la 2D, rendu identique dans toutes les vues
+          const shapeKey = shapeKindOf(wine);
+          const set = geoByKind[shapeKey] || geoByType[tp] || setBordeaux;
           const g = new THREE.Group();
           const body = new THREE.Mesh(set.body, filtered ? fadedMats[tp] : mats[tp]);
           if (SHADOWS_3D_PCF) { body.castShadow = !filtered; body.receiveShadow = true; }
@@ -6654,12 +6733,14 @@ class MillesimeCard extends HTMLElement {
 
         // Rail vertical : position horizontale COMMUNE (bord droit du plus
         // large), position verticale propre à chaque casier
+        // v7.0.2 : rail ANCRÉ AU BORD DROIT de la carte (zone réservée RAIL_PX),
+        // plus au bord du casier le plus large — les clayettes profitent de
+        // toute la largeur. railMarginPx compense le centrage sur desktop large.
         const pr = toPx(maxHalfW, yTop + 0.7, 0);
         const rail = document.createElement("div");
         rail.className = "t3-rail";
         rail.style.top = Math.max(4, pr.y - 50) + "px";
-        rail.style.left = Math.min(pr.x + 4, w - 40) + "px";
-        rail.style.right = "auto";
+        rail.style.right = (railMarginPx + 6) + "px";
         rail.innerHTML = `
           <button class="icon-btn" data-edit-rack="${esc(rack.id)}" title="Modifier">⚙</button>
           <button class="icon-btn" data-move-rack="${esc(rack.id)}" title="Déplacer le contenu">📦</button>
@@ -6671,7 +6752,10 @@ class MillesimeCard extends HTMLElement {
 
     // ── Layout : la largeur dicte l'échelle, la hauteur suit le contenu ──
     let curW = 0;
-    const RAIL_PX = 48;                        // zone réservée au rail d'actions
+    let railMarginPx = 0;                      // centrage desktop : décalage du rail (v7.0.2)
+    // v7.0.2 : 48 → 40 px — réserve ajustée à la largeur réelle du rail,
+    // la scène (donc les clayettes) récupère la différence
+    const RAIL_PX = 40;                        // zone réservée au rail d'actions
     // Largeur de rendu PLAFONNÉE : au-delà, la scène ne s'étire plus (bouteilles
     // géantes sur desktop) — on garde l'échelle de ~MAX_W px et on CENTRE le casier
     // dans la largeur réelle. Sous MAX_W (mobile/colonne), marge = 0 → inchangé.
@@ -6686,6 +6770,7 @@ class MillesimeCard extends HTMLElement {
       const extra = RAIL_PX / pxPerUnit;       // unités monde à droite (hors clayettes)
       // Marge de centrage quand la carte dépasse MAX_W (sinon 0)
       const margin = Math.max(0, (w - effW) / (2 * pxPerUnit));
+      railMarginPx = Math.round(margin * pxPerUnit);   // v7.0.2 : le rail suit le centrage
       const hH = h / (2 * pxPerUnit);
       const cy = c3.y - (PAD_BOT - PAD_TOP) / 2;
       cam.left = -(hW + margin); cam.right = hW + extra + margin; cam.top = hH; cam.bottom = -hH;
@@ -7373,8 +7458,9 @@ const CARD_CSS = `<style>
   transition:filter 0.15s;
 }
 .btn-rack:hover { filter:brightness(1.1); }
-/* v7.0.1 : bouton Sommelier IA (remplace le sélecteur de vue) — violet distinct */
-.btn-sommelier { background:#7D5BA6; }
+/* v7.0.2 : bouton Sommelier IA — rouge Millésime, icône verre SVG blanche */
+.btn-sommelier { background:#7B1D2E; display:flex; align-items:center; justify-content:center; gap:6px; }
+.btn-sommelier .somm-ico { flex:0 0 auto; }
 /* Boutons de la rangée actions (vue + casier + vin) */
 .header-actions .btn-icon, .header-actions .view-select, .header-actions .btn-primary {
   height:38px; box-sizing:border-box; width:100%; min-width:0;
@@ -7836,6 +7922,13 @@ const MODAL_CSS = `
 .mm-opt-item:hover { border-color:var(--mm-accent); }
 .mm-opt-static { cursor:default; flex-direction:column; align-items:stretch; gap:11px; }
 .mm-opt-static:hover { border-color:var(--mm-border); }
+/* v7.0.2 : espacement des clayettes — sous le sélecteur de vue, visible en 3D */
+.opt-gap { padding-top:10px; border-top:1px dashed #5a2a33; }
+.opt-gap--hidden { display:none; }
+.opt-gap-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; font-size:0.84em; color:var(--mm-text); }
+.opt-gap-head b { color:#C0392B; font-variant-numeric:tabular-nums; }
+.opt-gap input[type="range"] { width:100%; accent-color:#7B1D2E; }
+.opt-gap-hint { display:block; margin-top:5px; font-size:0.68em; color:var(--mm-muted); }
 .mm-opt-row { display:flex; align-items:center; gap:13px; min-width:0; }
 .mm-opt-tokens { font-size:0.72em; color:var(--mm-muted); text-align:center; padding:2px 4px 0; font-variant-numeric:tabular-nums; }
 /* Profil aromatique (fiche du vin) */
@@ -7853,21 +7946,27 @@ const MODAL_CSS = `
 .mm-body .seg3-btn:hover { color:var(--mm-text); }
 .mm-body .seg3-btn.active { background:var(--mm-accent); color:#fff; font-weight:600; }
 .mm-body .seg3-lbl { font-size:0.92em; }
-/* Sous-menus (choix de mode DANS une page) : teinte violette distinctive */
-.mm-body .seg3--sub { border-color:#5a4a7a; background:rgba(125,91,166,0.10); }
-.mm-body .seg3--sub .seg3-btn { border-right-color:#5a4a7a; }
-.mm-body .seg3--sub .seg3-btn.active { background:#7D5BA6; }
+/* Sous-menus (choix de mode DANS une page) : teinte rouge Millésime distinctive (v7.0.2) */
+.mm-body .seg3--sub { border-color:#5a2a33; background:rgba(123,29,46,0.10); }
+.mm-body .seg3--sub .seg3-btn { border-right-color:#5a2a33; }
+.mm-body .seg3--sub .seg3-btn.active { background:#7B1D2E; }
 /* Filtres du Profil de garde (v7.0.1) */
 .apo-filters { display:flex; gap:8px; margin-bottom:12px; }
 .apo-fsel { flex:1; min-width:0; }
 .apo-top-until--past { color:#e05a5a; font-weight:700; }
 /* Envie de… (v7.0.1) */
 .envie-chips { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
-.envie-chip.active { background:#7D5BA6; border-color:#7D5BA6; color:#fff; }
+.envie-chip.active { background:#7B1D2E; border-color:#7B1D2E; color:#fff; }
 .envie-color { margin-bottom:12px; }
-.envie-go { width:100%; background:#7D5BA6; }
+/* v7.0.2 : boutons d'action PLEINE LARGEUR harmonisés (Envie de…, Choisir dans
+   ma cave, audits Sommelier) — même gabarit partout : 42 px, rayon 10, rouge
+   Millésime, contenu centré */
+.envie-go, .acc-menu-go {
+  width:100%; height:42px; display:flex; align-items:center; justify-content:center;
+  gap:7px; background:#7B1D2E; font-size:0.92em; border-radius:10px;
+}
 .envie-go:hover { filter:brightness(1.1); }
-.envie-card { border:1px solid #5a4a7a; border-radius:12px; background:rgba(125,91,166,0.08); padding:12px 14px; margin-top:12px; }
+.envie-card { border:1px solid #5a2a33; border-radius:12px; background:rgba(123,29,46,0.08); padding:12px 14px; margin-top:12px; }
 .envie-card-head { display:flex; align-items:center; gap:7px; flex-wrap:wrap; font-size:1.02em; }
 .envie-price { margin-left:auto; font-weight:800; color:#d8b25c; font-size:1.08em; white-space:nowrap; }
 .envie-card-meta { font-size:0.78em; color:var(--mm-muted); margin:5px 0 8px; }
@@ -7896,7 +7995,7 @@ const MODAL_CSS = `
 .acc-ai-hint { display:flex; align-items:center; gap:8px; padding:9px 4px 2px; color:var(--mm-muted); font-size:0.8em; }
 .acc-menu-fields { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
 .acc-menu-lbl { font-size:0.72em; color:var(--mm-muted); font-weight:600; margin-top:6px; }
-.acc-menu-go { width:100%; margin-bottom:10px; }
+.acc-menu-go { margin-bottom:10px; }
 .menu-choice { border:1px solid var(--mm-border); border-radius:10px; background:var(--mm-bg2); padding:10px 12px; margin-bottom:8px; }
 .menu-choice-head { display:flex; align-items:center; gap:7px; flex-wrap:wrap; font-size:0.92em; }
 .menu-choice-head i { color:var(--mm-muted); font-style:normal; }
