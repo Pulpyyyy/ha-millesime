@@ -1,5 +1,5 @@
 /**
- * Millésime Card v7.0.0
+ * Millésime Card v7.0.1
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,13 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "7.0.0";
+const MILLESIME_CARD_VERSION = "7.0.1";
+
+// ── Budget quotidien Gemini (free tier) ─────────────────────────────────────
+// Estimation codée en dur : ~250 requêtes/jour (Gemini 2.5 Flash, quotas
+// resserrés fin 2025) × ~2 000 tokens par appel Millésime ≈ 500 000 tokens/j.
+// Google modifie ces quotas SANS préavis : la valeur s'ajuste ici uniquement.
+const GEMINI_FREE_TIER_DAILY_BUDGET = 500000;
 
 const DOMAIN = "millesime";
 
@@ -1358,9 +1364,12 @@ class MillesimeCard extends HTMLElement {
         stepEl.textContent = "Terminé ✓";
         fill.style.width = "100%";
         const c = usage?.call, d = usage?.day;
+        // v7.0.1 : ajoute le % du budget quotidien estimé (free tier Gemini)
+        const dayTotal = d ? (d.prompt || 0) + (d.output || 0) : 0;
+        const dayPct = Math.min(100, Math.round((dayTotal / GEMINI_FREE_TIER_DAILY_BUDGET) * 100));
         if (c) tokEl.textContent =
           `${(c.prompt || 0).toLocaleString("fr-FR")} envoyés / ${(c.output || 0).toLocaleString("fr-FR")} reçus` +
-          (d ? ` · aujourd'hui : ${((d.prompt || 0) + (d.output || 0)).toLocaleString("fr-FR")} tokens (${d.calls || 0} appels)` : "");
+          (d ? ` · aujourd'hui : ${dayTotal.toLocaleString("fr-FR")} tokens (${d.calls || 0} appels · ${dayPct} % du budget)` : "");
         setTimeout(() => api.close(), 3200);
       },
       fail: (message) => {
@@ -1420,7 +1429,18 @@ class MillesimeCard extends HTMLElement {
     bar.querySelector(".rp-fill").style.width = `${pct}%`;
     if (finished) {
       bar.querySelector(".rp-label").textContent = `✓ Fiches complétées (${total})`;
-      setTimeout(() => bar.remove(), 3000);
+      // v7.0.1 : affiche le % du budget quotidien de tokens consommé à la fin
+      (async () => {
+        try {
+          const r = await this._hass.connection.sendMessagePromise({ type: "millesime/ai_usage" });
+          const u = r?.usage || {};
+          const tot = (u.prompt || 0) + (u.output || 0);
+          const pctTok = Math.min(100, Math.round((tot / GEMINI_FREE_TIER_DAILY_BUDGET) * 100));
+          bar.querySelector(".rp-label").textContent =
+            `✓ Fiches complétées (${total}) · ${tot.toLocaleString("fr-FR")} tokens aujourd'hui (${pctTok} % du budget)`;
+        } catch (e) { /* le compteur ne doit pas gêner la fin d'opération */ }
+      })();
+      setTimeout(() => bar.remove(), 5000);
     }
   }
 
@@ -1612,6 +1632,13 @@ class MillesimeCard extends HTMLElement {
 
   _openModal(type, opts = {}) {
     this._closeModal();
+    // v7.0.1 : ouvrir une fiche de vin quitte la surbrillance en cours —
+    // c'était la seule vue sans porte de sortie évidente (la surbrillance
+    // persistait jusqu'au prochain tap sur une bouteille).
+    if (type === "detail" && this._selected) {
+      this._selected = null;
+      this._render();
+    }
     const style = document.createElement("style");
     style.textContent = MODAL_CSS;
     document.head.appendChild(style);
@@ -1660,7 +1687,6 @@ class MillesimeCard extends HTMLElement {
     if (type === "rack")     this._bindRackForm(box, opts.rack);
     if (type === "bottle")    this._bindBottleForm(box, opts.wine, opts.slot);
     if (type === "detail")    this._bindDetailButtons(box, opts.wine);
-    if (type === "detail")    box.querySelector(".aroma-box")?.addEventListener("toggle", (e) => { this._aromaOpen = e.target.open; });
     if (type === "duplicate") this._bindAddSlotForm(box, opts.wine);
     if (type === "slotedit")  this._bindSlotEdit(box, opts.wine, opts.slotIdx);
     if (type === "history") {
@@ -2073,12 +2099,12 @@ class MillesimeCard extends HTMLElement {
     // et ouvraient la pellicule à la place de l'appareil photo).
     const photoFileCam = box.querySelector("#bt-photo-file-cam");
     box.querySelector("#bt-photo-cam")?.addEventListener("click", async () => {
-      if (this._cameraSupported()) {
-        const shot = await this._captureViaCamera();
-        if (shot instanceof File) { onPhotoFile(shot); return; }
-        if (shot === "cancel") return;
-      }
-      photoFileCam?.click();
+      // v7.0.1 : la caméra directe (getUserMedia) est TOUJOURS tentée en
+      // premier — _captureViaCamera explique lui-même pourquoi si elle échoue
+      const shot = await this._captureViaCamera();
+      if (shot instanceof File) { onPhotoFile(shot); return; }
+      if (shot === "cancel") return;
+      photoFileCam?.click();   // repli : input statique avec capture
     });
     box.querySelector("#bt-photo-pick")?.addEventListener("click", () => photoFile?.click());
     // Accepte un <input type=file> ou directement un File (modal caméra)
@@ -2228,13 +2254,11 @@ class MillesimeCard extends HTMLElement {
         </div>`;
       banner.querySelector("#scan-cam")?.addEventListener("click", async () => {
         banner.innerHTML = "";
-        if (this._cameraSupported()) {
-          const shot = await this._captureViaCamera();
-          if (shot instanceof File) { onScanFile(shot); return; }
-          if (shot === "cancel") return;
-          // null → échec technique, repli sur l'input statique ci-dessous
-        }
-        fileInputCam?.click();   // input statique avec capture → appareil photo direct
+        // v7.0.1 : caméra directe toujours tentée d'abord (diagnostic intégré)
+        const shot = await this._captureViaCamera();
+        if (shot instanceof File) { onScanFile(shot); return; }
+        if (shot === "cancel") return;
+        fileInputCam?.click();   // repli : input statique avec capture
       });
       banner.querySelector("#scan-lib")?.addEventListener("click", () => {
         banner.innerHTML = "";
@@ -2529,12 +2553,34 @@ class MillesimeCard extends HTMLElement {
 
   // ── Fiche détail bouteille ─────────────────────────────────────────────────────
 
-  // ── Profil aromatique (v7.0.0) ──────────────────────────────────────────────
+  // ── Profil aromatique (v7.0.0, refondu v7.0.1) ──────────────────────────────
   // Format backend : "Fruité:45|Boisé:20|Épicé:15|…" sur 11 familles fixes.
   // Parsé avec tolérance (ordre libre, familles inconnues ignorées, valeurs
-  // bornées 0-100). Rendu au choix : radar 11 axes ou barres horizontales,
-  // en SVG natif — réglage dans ⚙️ Options (this._aromaMode).
+  // bornées 0-100). Rendu au choix : radar ou barres horizontales, en SVG
+  // natif — réglage dans ⚙️ Options (this._aromaMode). Depuis v7.0.1 : section
+  // TOUJOURS visible sur la fiche (plus de repli), axes du radar ADAPTATIFS
+  // selon la couleur du vin (AROMA_AXES_BY_TYPE) + toute famille présente,
+  // couleurs du polygone reprises du type de vin.
   static AROMA_FAMILIES = ["Fruité", "Floral", "Boisé", "Épicé", "Minéral", "Végétal", "Grillé", "Animal", "Lacté", "Terreux", "Tertiaire"];
+
+  // v7.0.1 : axes PERTINENTS par couleur de vin — un blanc n'a pas d'axe
+  // « Animal », un rouge n'a guère de « Lacté ». Le radar affiche les axes de
+  // la couleur + toute famille non listée mais présente dans le profil.
+  static AROMA_AXES_BY_TYPE = {
+    red:       ["Fruité", "Boisé", "Épicé", "Végétal", "Animal", "Terreux", "Grillé", "Tertiaire"],
+    white:     ["Fruité", "Floral", "Minéral", "Boisé", "Végétal", "Lacté", "Grillé", "Tertiaire"],
+    rose:      ["Fruité", "Floral", "Minéral", "Végétal", "Épicé", "Lacté"],
+    sparkling: ["Fruité", "Floral", "Minéral", "Grillé", "Lacté", "Tertiaire"],
+    dessert:   ["Fruité", "Floral", "Épicé", "Boisé", "Lacté", "Tertiaire"],
+  };
+
+  _aromaAxesFor(profile, type) {
+    const base = this.constructor.AROMA_AXES_BY_TYPE[type] || this.constructor.AROMA_FAMILIES;
+    // Familles hors liste mais réellement présentes (> 0) : on les ajoute pour
+    // ne jamais perdre d'information sur un vin atypique
+    const extra = this.constructor.AROMA_FAMILIES.filter(f => !base.includes(f) && (profile[f] || 0) > 0);
+    return base.concat(extra);
+  }
 
   _parseAromaProfile(str_) {
     if (!str_ || typeof str_ !== "string") return null;
@@ -2551,43 +2597,51 @@ class MillesimeCard extends HTMLElement {
     return Object.keys(out).length >= 2 ? out : null;   // au moins 2 familles = exploitable
   }
 
-  _aromaRadarSVG(profile) {
-    const fams = this.constructor.AROMA_FAMILIES;
+  _aromaRadarSVG(profile, type = "red") {
+    const t = WINE_TYPES[type] || WINE_TYPES.red;
+    const fams = this._aromaAxesFor(profile, type);
     const C = 50, R = 32, LR = 42;                       // centre, rayon, rayon libellés
     const pt = (i, r) => {
       const a = (Math.PI * 2 * i) / fams.length - Math.PI / 2;
       return [C + r * Math.cos(a), C + r * Math.sin(a)];
     };
-    // Toiles de fond (25/50/75/100 %) + rayons
+    // Toiles de fond (25/50/75/100 %) + rayons — grille plus discrète (v7.0.1)
     let web = "";
     for (const f of [0.25, 0.5, 0.75, 1]) {
       const pts = fams.map((_, i) => pt(i, R * f).map(v => v.toFixed(1)).join(",")).join(" ");
-      web += `<polygon points="${pts}" fill="none" stroke="var(--mm-border)" stroke-width="${f === 1 ? 0.5 : 0.25}"/>`;
+      web += `<polygon points="${pts}" fill="none" stroke="var(--mm-border)" stroke-width="${f === 1 ? 0.45 : 0.2}" opacity="${f === 1 ? 0.9 : 0.5}"/>`;
     }
     web += fams.map((_, i) => {
       const [x, y] = pt(i, R);
-      return `<line x1="${C}" y1="${C}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="var(--mm-border)" stroke-width="0.2"/>`;
+      return `<line x1="${C}" y1="${C}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="var(--mm-border)" stroke-width="0.18" opacity="0.6"/>`;
     }).join("");
     // Polygone des valeurs (max de référence = plus grande famille, min 40 pour la lisibilité)
     const maxV = Math.max(40, ...Object.values(profile));
-    const poly = fams.map((f, i) => pt(i, R * ((profile[f] || 0) / maxV)).map(v => v.toFixed(1)).join(",")).join(" ");
-    // Libellés (famille + %), masqués à 0
+    const vpts = fams.map((f, i) => pt(i, R * ((profile[f] || 0) / maxV)));
+    const poly = vpts.map(p => p.map(v => v.toFixed(1)).join(",")).join(" ");
+    // Points aux sommets renseignés (v7.0.1 : lecture immédiate des pics)
+    const dots = fams.map((f, i) => (profile[f] || 0) > 0
+      ? `<circle cx="${vpts[i][0].toFixed(1)}" cy="${vpts[i][1].toFixed(1)}" r="1.1" fill="${t.color}" stroke="#fff" stroke-width="0.3"/>`
+      : "").join("");
+    // Libellés (famille + %) : plus gros, valeur en gras dans la couleur du vin
     const labels = fams.map((f, i) => {
       const v = profile[f] || 0;
       const [x, y] = pt(i, LR);
       const anchor = Math.abs(x - C) < 4 ? "middle" : (x > C ? "start" : "end");
-      return `<text x="${x.toFixed(1)}" y="${(y + 1.2).toFixed(1)}" font-size="3.4" text-anchor="${anchor}"
-                fill="${v ? "var(--mm-text)" : "var(--mm-muted)"}" opacity="${v ? 0.95 : 0.45}">${f}${v ? ` ${v}` : ""}</text>`;
+      return `<text x="${x.toFixed(1)}" y="${(y + 1.3).toFixed(1)}" font-size="3.8" text-anchor="${anchor}"
+                fill="${v ? "var(--mm-text)" : "var(--mm-muted)"}" opacity="${v ? 0.95 : 0.4}">${f}${v ? ` <tspan font-weight="bold" fill="${t.color}">${v}</tspan>` : ""}</text>`;
     }).join("");
     return `
-      <svg class="aroma-svg" viewBox="-8 -4 116 108" role="img" aria-label="Profil aromatique (radar)">
+      <svg class="aroma-svg" viewBox="-10 -5 120 110" role="img" aria-label="Profil aromatique (radar)">
         ${web}
-        <polygon points="${poly}" fill="rgba(123,29,46,0.35)" stroke="#C0392B" stroke-width="0.8" stroke-linejoin="round"/>
+        <polygon points="${poly}" fill="${t.glow}" stroke="${t.color}" stroke-width="1" stroke-linejoin="round"/>
+        ${dots}
         ${labels}
       </svg>`;
   }
 
-  _aromaBarsSVG(profile) {
+  _aromaBarsSVG(profile, type = "red") {
+    const t = WINE_TYPES[type] || WINE_TYPES.red;
     const fams = this.constructor.AROMA_FAMILIES.filter(f => (profile[f] || 0) > 0)
       .sort((a, b) => (profile[b] || 0) - (profile[a] || 0));
     const ROW = 9, W = 100, LBL = 26, H = fams.length * ROW + 4;
@@ -2598,7 +2652,7 @@ class MillesimeCard extends HTMLElement {
       return `
         <text x="${LBL - 1.5}" y="${y + 4.6}" font-size="3.5" fill="var(--mm-text)" text-anchor="end">${f}</text>
         <rect x="${LBL}" y="${y}" width="${W - LBL - 12}" height="6" rx="2" fill="var(--mm-border)" opacity="0.35"/>
-        <rect x="${LBL}" y="${y}" width="${w.toFixed(1)}" height="6" rx="2" fill="#7B1D2E"/>
+        <rect x="${LBL}" y="${y}" width="${w.toFixed(1)}" height="6" rx="2" fill="${t.color}"/>
         <text x="${LBL + w + 1.5}" y="${y + 4.6}" font-size="3.4" fill="var(--mm-muted)">${profile[f]}%</text>`;
     }).join("");
     return `
@@ -2609,14 +2663,15 @@ class MillesimeCard extends HTMLElement {
   _aromaSectionHTML(w) {
     const profile = this._parseAromaProfile(w.aroma_profile);
     if (!profile) return "";
+    // v7.0.1 : toujours visible sur la fiche — plus de menu repliable
     return `
-      <details class="aroma-box" ${this._aromaOpen ? "open" : ""}>
-        <summary class="aroma-summary">🌸 Profil aromatique</summary>
+      <div class="aroma-box">
+        <div class="aroma-summary aroma-summary--static">🌸 Profil aromatique</div>
         <div class="aroma-body">
-          ${this._aromaMode === "bars" ? this._aromaBarsSVG(profile) : this._aromaRadarSVG(profile)}
+          ${this._aromaMode === "bars" ? this._aromaBarsSVG(profile, w.type) : this._aromaRadarSVG(profile, w.type)}
           <div class="aroma-legend">Estimation IA du profil au stade actuel du vin — indicatif, à affiner à la dégustation.</div>
         </div>
-      </details>`;
+      </div>`;
   }
 
   _detailHTML(wine) {
@@ -3524,7 +3579,7 @@ class MillesimeCard extends HTMLElement {
         <button class="mm-close" data-close>✕</button>
       </div>
       <div class="mm-body">
-        <div class="seg3 som-mode" id="som-mode">
+        <div class="seg3 seg3--sub som-mode" id="som-mode">
           <button type="button" class="seg3-btn ${mode === "audit" ? "active" : ""}" data-mode="audit">🛒<span class="seg3-lbl">Conseil d'achat</span></button>
           <button type="button" class="seg3-btn ${mode === "opp" ? "active" : ""}" data-mode="opp">🏪<span class="seg3-lbl">Opportunité</span></button>
         </div>
@@ -4337,13 +4392,11 @@ class MillesimeCard extends HTMLElement {
     const total  = wines.reduce((s, w) => s + (w.slots?.length || 0), 0);
     const value  = wines.reduce((s, w) => s + (w.price || 0) * (w.slots?.length || 0), 0);
     const nRack = data.cellar?.racks?.length || 0;
-    // Sélecteur de vue : liste déroulante unique (bouteilles 2D, pastilles, 3D)
-    const viewSel = `
-      <select class="view-select" id="sel-view" title="Mode d'affichage">
-        ${[["2d", "▦ Bouteilles"], ["dot", "⠿ Pastilles"], ["3d", "🧊 3D"]]
-          .map(([v, lbl]) => `<option value="${v}" ${this._view === v ? "selected" : ""}>${lbl}</option>`)
-          .join("")}
-      </select>`;
+    // v7.0.1 : le sélecteur de vue (bouteilles/pastilles/3D) est parti dans la
+    // fenêtre ⚙️ Options ; sa place est prise par le bouton Sommelier IA —
+    // même cellule de grille, donc même taille et alignement que Casier / Vin.
+    const somBtn = `
+      <button class="btn-rack btn-sommelier" id="btn-sommelier-top" title="Sommelier IA : conseil d'achat &amp; opportunité">🧠 Sommelier</button>`;
     // Menu déroulant des repères 3D : désormais dans la fenêtre Options (_optionsHTML)
 
     return `
@@ -4370,7 +4423,7 @@ class MillesimeCard extends HTMLElement {
             <button class="btn-icon btn-options-top" id="btn-options" title="Options" aria-label="Options">⚙️</button>
           </div>
           <div class="header-actions">
-            ${viewSel}
+            ${somBtn}
             <button class="btn-rack" id="btn-add-rack" title="Ajouter un casier">➕ Casier</button>
             <button class="btn-primary" id="btn-add-bottle">+ Vin</button>
             <button class="btn-icon btn-journal-top" id="btn-journal" title="Journal de dégustation">📓</button>
@@ -4401,10 +4454,18 @@ class MillesimeCard extends HTMLElement {
             <span class="mm-opt-emoji">♻️</span>
             <span class="mm-opt-txt"><b>Compléter les fiches</b><small>Fusionne les doublons puis remplit les champs vides via l'IA</small></span>
           </button>
-          <button class="mm-opt-item" id="btn-sommelier">
-            <span class="mm-opt-emoji">🧠</span>
-            <span class="mm-opt-txt"><b>Sommelier IA</b><small>Conseils d'achat et analyse d'opportunité en magasin</small></span>
-          </button>
+          <div class="mm-opt-item mm-opt-static">
+            <div class="mm-opt-row">
+              <span class="mm-opt-emoji">👁️</span>
+              <span class="mm-opt-txt"><b>Mode d'affichage</b><small>Rendu de la cave sur la carte (mémorisé sur cet appareil)</small></span>
+            </div>
+            <div class="seg3" id="seg-viewmode" role="group" aria-label="Mode d'affichage">
+              ${[["2d", "▦", "Bouteilles"], ["dot", "⠿", "Pastilles"], ["3d", "🧊", "3D"]]
+                .map(([v, icon, lbl]) =>
+                  `<button type="button" class="seg3-btn ${this._view === v ? "active" : ""}" data-mode="${v}" title="${lbl}">${icon}<span class="seg3-lbl">${lbl}</span></button>`)
+                .join("")}
+            </div>
+          </div>
           <button class="mm-opt-item" id="btn-cellars">
             <span class="mm-opt-emoji">🏰</span>
             <span class="mm-opt-txt"><b>Gérer les caves</b><small>Ajouter, renommer ou supprimer des caves</small></span>
@@ -4450,8 +4511,16 @@ class MillesimeCard extends HTMLElement {
   }
 
   _bindOptionsModal(box) {
-    // Repères 3D (sélecteur segmenté)
-    box.querySelector("#btn-sommelier")?.addEventListener("click", () => this._openModal("sommelier"));
+    // Mode d'affichage (v7.0.1 : déplacé depuis le header)
+    box.querySelectorAll("#seg-viewmode .seg3-btn").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        this._viewTouched = true;
+        this._view = btn.dataset.mode;
+        try { localStorage.setItem("millesime-view", this._view); } catch (err) {}
+        box.querySelectorAll("#seg-viewmode .seg3-btn").forEach(b => b.classList.toggle("active", b === btn));
+        this._render();   // la carte derrière la fenêtre bascule immédiatement
+      })
+    );
     box.querySelectorAll("#seg-aromamode .seg3-btn").forEach((btn) =>
       btn.addEventListener("click", () => {
         this._aromaMode = btn.dataset.mode;
@@ -4466,7 +4535,9 @@ class MillesimeCard extends HTMLElement {
         box.querySelectorAll("#seg-autoai .seg3-btn").forEach(b => b.classList.toggle("active", b === btn));
       })
     );
-    // Compteur de tokens du jour (remis à zéro à minuit côté backend)
+    // Compteur de tokens du jour (remis à zéro à minuit côté backend).
+    // v7.0.1 : barre de progression contre le budget quotidien estimé du
+    // free tier Gemini (GEMINI_FREE_TIER_DAILY_BUDGET), % affiché SUR la barre.
     (async () => {
       const el = box.querySelector("#opt-tokens");
       if (!el) return;
@@ -4474,9 +4545,18 @@ class MillesimeCard extends HTMLElement {
         const r = await this._hass.connection.sendMessagePromise({ type: "millesime/ai_usage" });
         const u = r?.usage || {};
         const total = (u.prompt || 0) + (u.output || 0);
-        el.textContent = total
-          ? `Consommation IA du jour : ${total.toLocaleString("fr-FR")} tokens (${(u.prompt || 0).toLocaleString("fr-FR")} envoyés, ${(u.output || 0).toLocaleString("fr-FR")} reçus, ${u.calls || 0} appels)`
-          : "Consommation IA du jour : aucune requête pour l'instant";
+        const pct = Math.min(100, Math.round((total / GEMINI_FREE_TIER_DAILY_BUDGET) * 100));
+        const warn = pct >= 80;
+        el.innerHTML = `
+          <div class="mm-tokbar-label">Consommation IA du jour :
+            <b>${total.toLocaleString("fr-FR")}</b> / ~${GEMINI_FREE_TIER_DAILY_BUDGET.toLocaleString("fr-FR")} tokens
+            ${total ? `(${(u.prompt || 0).toLocaleString("fr-FR")} envoyés · ${(u.output || 0).toLocaleString("fr-FR")} reçus · ${u.calls || 0} appels)` : "(aucune requête pour l'instant)"}
+          </div>
+          <div class="mm-tokbar-track">
+            <div class="mm-tokbar-fill ${warn ? "mm-tokbar-fill--warn" : ""}" style="width:${Math.max(pct, 2)}%"></div>
+            <span class="mm-tokbar-pct">${pct} %</span>
+          </div>
+          <div class="mm-tokbar-hint">Budget estimé du free tier Gemini (≈ 250 requêtes/j) — remis à zéro chaque nuit, quotas Google susceptibles de changer.</div>`;
       } catch (e) { el.textContent = "Consommation IA du jour : indisponible"; }
     })();
     box.querySelectorAll("#seg-labelmode .seg3-btn").forEach((btn) =>
@@ -4527,27 +4607,44 @@ class MillesimeCard extends HTMLElement {
   // JPEG qualité 0.7 → ~40-80 Ko, pour ne pas alourdir le stockage HA.
   // ── Repli caméra via getUserMedia (Android, issue #7) ────────────────────────
   // Sur certains appareils Android, la WebView ouvre la galerie même avec un
-  // input statique portant l'attribut capture. Quand getUserMedia est disponible
-  // (contexte sécurisé requis : HTTPS, app compagnon ou localhost), la carte
-  // ouvre elle-même la caméra dans un modal et capture la photo. Dans tous les
-  // autres cas (HTTP local, permission refusée…), repli sur l'input statique.
+  // input statique portant l'attribut capture. v7.0.1 : getUserMedia est tenté
+  // sur TOUS les appareils qui l'exposent (plus seulement Android) — c'est le
+  // seul chemin qui garantit l'appareil photo. L'API n'existe qu'en contexte
+  // sécurisé (HTTPS / app compagnon en URL externe / localhost) : en HTTP
+  // local, on prévient explicitement l'utilisateur avant le repli galerie.
   _cameraSupported() {
-    return /Android/i.test(navigator.userAgent || "")
-      && !!navigator.mediaDevices?.getUserMedia
-      && window.isSecureContext;
+    return !!navigator.mediaDevices?.getUserMedia;
+  }
+
+  // Explique POURQUOI la galerie risque de s'ouvrir à la place de l'appareil
+  // photo (appelé juste avant le repli sur l'input statique)
+  _cameraFallbackNotice(reason) {
+    if (reason === "insecure") {
+      this._showToast("info",
+        "Caméra directe indisponible en HTTP : si la galerie s'ouvre, accédez à Home Assistant en https (URL externe / Nabu Casa) puis réessayez.");
+    } else if (reason === "denied") {
+      this._showToast("error",
+        "Accès caméra refusé — vérifiez les permissions de l'app Home Assistant (Réglages Android → Applications → Home Assistant → Autorisations → Appareil photo).");
+    }
   }
 
   // Résout avec : File (photo capturée) | "cancel" (fermé par l'utilisateur)
   // | null (échec technique → l'appelant retombe sur l'input statique).
   async _captureViaCamera() {
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      this._cameraFallbackNotice("insecure");
+      return null;
+    }
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" } },
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
         audio: false,
       });
     } catch (err) {
       console.warn("[Millésime] getUserMedia indisponible :", err);
+      this._cameraFallbackNotice(
+        (err && (err.name === "NotAllowedError" || err.name === "SecurityError")) ? "denied" : "insecure");
       return null;
     }
     return new Promise((resolve) => {
@@ -4664,7 +4761,7 @@ class MillesimeCard extends HTMLElement {
       </div>`;
   }
 
-  // Page "À ouvrir" : sous-menu 3 onglets dans un modal (comme la liste des bouteilles)
+  // Page "À ouvrir" : 4 onglets depuis v7.0.1 (Accords, Envie de…, Apogée, Occasions)
   _openPageHTML() {
     const tab = this._filterTab || "occasions";
     const occBtns = EVENT_TYPES.filter(e => e.v).map(e =>
@@ -4677,12 +4774,16 @@ class MillesimeCard extends HTMLElement {
       </div>
       <div class="mm-body">
         <div class="sub-tabs">
-          <button class="sub-tab ${tab === "accords" ? "active" : ""}" data-tab="accords">🍽️ Accords mets/vin</button>
+          <button class="sub-tab ${tab === "accords" ? "active" : ""}" data-tab="accords">🍽️ Accords</button>
+          <button class="sub-tab ${tab === "envie" ? "active" : ""}" data-tab="envie">💜 Envie de…</button>
           <button class="sub-tab ${tab === "apogee" ? "active" : ""}" data-tab="apogee">🕐 Apogée</button>
           <button class="sub-tab ${tab === "occasions" ? "active" : ""}" data-tab="occasions">🥂 Occasions</button>
         </div>
         <div class="sub-panel ${tab === "accords" ? "active" : ""}" data-panel="accords">
           ${this._accordsHTML()}
+        </div>
+        <div class="sub-panel ${tab === "envie" ? "active" : ""}" data-panel="envie">
+          ${this._envieHTML()}
         </div>
         <div class="sub-panel ${tab === "apogee" ? "active" : ""}" data-panel="apogee">
           ${this._apogeeHTML()}
@@ -4723,18 +4824,39 @@ class MillesimeCard extends HTMLElement {
     return (parseInt(a.drink_from) || 0) - (parseInt(b.drink_from) || 0);
   }
 
+  // ── Filtres du Profil de garde (v7.0.1) : couleur de vin + région ──────────
+  // this._apoColor ("" = toutes) et this._apoRegion ("" = toutes) s'appliquent
+  // au graphique, aux compteurs d'état, au top priorités et aux listes.
+  _apoFilteredWines() {
+    let wines = this._data?.wines || [];
+    if (this._apoColor)  wines = wines.filter(w => (w.type || "red") === this._apoColor);
+    if (this._apoRegion) wines = wines.filter(w => (w.region || "").trim() === this._apoRegion);
+    return wines;
+  }
+
+  _apoRegionsList() {
+    const set = new Set();
+    for (const w of (this._data?.wines || [])) {
+      const r = (w.region || "").trim();
+      if (r) set.add(r);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }
+
   // ── Graphique « Profil de garde » : un segment horizontal par vin ──────────
   // SVG natif (comme l'historique de valeur) : axe X = années, chaque vin est
   // un segment [drink_from → drink_until] dans la couleur de son type, nom
   // tronqué à gauche, ligne verticale dorée « aujourd'hui ». Tap sur une ligne
   // → fiche du vin. Les vins sans fenêtre n'apparaissent pas.
   _apogeeChartSVG() {
-    const wines = (this._data?.wines || [])
+    const wines = this._apoFilteredWines()
       .filter(w => (parseInt(w.drink_from) || 0) && (parseInt(w.drink_until) || 0))
       .sort((a, b) => (parseInt(a.drink_from) - parseInt(b.drink_from))
                    || (parseInt(a.drink_until) - parseInt(b.drink_until)));
     if (!wines.length)
-      return `<div class="apo-chart-empty">Aucune fenêtre d'apogée renseignée — lancez « Compléter les fiches » (⚙️ Options) pour les obtenir.</div>`;
+      return `<div class="apo-chart-empty">${(this._apoColor || this._apoRegion)
+        ? "Aucun vin ne correspond aux filtres choisis."
+        : "Aucune fenêtre d'apogée renseignée — lancez « Compléter les fiches » (⚙️ Options) pour les obtenir."}</div>`;
     const now = new Date().getFullYear();
     let minY = Math.min(now, ...wines.map(w => parseInt(w.drink_from)));
     let maxY = Math.max(now, ...wines.map(w => parseInt(w.drink_until)));
@@ -4827,9 +4949,24 @@ class MillesimeCard extends HTMLElement {
   }
 
   _apogeeHTML() {
-    const wines = this._data?.wines || [];
+    const wines = this._apoFilteredWines();
     const groups = { now: [], soon: [], keep: [], past: [], none: [] };
     for (const w of wines) groups[this._apogeeState(w)].push(w);
+    // v7.0.1 : filtres d'affinage — couleur de vin et région (appliqués au
+    // graphique, aux états et au top priorités)
+    const colorOpts = [`<option value="">🍷 Toutes couleurs</option>`]
+      .concat(Object.entries(WINE_TYPES).map(([v, t]) =>
+        `<option value="${v}" ${this._apoColor === v ? "selected" : ""}>${t.emoji} ${t.label}</option>`))
+      .join("");
+    const regionOpts = [`<option value="">📍 Toutes régions</option>`]
+      .concat(this._apoRegionsList().map(r =>
+        `<option value="${esc(r)}" ${this._apoRegion === r ? "selected" : ""}>${esc(r)}</option>`))
+      .join("");
+    const filters = `
+      <div class="apo-filters">
+        <select class="mm-input apo-fsel" id="apo-f-color">${colorOpts}</select>
+        <select class="mm-input apo-fsel" id="apo-f-region">${regionOpts}</select>
+      </div>`;
     const states = [
       { k: "now",  emoji: "🟢", label: "À boire maintenant" },
       { k: "soon", emoji: "🟠", label: "Bientôt / à surveiller" },
@@ -4845,19 +4982,29 @@ class MillesimeCard extends HTMLElement {
       </button>`;
     }).join("");
     const noneCount = groups.none.reduce((a, w) => a + (w.slots || []).length, 0);
-    // Top 10 des priorités : vins « à boire », fin de fenêtre la plus proche d'abord
-    const top = groups.now.slice().sort((a, b) => this._apogeeUrgencySort(a, b)).slice(0, 10);
+    // Top 10 des priorités (v7.0.1) : les apogées DÉPASSÉES remontent en tête
+    // avec leur année réelle (« avant 2020 » et non un « avant 2026 » générique),
+    // suivies des vins « à boire », fin de fenêtre la plus proche d'abord.
+    const now = new Date().getFullYear();
+    const top = groups.past.concat(groups.now)
+      .filter(w => parseInt(w.drink_until))
+      .sort((a, b) => this._apogeeUrgencySort(a, b)).slice(0, 10);
     const topHTML = top.length ? `
       <div class="apo-top">
         <div class="apo-top-title">🥇 À ouvrir en priorité</div>
-        ${top.map((w, i) => `
+        ${top.map((w, i) => {
+          const until = parseInt(w.drink_until) || 0;
+          const isPast = until && until < now;
+          return `
           <button class="apo-top-row" data-wine="${esc(w.id)}">
             <span class="apo-top-rank">${i + 1}</span>
             <span class="apo-top-name">${esc(w.name || "Sans nom")}${w.vintage ? ` <i>${esc(w.vintage)}</i>` : ""}</span>
-            <span class="apo-top-until">avant ${esc(w.drink_until || "?")}</span>
-          </button>`).join("")}
+            <span class="apo-top-until ${isPast ? "apo-top-until--past" : ""}">avant ${esc(w.drink_until || "?")}${isPast ? " ⚠️" : ""}</span>
+          </button>`;
+        }).join("")}
       </div>` : "";
     return `
+      ${filters}
       <details class="apo-chart" id="apo-chart" ${(this._apoChartOpen ??= (() => { try { return localStorage.getItem("millesime-apo-chart") === "1"; } catch (e) { return false; } })()) ? "open" : ""}>
         <summary class="apo-chart-summary">📈 Profil de garde de la cave</summary>
         <div class="apo-chart-body">${this._apogeeChartSVG()}
@@ -4893,7 +5040,7 @@ class MillesimeCard extends HTMLElement {
     const famOpts = fams.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join("");
     const mode = this._accMode || "dish";
     return `
-      <div class="seg3 acc-mode" id="acc-mode">
+      <div class="seg3 seg3--sub acc-mode" id="acc-mode">
         <button type="button" class="seg3-btn ${mode === "dish" ? "active" : ""}" data-mode="dish">🍽️<span class="seg3-lbl">Un plat</span></button>
         <button type="button" class="seg3-btn ${mode === "menu" ? "active" : ""}" data-mode="menu">🍷<span class="seg3-lbl">Menu complet</span></button>
       </div>
@@ -5020,7 +5167,23 @@ class MillesimeCard extends HTMLElement {
 
   _bindApogee(box) {
     const list = box.querySelector("#apo-list");
-    const wines = this._data?.wines || [];
+    const wines = this._apoFilteredWines();
+    // v7.0.1 : filtres couleur / région → on reconstruit le panneau entier
+    // (graphique, compteurs, top priorités) avec le filtre appliqué
+    const rebind = () => {
+      const panel = box.querySelector('[data-panel="apogee"]');
+      if (!panel) return;
+      panel.innerHTML = this._apogeeHTML();
+      this._bindApogee(box);
+    };
+    box.querySelector("#apo-f-color")?.addEventListener("change", (e) => {
+      this._apoColor = e.target.value || "";
+      rebind();
+    });
+    box.querySelector("#apo-f-region")?.addEventListener("change", (e) => {
+      this._apoRegion = e.target.value || "";
+      rebind();
+    });
     // Dépliant du profil de garde : état mémorisé pour survivre aux re-rendus
     const chart = box.querySelector("#apo-chart");
     chart?.addEventListener("toggle", () => {
@@ -5059,6 +5222,150 @@ class MillesimeCard extends HTMLElement {
         );
       })
     );
+  }
+
+  // ── « Envie de… » (v7.0.1) ──────────────────────────────────────────────────
+  // Parfois on veut simplement boire un bon vin, sans occasion ni plat : on
+  // choisit le profil aromatique du moment (+ couleur éventuelle) et le
+  // sommelier IA propose UNE bouteille de la cave — bon profil, bonne apogée —
+  // avec son PRIX affiché pour aider à trancher. Repli local (scoring sur
+  // aroma_profile) si l'IA est indisponible.
+  _envieHTML() {
+    const fams = this.constructor.AROMA_FAMILIES;
+    const chips = fams.map(f =>
+      `<button type="button" class="occ-btn envie-chip ${(this._envieWants || []).includes(f) ? "active" : ""}" data-fam="${esc(f)}">${esc(f)}</button>`
+    ).join("");
+    const colorOpts = [`<option value="">🍷 Peu importe la couleur</option>`]
+      .concat(Object.entries(WINE_TYPES).map(([v, t]) =>
+        `<option value="${v}" ${this._envieColor === v ? "selected" : ""}>${t.emoji} ${t.label}</option>`))
+      .join("");
+    return `
+      <div class="occ-hint">Envie d'un bon vin, tout simplement ? Choisissez le profil aromatique du moment :
+        le sommelier propose <b>une seule bouteille</b> de votre cave, au bon profil et à la bonne apogée — avec son prix.</div>
+      <div class="envie-chips" id="envie-chips">${chips}</div>
+      <select class="mm-input envie-color" id="envie-color">${colorOpts}</select>
+      <button class="acc-go envie-go" id="envie-go">💜 Envie de… trouver mon vin</button>
+      <div class="acc-list" id="envie-result"></div>`;
+  }
+
+  // Repli local : score = somme des intensités des familles choisies dans le
+  // profil aromatique du vin, bonus si « à boire maintenant », malus si trop
+  // jeune ou dépassé — puis meilleur score.
+  _envieLocalPick(wants, color) {
+    const wines = (this._data?.wines || [])
+      .filter(w => (w.slots || []).length)
+      .filter(w => !color || (w.type || "red") === color);
+    let best = null, bestScore = -1;
+    for (const w of wines) {
+      const prof = this._parseAromaProfile(w.aroma_profile);
+      if (!prof) continue;
+      let s = wants.reduce((a, f) => a + (prof[f] || 0), 0);
+      const st = this._apogeeState(w);
+      if (st === "now") s += 60;
+      else if (st === "soon") s += 15;
+      else if (st === "past") s -= 40;
+      else if (st === "keep") s -= 60;
+      if (s > bestScore) { bestScore = s; best = w; }
+    }
+    return best;
+  }
+
+  _envieResultHTML(w, extra = {}) {
+    const t = WINE_TYPES[w.type] || WINE_TYPES.red;
+    const apo = (w.drink_from || w.drink_until)
+      ? `${esc(w.drink_from || "?")} – ${esc(w.drink_until || "?")}` : "apogée non renseignée";
+    return `
+      <div class="envie-card">
+        <div class="envie-card-head">
+          <span class="rk-dot" style="background:${t.color}"></span>
+          <b>${esc(w.name || "Sans nom")}</b>${w.vintage ? ` <i>${esc(w.vintage)}</i>` : ""}
+          <span class="envie-price">${w.price ? Math.round(w.price) + " €" : "prix non renseigné"}</span>
+        </div>
+        <div class="envie-card-meta">${[w.appellation, w.region].filter(Boolean).map(esc).join(" · ")} · 🕐 ${apo}</div>
+        ${extra.match  ? `<div class="envie-card-line">🌸 ${esc(extra.match)}</div>`  : ""}
+        ${extra.apogee ? `<div class="envie-card-line">🕐 ${esc(extra.apogee)}</div>` : ""}
+        ${extra.serve  ? `<div class="envie-card-line">🍾 ${esc(extra.serve)}</div>`  : ""}
+        <button class="mm-btn mm-btn-ghost envie-locate" data-wine="${esc(w.id)}">📍 Voir dans la cave</button>
+      </div>`;
+  }
+
+  _bindEnvie(box) {
+    const result = box.querySelector("#envie-result");
+    // Sélection multiple des familles aromatiques (chips)
+    box.querySelectorAll(".envie-chip").forEach((chip) =>
+      chip.addEventListener("click", () => {
+        const f = chip.dataset.fam;
+        this._envieWants = this._envieWants || [];
+        if (this._envieWants.includes(f)) this._envieWants = this._envieWants.filter(x => x !== f);
+        else this._envieWants.push(f);
+        chip.classList.toggle("active", this._envieWants.includes(f));
+      })
+    );
+    box.querySelector("#envie-color")?.addEventListener("change", (e) => {
+      this._envieColor = e.target.value || "";
+    });
+    const showResult = (w, extra = {}) => {
+      if (!result) return;
+      result.innerHTML = this._envieResultHTML(w, extra);
+      result.querySelector(".envie-locate")?.addEventListener("click", () => {
+        const wine = (this._data?.wines || []).find(x => x.id === w.id);
+        if (wine) this._locateBottle(wine);
+      });
+    };
+    box.querySelector("#envie-go")?.addEventListener("click", async () => {
+      const wants = this._envieWants || [];
+      if (!wants.length) {
+        if (result) result.innerHTML = `<div class="acc-empty">Choisissez au moins une famille aromatique ci-dessus.</div>`;
+        return;
+      }
+      const wines = this._data?.wines || [];
+      if (!wines.length) {
+        if (result) result.innerHTML = `<div class="acc-empty">Cette cave est vide : ajoutez des bouteilles d'abord.</div>`;
+        return;
+      }
+      const est = this._estimateTokens(JSON.stringify(
+        wines.map(w => (w.name || "") + (w.aroma_profile || "")))) + 250;
+      const prog = this._aiProgressOpen("Sommelier — envie du moment", est);
+      if (result) result.innerHTML = "";
+      try {
+        prog.step(1);
+        const req = this._hass.connection.sendMessagePromise({
+          type: "millesime/craving",
+          wants, color: this._envieColor || null, cellar_id: this._cellarId || null,
+        });
+        prog.step(2);
+        const res = await req;
+        if (res?.error) {
+          // IA indisponible → repli local silencieux sur les profils aromatiques
+          const local = this._envieLocalPick(wants, this._envieColor || "");
+          if (local) {
+            prog.close();
+            showResult(local, { match: "Sélection locale (IA indisponible) : meilleur profil aromatique correspondant dans votre cave." });
+          } else {
+            prog.fail(res.error === "no_key"
+              ? "Clé Gemini absente : configurez-la dans l'intégration"
+              : `IA indisponible (${res.error})`);
+            if (result) result.innerHTML = `<div class="acc-empty">Aucun profil aromatique renseigné — lancez « Compléter les fiches » (⚙️ Options).</div>`;
+          }
+          return;
+        }
+        prog.step(3);
+        const r = res.result || {};
+        const w = wines.find(x => x.id === r.id);
+        if (!w) {
+          prog.fail("Aucune bouteille de la cave ne correspond");
+          if (result) result.innerHTML = `<div class="acc-empty">Le sommelier n'a rien trouvé d'adapté à cette envie.</div>`;
+          return;
+        }
+        prog.done(res.usage);
+        showResult(w, { match: r.match, apogee: r.apogee, serve: r.serve });
+      } catch (e) {
+        // Erreur réseau → même repli local
+        const local = this._envieLocalPick(wants, this._envieColor || "");
+        if (local) { prog.close(); showResult(local, { match: "Sélection locale (hors ligne) : meilleur profil correspondant." }); }
+        else prog.fail("Erreur réseau : réessayez");
+      }
+    });
   }
 
   _bindAccords(box) {
@@ -5218,6 +5525,7 @@ class MillesimeCard extends HTMLElement {
     );
     this._bindApogee(box);
     this._bindAccords(box);
+    this._bindEnvie(box);
     // Occasion : sélection unique → ferme la page + surbrillance dans la cave
     box.querySelectorAll(".occ-btn").forEach((b) =>
       b.addEventListener("click", () => {
@@ -5934,8 +6242,10 @@ class MillesimeCard extends HTMLElement {
       tex.anisotropy = 8;
       return tex;
     };
-    const emptyMat = new THREE.MeshBasicMaterial({ color: 0x141414, transparent: true, opacity: 0.85, side: THREE.DoubleSide });
-    const ringMat  = new THREE.LineBasicMaterial({ color: 0x3a3a3a, transparent: true, opacity: 0.9 });
+    // v7.0.1 : silhouettes des emplacements vides nettement plus discrètes —
+    // les « ombres » sombres gênaient la lecture, surtout en superposition
+    const emptyMat = new THREE.MeshBasicMaterial({ color: 0x202020, transparent: true, opacity: 0.32, side: THREE.DoubleSide });
+    const ringMat  = new THREE.LineBasicMaterial({ color: 0x3a3a3a, transparent: true, opacity: 0.42 });
     const goldMat  = new THREE.MeshBasicMaterial({ color: 0xC9A84C });
 
     // ── Construction des casiers, étagère par étagère (fidèle à la grille 2D) ──
@@ -5956,7 +6266,11 @@ class MillesimeCard extends HTMLElement {
       // La grille de slots reste linéaire : chaque « rangée virtuelle » est une
       // couche ; `levels` rangées consécutives partagent la même planche.
       const levels = layout === "stacked" ? Math.max(1, Math.min(4, rack.levels || 1)) : 1;
-      const LAYER_DY = 0.95;                                   // hauteur d'une couche (≈ diamètre)
+      // v7.0.1 : empilement en PYRAMIDE — les couches supérieures reposent dans
+      // les creux de la couche du dessous (décalage d'un demi-entraxe, géré plus
+      // bas) ; la hauteur de couche correspond à l'emboîtement réel :
+      // dy = √((2r)² − (S/2)²) ≈ 0.68 pour r ≈ 0.43 et S = 1.06.
+      const LAYER_DY = 0.70;                                   // hauteur d'une couche emboîtée
       const shelfStep = SHELF_DY + (levels - 1) * LAYER_DY;    // pas entre clayettes
       const total = rack.slots || cols * (rack.shelves || 2) * levels;
       const shelves  = Math.ceil(total / cols);                // rangées virtuelles
@@ -5980,6 +6294,9 @@ class MillesimeCard extends HTMLElement {
         const psh = Math.floor(r / levels), lv = r % levels;
         const shelfY = yTop - psh * shelfStep - lv * LAYER_DY;
         const isBase = lv === levels - 1;   // couche posée sur la planche
+        // v7.0.1 : pyramide — une couche sur deux (en partant de la base) est
+        // décalée d'un demi-entraxe : les bouteilles reposent dans les creux
+        const stackOff = (layout === "stacked" && ((levels - 1 - lv) % 2) === 1) ? SPACING / 2 : 0;
 
         // Étagère : planche en bois (dessus affleurant le repos des bouteilles),
         // ou tôle fine sombre pour les caves en fer forgé — une seule planche
@@ -6023,7 +6340,7 @@ class MillesimeCard extends HTMLElement {
           const i = r * cols + c;
           if (i >= total) break;
           const entry = slotOf[`${rack.id}:${i}`];
-          const x    = -halfW + SPACING / 2 + c * SPACING;
+          const x    = -halfW + SPACING / 2 + c * SPACING + stackOff;
           // Pas de décalage avant/arrière : bouteilles parallèles, entièrement sur la
           // clayette (3.72 de long pour 4.0 de profondeur — un décalage ferait déborder)
           const stag = 0;
@@ -6315,6 +6632,10 @@ class MillesimeCard extends HTMLElement {
         const p = new THREE.Vector3(x, y, z).project(cam);
         return { x: (p.x * 0.5 + 0.5) * w, y: (-p.y * 0.5 + 0.5) * h };
       };
+      // v7.0.1 : TOUS les rails alignés sur le bord droit du casier le plus
+      // large — avant, chaque rail suivait la largeur de SON casier, d'où des
+      // menus en zigzag quand les casiers avaient des colonnes différentes.
+      const maxHalfW = Math.max(0, ...rackAnchors.map(a => a.halfW));
       rackAnchors.forEach(({ rack, fi, yTop, yBot, halfW, occ, total }) => {
         const pct = Math.round((occ / total) * 100);
 
@@ -6331,9 +6652,9 @@ class MillesimeCard extends HTMLElement {
           stage.appendChild(badge);
         }
 
-        // Rail vertical au bord droit du casier (suit le centrage sur carte large
-        // au lieu de rester collé au bord du stage)
-        const pr = toPx(halfW, yTop + 0.7, 0);
+        // Rail vertical : position horizontale COMMUNE (bord droit du plus
+        // large), position verticale propre à chaque casier
+        const pr = toPx(maxHalfW, yTop + 0.7, 0);
         const rail = document.createElement("div");
         rail.className = "t3-rail";
         rail.style.top = Math.max(4, pr.y - 50) + "px";
@@ -6709,12 +7030,8 @@ class MillesimeCard extends HTMLElement {
       if (ent) this._openModal("envhistory", { entity: ent, kind: "humidity" });
     });
 
-    s.getElementById("sel-view")?.addEventListener("change", (e) => {
-      this._viewTouched = true;
-      this._view = e.target.value;
-      try { localStorage.setItem("millesime-view", this._view); } catch (err) {}
-      this._render();
-    });
+    // v7.0.1 : le sélecteur de vue vit dans ⚙️ Options ; le header ouvre le Sommelier IA
+    s.getElementById("btn-sommelier-top")?.addEventListener("click", () => this._openModal("sommelier"));
     s.getElementById("btn-options")?.addEventListener("click", () => this._openModal("options"));
     s.getElementById("btn-bottlelist")?.addEventListener("click", () => this._openModal("bottlelist"));
     s.getElementById("btn-racklist")?.addEventListener("click", () => this._openModal("racklist"));
@@ -7056,6 +7373,8 @@ const CARD_CSS = `<style>
   transition:filter 0.15s;
 }
 .btn-rack:hover { filter:brightness(1.1); }
+/* v7.0.1 : bouton Sommelier IA (remplace le sélecteur de vue) — violet distinct */
+.btn-sommelier { background:#7D5BA6; }
 /* Boutons de la rangée actions (vue + casier + vin) */
 .header-actions .btn-icon, .header-actions .view-select, .header-actions .btn-primary {
   height:38px; box-sizing:border-box; width:100%; min-width:0;
@@ -7520,13 +7839,57 @@ const MODAL_CSS = `
 .mm-opt-row { display:flex; align-items:center; gap:13px; min-width:0; }
 .mm-opt-tokens { font-size:0.72em; color:var(--mm-muted); text-align:center; padding:2px 4px 0; font-variant-numeric:tabular-nums; }
 /* Profil aromatique (fiche du vin) */
+/* v7.0.1 : seg3 GÉNÉRIQUE dans toute fenêtre — les sélecteurs « Un plat /
+   Menu complet » et « Conseil d'achat / Opportunité » n'avaient aucun style
+   propre dans les modales (le CSS de la carte ne s'y applique pas) et
+   n'étaient donc pas au format des autres boutons. */
+.mm-body .seg3 { display:flex; width:100%; border:1px solid var(--mm-border); border-radius:10px; overflow:hidden; background:var(--mm-bg2); box-sizing:border-box; }
+.mm-body .seg3-btn {
+  flex:1; min-width:0; display:flex; align-items:center; justify-content:center; gap:6px;
+  padding:11px 4px; border:none; border-right:1px solid var(--mm-border);
+  background:transparent; color:var(--mm-muted); font-size:0.84em; cursor:pointer; transition:all 0.13s;
+}
+.mm-body .seg3-btn:last-child { border-right:none; }
+.mm-body .seg3-btn:hover { color:var(--mm-text); }
+.mm-body .seg3-btn.active { background:var(--mm-accent); color:#fff; font-weight:600; }
+.mm-body .seg3-lbl { font-size:0.92em; }
+/* Sous-menus (choix de mode DANS une page) : teinte violette distinctive */
+.mm-body .seg3--sub { border-color:#5a4a7a; background:rgba(125,91,166,0.10); }
+.mm-body .seg3--sub .seg3-btn { border-right-color:#5a4a7a; }
+.mm-body .seg3--sub .seg3-btn.active { background:#7D5BA6; }
+/* Filtres du Profil de garde (v7.0.1) */
+.apo-filters { display:flex; gap:8px; margin-bottom:12px; }
+.apo-fsel { flex:1; min-width:0; }
+.apo-top-until--past { color:#e05a5a; font-weight:700; }
+/* Envie de… (v7.0.1) */
+.envie-chips { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+.envie-chip.active { background:#7D5BA6; border-color:#7D5BA6; color:#fff; }
+.envie-color { margin-bottom:12px; }
+.envie-go { width:100%; background:#7D5BA6; }
+.envie-go:hover { filter:brightness(1.1); }
+.envie-card { border:1px solid #5a4a7a; border-radius:12px; background:rgba(125,91,166,0.08); padding:12px 14px; margin-top:12px; }
+.envie-card-head { display:flex; align-items:center; gap:7px; flex-wrap:wrap; font-size:1.02em; }
+.envie-price { margin-left:auto; font-weight:800; color:#d8b25c; font-size:1.08em; white-space:nowrap; }
+.envie-card-meta { font-size:0.78em; color:var(--mm-muted); margin:5px 0 8px; }
+.envie-card-line { font-size:0.86em; color:var(--mm-text); margin:4px 0; line-height:1.4; }
+.envie-card .envie-locate { margin-top:8px; }
+/* Barre de consommation IA quotidienne (v7.0.1) */
+.mm-tokbar-label { font-size:0.78em; color:var(--mm-text); margin-bottom:5px; text-align:left; }
+.mm-tokbar-track { position:relative; height:14px; background:var(--mm-bg0); border:1px solid var(--mm-border); border-radius:7px; overflow:hidden; }
+.mm-tokbar-fill { height:100%; background:linear-gradient(90deg,#2E5C3B,#3f7a50); border-radius:7px; transition:width 0.4s ease; }
+.mm-tokbar-fill--warn { background:linear-gradient(90deg,#7B1D2E,#C0392B); }
+.mm-tokbar-pct { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:0.68em; font-weight:700; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,0.7); }
+.mm-tokbar-hint { font-size:0.64em; color:var(--mm-muted); margin-top:4px; line-height:1.35; text-align:left; }
 .aroma-box { border:1px solid var(--mm-border); border-radius:10px; background:var(--mm-bg2); margin:10px 0; overflow:hidden; }
 .aroma-summary { cursor:pointer; padding:9px 12px; font-weight:600; color:var(--mm-text); font-size:0.88em; list-style:none; user-select:none; }
 .aroma-summary::-webkit-details-marker { display:none; }
 .aroma-summary::before { content:"▸ "; color:#d8b25c; transition:transform 0.15s; display:inline-block; }
 .aroma-box[open] .aroma-summary::before { transform:rotate(90deg); }
+/* v7.0.1 : profil toujours visible — titre statique, sans chevron */
+.aroma-summary--static { cursor:default; }
+.aroma-summary--static::before { content:""; }
 .aroma-body { padding:2px 10px 10px; }
-.aroma-svg { display:block; width:100%; max-width:340px; margin:0 auto; }
+.aroma-svg { display:block; width:100%; max-width:420px; margin:0 auto; }
 .aroma-legend { font-size:0.66em; color:var(--mm-muted); text-align:center; margin-top:5px; line-height:1.35; }
 /* Accords v7 : modes + menu complet */
 .acc-mode, .som-mode { margin-bottom:12px; }
