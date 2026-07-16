@@ -1,7 +1,7 @@
 # 🍷 Millésime — Cave à vin pour Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-7.0.1-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
+[![version](https://img.shields.io/badge/version-7.0.2-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
 [![Offrir un verre de vin](https://img.shields.io/badge/🍷_Offrir_un_verre_de_vin-PayPal-7B1D2E.svg?style=flat-square)](https://paypal.me/Redsklns)
 
 **Millésime** transforme Home Assistant en gestionnaire de cave à vin complet : visualisez vos bouteilles dans une scène **3D réaliste**, scannez les étiquettes par **photo**, suivez la valeur de votre collection et tenez un **journal de dégustation**.
@@ -13,10 +13,11 @@ Intégration 100 % locale (vos données restent chez vous), pensée **mobile-fir
 ## ✨ Fonctionnalités
 
 ### Visualisation
-- **Trois vues** au choix : 🍾 Bouteilles 2D, ⠿ Pastilles, 🧊 **Scène 3D** (WebGL/Three.js)
-- **Rendu 3D réaliste** : bouteilles modelées par forme (bordelaise, bourguignonne, champenoise avec muselet et bouchon champignon, flûte d'Alsace, ligérienne), verre teinté transparent laissant voir la robe du vin, étiquette nominative sur chaque bouteille, ombres de contact douces
+- **Trois vues** au choix : 🍾 Bouteilles 2D, ⠿ Pastilles, 🧊 **Scène 3D** (WebGL/Three.js) — sélecteur dans ⚙️ Options, mémorisé par appareil
+- **Rendu 3D réaliste** : bouteilles modelées par forme (bordelaise, bourguignonne, champenoise avec muselet et bouchon champignon, flûte d'Alsace, ligérienne) — **silhouette choisie sur la fiche ou déduite de la région** (un bourgogne reste bourguignon, un alsace en flûte ; bordelaise par défaut) — verre teinté transparent laissant voir la robe du vin, étiquette nominative sur chaque bouteille, ombres de contact douces
 - **Casiers configurables** : meuble complet avec étagères internes, 5 essences de bois (chêne, noyer, merisier, grisé, wengé) ou structure en **fer forgé**, montants, pieds, croisillons et toit optionnels
-- **Dispositions** : côte à côte, tête-bêche, semi-couché, superposition (2 à 4 niveaux de bouteilles par clayette)
+- **Dispositions** : côte à côte, tête-bêche, semi-couché, superposition (2 à 4 niveaux **empilés en pyramide**, comme en vraie cave)
+- **Espacement des clayettes réglable** ↕️ (60–180 %, vue 3D) : slider dans ⚙️ Options → Mode d'affichage, appliqué en direct
 - **Glisser-déposer** (souris ET tactile) : déplacer une bouteille sur une case vide, ou la **permuter** avec une bouteille déjà en place — fonctionne même cave pleine
 - **Responsive par largeur de carte** (container queries) : la carte s'adapte à sa colonne, pas à l'écran — utilisable en pleine largeur, demi-colonne ou panneau latéral
 - **Drag & drop** en 3D pour déplacer ou permuter les bouteilles
@@ -35,15 +36,17 @@ Intégration 100 % locale (vos données restent chez vous), pensée **mobile-fir
 - **Accords mets/vin** 🍽️ : ~900 plats classés par ordre alphabétique — pièces de boucherie nommées (côte de bœuf, onglet, araignée de porc…), poissons, fromages, recettes du monde — plus recherche libre et renfort IA
 
 ### Sommelier IA
+- **Bouton 🍷 Sommelier** directement dans l'en-tête de la carte (conseil d'achat & opportunité)
 - **Accord sur le repas complet** 🍷 : entrée / plat / dessert → l'IA choisit 1 à 2 bouteilles **de votre cave** qui couvrent tout le menu, avec conseils de service — et les met en surbrillance dans la cave
+- **« Envie de… »** 🍷 : envie d'un bon vin, tout simplement ? Choisissez le **profil aromatique du moment** (+ couleur éventuelle), le sommelier propose **une seule bouteille** de la cave au bon profil et à la bonne apogée — **prix affiché** pour trancher. Repli local sans IA
 - **Conseil d'achat** 🛒 : audit de l'équilibre de la cave (styles, trous et embouteillages d'apogée) et 5 suggestions précises sous budget, avec région prioritaire facultative
 - **Analyse d'opportunité** 🏪 : en magasin, saisissez ou **scannez** la bouteille repérée — verdict doublon/manque, millésime et prix à viser (indicatifs)
-- **Profil aromatique** 🌸 : répartition sur 11 familles pour chaque vin, affichée en radar ou en barres (au choix dans ⚙️ Options)
-- **IA automatique dans les accords** ✨ : la sélection d'un plat lance directement l'affinage Gemini (désactivable), fenêtre de progression avec **consommation de tokens** (appel + cumul du jour)
+- **Profil aromatique** 🌸 : répartition sur 11 familles pour chaque vin, **toujours visible sur la fiche**, radar aux **axes adaptés à la couleur du vin** (un blanc affiche Minéral/Floral plutôt qu'Animal/Terreux) ou barres, au choix dans ⚙️ Options
+- **IA automatique dans les accords** ✨ : la sélection d'un plat lance directement l'affinage Gemini (désactivable), fenêtre de progression avec **consommation de tokens** et **% du budget quotidien** du free tier Gemini (barre dans ⚙️ Options)
 
 ### Apogée & garde
-- **Profil de garde** 📈 : graphique dépliant, un segment horizontal par vin couvrant sa fenêtre d'apogée, ligne « aujourd'hui »
-- **Top 10 à ouvrir en priorité**, trié par urgence de fin de fenêtre
+- **Profil de garde** 📈 : graphique dépliant, un segment horizontal par vin couvrant sa fenêtre d'apogée, ligne « aujourd'hui » — **filtres par couleur de vin et par région**
+- **Top 10 à ouvrir en priorité**, trié par urgence — les apogées **dépassées remontent en tête avec leur année réelle** (« avant 2020 ⚠️ »)
 - Fenêtres d'apogée **resserrées et réalistes** générées par l'IA (fini les 2025-2045)
 
 ### Mobile & affichage
@@ -123,6 +126,27 @@ L'intégralité de Millésime a été conçue et développée en collaboration a
 ## 📝 Changelog
 
 *Les 30 derniers jours — l'historique complet est disponible dans les [releases GitHub](https://github.com/Redsklns/ha-millesime/releases).*
+
+### [7.0.2] — 2026-07
+Affinage visuel : bordelaises fidèles, rouge Millésime partout, espacement réglable.
+
+- **Rendu des bouteilles refondu (toutes les vues)** : bordelaise **par défaut** pour rouges et blancs (fût droit ~60 %, épaule haute et courte, profil calé sur une 75 cl réelle) ; **silhouette déduite de la région** quand la fiche ne précise rien (bourgogne/rhône → bourguignonne, alsace → flûte, sauternes → bordelaise) ; bouteilles affinées (rayon 0,43 → 0,41) pour des proportions réalistes. Corrige au passage un bug silencieux : le choix manuel de forme n'était **jamais appliqué en vue 3D**
+- **Rouge Millésime partout** : bouton Sommelier (fond `#7B1D2E`, icône verre SVG blanche), sous-menus, chips et boutons « Envie de… » — fin du violet. Boutons pleine largeur harmonisés (42 px, rayon 10) : « Envie de… trouver mon vin », « Choisir dans ma cave », audits Sommelier
+- **Options réorganisées** : actions cliquables en haut, réglages à choix en bas ; **nouveau slider « Espacement des clayettes »** (60–180 %) intégré à Mode d'affichage, visible en vue 3D uniquement, appliqué en direct et mémorisé par appareil
+- **Vue 3D** : rails ⚙/📦/✕ **ancrés au bord droit de la carte** (compensation du centrage desktop), zone réservée réduite de 48 → 40 px au profit de la largeur des clayettes
+
+### [7.0.1] — 2026-07
+Sommelier dans le header, « Envie de… », budget de tokens, filtres de garde.
+
+- **« Envie de… »** : nouvel onglet dans « À ouvrir » — profil aromatique souhaité (+ couleur) → l'IA propose **une bouteille** de la cave, prête à boire, avec **prix affiché** ; repli local sans clé. Nouveau websocket `craving`
+- **Sommelier IA dans le header** : le sélecteur de vue migre dans ⚙️ Options, remplacé par un bouton d'accès direct
+- **Budget de tokens** : barre de consommation quotidienne avec **% du budget estimé** du free tier Gemini (constante ajustable `GEMINI_FREE_TIER_DAILY_BUDGET`), rappelé sur la fenêtre de progression IA et la complétion des fiches
+- **Profil de garde** : filtres **couleur** et **région** ; le top priorités inclut les **apogées dépassées avec leur année réelle** (« avant 2020 ⚠️ »)
+- **Profil aromatique toujours visible** sur la fiche (plus de dépliant), radar aux **axes adaptatifs par couleur de vin**, polygone à la couleur du type
+- **Surbrillance** : ouvrir la fiche d'un vin quitte la surbrillance en cours (c'était la seule sortie manquante)
+- **Superposition en pyramide** : les couches supérieures reposent dans les creux (décalage d'un demi-entraxe), silhouettes des emplacements vides atténuées
+- **Rails 3D alignés** entre casiers de largeurs différentes ; sous-menus « Un plat / Menu complet » et « Conseil d'achat / Opportunité » au format standard
+- **Appareil photo** : `getUserMedia` tenté sur tous les appareils, messages de diagnostic explicites (HTTP non sécurisé / permission refusée) avant le repli galerie
 
 ### [7.0.0] — 2026-07
 Version majeure : sommelier IA complet + refonte mobile. Merci à **Pulpyyyy** (PR #6, portée et fusionnée) et **aldoushx** (concepts sommelier de ha-cellier-ia, réimplémentés — prompts et code réécrits, aucune consultation de site externe).
