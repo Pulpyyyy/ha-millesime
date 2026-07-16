@@ -1,4 +1,4 @@
-"""Millésime v7.0.0 — Cave à Vin pour Home Assistant.
+"""Millésime v7.0.1 — Cave à Vin pour Home Assistant.
 
 Recherche texte : gemini-3.1-flash-lite (tier gratuit)
 Lecture photo   : gemini-3-flash (tier gratuit)
@@ -36,7 +36,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN    = "millesime"
 PLATFORMS = ["sensor"]
 DATA_FILE = "millesime_data.json"
-VERSION   = "7.0.0"
+VERSION   = "7.0.1"
 
 OFF_UA       = f"Millesime-HA/{VERSION} (github.com/Redsklns/ha-millesime)"
 # Deux modèles séparés = deux pools de quota indépendants (free tier)
@@ -523,7 +523,8 @@ async def _gemini_search_text(
         return [], ERR_UNAVAILABLE
 
 
-# ── Sommelier IA v7.0.0 : helper générique + accord menu, audit, opportunité ──
+# ── Sommelier IA : helper générique + accord menu, audit, opportunité (v7.0.0),
+#    « Envie de… » (v7.0.1) ──────────────────────────────────────────────────
 # Concepts inspirés du projet ha-cellier-ia d'aldoushx (prompts réécrits) ;
 # aucune consultation de site externe : connaissance du modèle uniquement,
 # les prix sont donc INDICATIFS et présentés comme tels côté carte.
@@ -623,6 +624,35 @@ async def _gemini_pair_menu(
         f"Vins disponibles (JSON) :\n{json.dumps(_cellar_ai_summary(wines), ensure_ascii=False)}"
     )
     return await _gemini_json(hass, api_key, sys, user, temperature=0.3, max_tokens=1024)
+
+
+async def _gemini_craving(
+    hass: HomeAssistant, api_key: str, wants: list[str], color: str, wines: list[dict]
+) -> tuple[dict | None, dict, str | None]:
+    """« Envie de… » (v7.0.1) : l'utilisateur veut simplement boire un bon vin.
+    Il donne le profil aromatique recherché (+ couleur éventuelle) ; l'IA
+    choisit UNE bouteille de la cave au bon profil ET à la bonne apogée."""
+    sys = (
+        "Tu es sommelier de la maison. L'utilisateur veut simplement boire un BON vin de sa cave, "
+        "sans occasion ni plat particulier : il indique le profil aromatique recherché "
+        "(familles : Fruité, Floral, Boisé, Épicé, Minéral, Végétal, Grillé, Animal, Lacté, Terreux, Tertiaire) "
+        "et éventuellement une couleur. Choisis UNE SEULE bouteille parmi les vins fournis (id obligatoire, "
+        "n'invente rien) : le meilleur compromis entre le profil demandé (champ aromas de chaque vin) et la "
+        "fenêtre d'apogée — privilégie ABSOLUMENT un vin à boire maintenant, surtout proche de la fin de sa "
+        "fenêtre ; jamais un vin trop jeune si une alternative prête existe. "
+        "Réponds STRICTEMENT en JSON : "
+        '{"id":"...","match":"en quoi le profil correspond à l\'envie, 1 phrase",'
+        '"apogee":"pourquoi c\'est le bon moment pour l\'ouvrir, 1 phrase",'
+        '"serve":"température de service et carafage éventuel, 1 phrase"}'
+    )
+    color_lbl = {"red": "rouge", "white": "blanc", "rose": "rosé",
+                 "sparkling": "effervescent", "dessert": "liquoreux"}.get(color or "", "")
+    user = (
+        f"Profil aromatique recherché : {', '.join(wants)}\n"
+        f"Couleur souhaitée : {color_lbl or 'indifférent'}\n\n"
+        f"Vins disponibles (JSON) :\n{json.dumps(_cellar_ai_summary(wines), ensure_ascii=False)}"
+    )
+    return await _gemini_json(hass, api_key, sys, user, temperature=0.3, max_tokens=512)
 
 
 async def _gemini_audit_cellar(
@@ -1355,7 +1385,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     websocket_api.async_register_command(hass, ws_pair_food)
 
-    # ── WebSockets sommelier IA v7.0.0 (accord menu, audit, opportunité) ──────
+    # ── WebSockets sommelier IA : accord menu, audit, opportunité (v7.0.0),
+    #    envie du moment (v7.0.1) ────────────────────────────────────────────
     def _wines_of_cellar(d: dict, cellar_id: str | None) -> list[dict]:
         """Vins de la cave donnée (mêmes règles que la projection de la carte :
         slots dans les casiers de la cave, ou vins jamais placés)."""
@@ -1446,6 +1477,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         connection.send_result(msg["id"],
             {"error": err} if err else {"result": result, "usage": usage})
 
+    @websocket_api.websocket_command({
+        vol.Required("type"): "millesime/craving",
+        vol.Required("wants"): [str],
+        vol.Optional("color"): vol.Any(str, None),
+        vol.Optional("cellar_id"): vol.Any(str, None),
+    })
+    @websocket_api.async_response
+    async def ws_craving(hass: HomeAssistant, connection, msg: dict) -> None:
+        """« Envie de… » (v7.0.1) : une bouteille au profil aromatique voulu."""
+        gkey = _gemini_key()
+        if not gkey:
+            connection.send_result(msg["id"], {"error": "no_key"})
+            return
+        wants = [w for w in (msg.get("wants") or []) if isinstance(w, str) and w.strip()]
+        if not wants:
+            connection.send_result(msg["id"], {"error": "empty_query"})
+            return
+        d = await hass.async_add_executor_job(_load, hass)
+        wines = _wines_of_cellar(d, msg.get("cellar_id"))
+        if not wines:
+            connection.send_result(msg["id"], {"error": "empty_cellar"})
+            return
+        result, usage, err = await _gemini_craving(
+            hass, gkey, wants, (msg.get("color") or "").strip(), wines)
+        connection.send_result(msg["id"],
+            {"error": err} if err else {"result": result, "usage": usage})
+
     @websocket_api.websocket_command({vol.Required("type"): "millesime/ai_usage"})
     @websocket_api.async_response
     async def ws_ai_usage(hass: HomeAssistant, connection, msg: dict) -> None:
@@ -1459,6 +1517,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     websocket_api.async_register_command(hass, ws_pair_menu)
     websocket_api.async_register_command(hass, ws_audit_cellar)
     websocket_api.async_register_command(hass, ws_opportunity)
+    websocket_api.async_register_command(hass, ws_craving)
     websocket_api.async_register_command(hass, ws_ai_usage)
 
     # ── WebSocket : estimate_price ────────────────────────────────────────────
