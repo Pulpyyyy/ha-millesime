@@ -2,12 +2,16 @@
   "domain": "millesime",
   "name": "Millésime",
   "after_dependencies": [
-    "websocket_api"
+    "recorder"
   ],
   "codeowners": [
     "@Redsklns"
   ],
   "config_flow": true,
+  "dependencies": [
+    "http",
+    "websocket_api"
+  ],
   "documentation": "https://github.com/Redsklns/ha-millesime",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/Redsklns/ha-millesime/issues",
