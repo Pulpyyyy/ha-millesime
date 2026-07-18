@@ -1,7 +1,7 @@
 # 🍷 Millésime — Cave à vin pour Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=flat-square)](https://github.com/hacs/integration)
-[![version](https://img.shields.io/badge/version-7.0.2-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
+[![version](https://img.shields.io/badge/version-7.1.0-7B1D2E.svg?style=flat-square)](https://github.com/Redsklns/ha-millesime/releases)
 [![Offrir un verre de vin](https://img.shields.io/badge/🍷_Offrir_un_verre_de_vin-PayPal-7B1D2E.svg?style=flat-square)](https://paypal.me/Redsklns)
 
 **Millésime** transforme Home Assistant en gestionnaire de cave à vin complet : visualisez vos bouteilles dans une scène **3D réaliste**, scannez les étiquettes par **photo**, suivez la valeur de votre collection et tenez un **journal de dégustation**.
@@ -14,7 +14,7 @@ Intégration 100 % locale (vos données restent chez vous), pensée **mobile-fir
 
 ### Visualisation
 - **Trois vues** au choix : 🍾 Bouteilles 2D, ⠿ Pastilles, 🧊 **Scène 3D** (WebGL/Three.js) — sélecteur dans ⚙️ Options, mémorisé par appareil
-- **Rendu 3D réaliste** : bouteilles modelées par forme (bordelaise, bourguignonne, champenoise avec muselet et bouchon champignon, flûte d'Alsace, ligérienne) — **silhouette choisie sur la fiche ou déduite de la région** (un bourgogne reste bourguignon, un alsace en flûte ; bordelaise par défaut) — verre teinté transparent laissant voir la robe du vin, étiquette nominative sur chaque bouteille, ombres de contact douces
+- **Rendu 3D réaliste** : bouteilles modelées par forme (bordelaise, bourguignonne, champenoise avec muselet et bouchon champignon, flûte d'Alsace, ligérienne) — **silhouette choisie sur la fiche ou déduite de la région**, et **dimensions réelles 75 cl par forme** (une flûte d'Alsace 360×⌀60 est réellement plus longue et plus fine qu'une champenoise 310×⌀88, et déborde de la clayette comme en vraie cave) — verre teinté transparent laissant voir la robe du vin, étiquette nominative sur chaque bouteille, ombres de contact douces
 - **Casiers configurables** : meuble complet avec étagères internes, 5 essences de bois (chêne, noyer, merisier, grisé, wengé) ou structure en **fer forgé**, montants, pieds, croisillons et toit optionnels
 - **Dispositions** : côte à côte, tête-bêche, semi-couché, superposition (2 à 4 niveaux **empilés en pyramide**, comme en vraie cave)
 - **Espacement des clayettes réglable** ↕️ (60–180 %, vue 3D) : slider dans ⚙️ Options → Mode d'affichage, appliqué en direct
@@ -36,12 +36,13 @@ Intégration 100 % locale (vos données restent chez vous), pensée **mobile-fir
 - **Accords mets/vin** 🍽️ : ~900 plats classés par ordre alphabétique — pièces de boucherie nommées (côte de bœuf, onglet, araignée de porc…), poissons, fromages, recettes du monde — plus recherche libre et renfort IA
 
 ### Sommelier IA
-- **Bouton 🍷 Sommelier** directement dans l'en-tête de la carte (conseil d'achat & opportunité)
+- **Boutons 🍾 À ouvrir et 🍷 Sommelier** directement dans l'en-tête (rouge Millésime), bouton **➕ Ajouter** unifié (vin ou casier), **icônes personnalisables** dans ⚙️ Options → 🎨 Personnalisation
 - **Accord sur le repas complet** 🍷 : entrée / plat / dessert → l'IA choisit 1 à 2 bouteilles **de votre cave** qui couvrent tout le menu, avec conseils de service — et les met en surbrillance dans la cave
-- **« Envie de… »** 🍷 : envie d'un bon vin, tout simplement ? Choisissez le **profil aromatique du moment** (+ couleur éventuelle), le sommelier propose **une seule bouteille** de la cave au bon profil et à la bonne apogée — **prix affiché** pour trancher. Repli local sans IA
+- **« Envie de… »** 🍷 : envie d'un bon vin, tout simplement ? Choisissez le **profil aromatique** et/ou la **structure du moment** (Tannique, Souple, Corsé, Léger…), le sommelier propose **une seule bouteille** de la cave au bon profil et à la bonne apogée — **prix affiché** pour trancher. Repli local sans IA
 - **Conseil d'achat** 🛒 : audit de l'équilibre de la cave (styles, trous et embouteillages d'apogée) et 5 suggestions précises sous budget, avec région prioritaire facultative
 - **Analyse d'opportunité** 🏪 : en magasin, saisissez ou **scannez** la bouteille repérée — verdict doublon/manque, millésime et prix à viser (indicatifs)
-- **Profil aromatique** 🌸 : répartition sur 11 familles pour chaque vin, **toujours visible sur la fiche**, radar aux **axes adaptés à la couleur du vin** (un blanc affiche Minéral/Floral plutôt qu'Animal/Terreux) ou barres, au choix dans ⚙️ Options
+- **Profil aromatique** 🌸 : répartition sur les 11 **séries aromatiques œnologiques** (Fruité, Floral, Végétal, Minéral, Épicé, Boisé, Empyreumatique, Animal, Fermentaire, Sous-bois, Évolution), toujours visible sur la fiche, radar aux **axes adaptés à la couleur du vin** ou barres, avec **glossaire ℹ️** intégré pour les non-initiés
+- **Structure en bouche** 🍷 : 6 axes de dégustation (Tanins, Corps, Acidité, Gras, Alcool, Persistance) estimés par l'IA, affichés en barres sur la fiche, avec glossaire ℹ️ — et exploités par « Envie de… »
 - **IA automatique dans les accords** ✨ : la sélection d'un plat lance directement l'affinage Gemini (désactivable), fenêtre de progression avec **consommation de tokens** et **% du budget quotidien** du free tier Gemini (barre dans ⚙️ Options)
 
 ### Apogée & garde
@@ -127,6 +128,18 @@ L'intégralité de Millésime a été conçue et développée en collaboration a
 
 *Les 30 derniers jours — l'historique complet est disponible dans les [releases GitHub](https://github.com/Redsklns/ha-millesime/releases).*
 
+### [7.1.0] — 2026-07
+Version fonctionnelle majeure : profil de Structure, nomenclature œnologique, header refondu, profils de bouteilles aux dimensions réelles.
+
+- **🍷 Structure en bouche** : nouveau champ `structure_profile` par vin (6 axes de dégustation : Tanins, Corps, Acidité, Gras, Alcool, Persistance, 0–100), généré par « Compléter les fiches », affiché sur la fiche du vin (barres à la couleur du type) et exploitable dans « Envie de… »
+- **« Envie de… » enrichie** : deuxième rangée de critères **Structure** (Tannique, Souple, Corsé, Léger, Vif & frais, Rond & moelleux, Puissant, Long en bouche) cumulable avec les arômes ; repli local scorant sur les vraies données de structure. 🐛 Corrige la fermeture intempestive de la fenêtre à chaque sélection de critère (conflit de classe avec les Occasions)
+- **Nomenclature experte** : les familles aromatiques adoptent les séries œnologiques (Empyreumatique, Fermentaire, Sous-bois, Évolution remplacent Grillé, Lacté, Terreux, Tertiaire) — rétro-compatibilité totale des profils existants ; prompts IA mis à jour
+- **Glossaires ℹ️** : définitions d'une ligne dépliables sur les sections Arômes et Structure de la fiche et sur les deux rangées de « Envie de… »
+- **Header refondu** : « À ouvrir » remonte dans la rangée d'actions (rouge, à gauche du Sommelier) ; « + Casier » et « + Vin » fusionnés en « ➕ Ajouter » (gris, menu à deux choix) ; les deux rangées du header partagent la même hauteur ; la rangée capteurs (T°/hygrométrie) s'étend sur toute la largeur
+- **🎨 Personnalisation** : nouveau sous-menu dans ⚙️ Options — choix de l'icône des boutons « À ouvrir » (tire-bouchon, bouteille, bouchon) et « Sommelier » (nœud papillon, grappe, verre), appliqué en direct et mémorisé par appareil
+- **Profils de bouteilles recalculés sur dimensions réelles 75 cl** : chaque forme a désormais SON rayon et SA longueur (bordelaise 300×⌀75, bourguignonne 295×⌀80 sans épaule, champenoise 310×⌀88, flûte d'Alsace 360×⌀60 qui déborde légèrement de la clayette comme en vraie cave, ligérienne 310×⌀73, provençale 300×⌀72) — cotes d'accessoires (capsule, bouchon, collerette, muselet, étiquette) recalées au millimètre, appliqué à toutes les vues (3D toutes orientations, 2D, fantômes)
+- **Superposition** : les silhouettes des emplacements vides des couches supérieures sont masquées au repos (elles gênaient la lecture) et réapparaissent le temps d'un glisser/déposer ; les emplacements restent tappables
+
 ### [7.0.2] — 2026-07
 Affinage visuel : bordelaises fidèles, rouge Millésime partout, espacement réglable.
 
@@ -202,6 +215,10 @@ Correction de la vue 3D et appareil photo direct sur mobile.
 Millésime est gratuit et open source. Si l'intégration vous plaît, vous pouvez [**offrir un verre de vin** 🍷](https://paypal.me/Redsklns).
 
 ---
+
+## 🙏 Crédits
+
+Icônes des boutons (tire-bouchon, bouteille, bouchon, nœud papillon, grappe, verre) : [game-icons.net](https://game-icons.net) — créées par **Delapouite** et **Lorc**, licence [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).
 
 ## 📄 Licence
 
