@@ -3464,7 +3464,7 @@ class MillesimeCard extends HTMLElement {
       st.id = "mm-bpanel-css";
       st.textContent = `
         .mm-bottle-panel {
-          position:fixed; z-index:999998; width:230px; max-width:calc(100vw - 16px);
+          position:fixed; z-index:999998; width:16.4em; max-width:calc(100vw - 16px);
           background:#15110E; border:1px solid #2E2620; border-radius:12px;
           padding:11px 13px; box-shadow:0 8px 28px rgba(0,0,0,0.6);
           font-family:Inter, sans-serif; color:#EDE0CC; pointer-events:none;
