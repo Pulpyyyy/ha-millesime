@@ -1,4 +1,4 @@
-"""Millésime v7.0.2 — Cave à Vin pour Home Assistant.
+"""Millésime v7.1.0 — Cave à Vin pour Home Assistant.
 
 Recherche texte : gemini-3.1-flash-lite (tier gratuit)
 Lecture photo   : gemini-3-flash (tier gratuit)
@@ -36,7 +36,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN    = "millesime"
 PLATFORMS = ["sensor"]
 DATA_FILE = "millesime_data.json"
-VERSION   = "7.0.2"
+VERSION   = "7.1.0"
 
 OFF_UA       = f"Millesime-HA/{VERSION} (github.com/Redsklns/ha-millesime)"
 # Deux modèles séparés = deux pools de quota indépendants (free tier)
@@ -334,7 +334,7 @@ Retourne UNIQUEMENT un tableau JSON valide [], sans markdown ni backticks.
 Chaque objet doit avoir exactement ces champs (string, jamais null) :
   name, vintage, type, shape, appellation, region, country, producer,
   tasting_notes, food_pairing, drink_from, drink_until, vivino_rating, price,
-  aroma_profile
+  aroma_profile, structure_profile
 Règles :
 - type : "red" | "white" | "rose" | "sparkling" | "dessert" uniquement
 - shape : forme de la bouteille, "bordeaux" | "bourgogne" | "champagne" | "flute" | "rose" | "loire" | "" (vide si incertain). Bordeaux=épaules marquées ; bourgogne=épaules tombantes ; champagne=épaisse à base large ; flute=fine et haute (Alsace) ; rose=type Provence ; loire=ligérienne
@@ -349,11 +349,16 @@ Règles :
 - price : prix moyen constaté en euros, UNIQUEMENT le nombre décimal (ex: 18.5). 0.0 si inconnu. Jamais de texte.
 - tasting_notes : 1–2 phrases en français (arômes, texture, finale)
 - food_pairing : 2–3 accords en français séparés par des virgules
-- aroma_profile : répartition aromatique du vin sur EXACTEMENT ces 11 familles
-  (dans cet ordre, séparées par |, total = 100, familles à 0 omises) :
-  Fruité, Floral, Boisé, Épicé, Minéral, Végétal, Grillé, Animal, Lacté, Terreux, Tertiaire.
-  Format STRICT "Famille:NN" — exemple : "Fruité:45|Boisé:20|Épicé:15|Minéral:10|Tertiaire:10".
+- aroma_profile : répartition aromatique du vin sur EXACTEMENT ces 11 séries
+  aromatiques œnologiques (dans cet ordre, séparées par |, total = 100, familles à 0 omises) :
+  Fruité, Floral, Végétal, Minéral, Épicé, Boisé, Empyreumatique, Animal, Fermentaire, Sous-bois, Évolution.
+  Format STRICT "Famille:NN" — exemple : "Fruité:45|Boisé:20|Épicé:15|Minéral:10|Évolution:10".
   Estimation typique du profil au stade actuel du vin ; "" si vraiment inconnu.
+- structure_profile : profil de STRUCTURE en bouche sur EXACTEMENT ces 6 axes
+  de dégustation, chacun noté de 0 à 100 indépendamment (PAS un total de 100),
+  séparés par |, dans cet ordre : Tanins, Corps, Acidité, Gras, Alcool, Persistance.
+  Format STRICT "Axe:NN" — exemple : "Tanins:70|Corps:65|Acidité:48|Gras:40|Alcool:60|Persistance:55".
+  Tanins ≤ 15 pour les blancs/effervescents. Estimation au stade actuel ; "" si inconnu.
 - Couvrir différents millésimes si possible
 - Priorité : vins français > européens > mondiaux\
 """
@@ -406,6 +411,7 @@ def _parse_gemini_response(raw: str, source: str) -> tuple[list[dict], str | Non
             "drink_from":    str(w.get("drink_from", "") or ""),
             "drink_until":   str(w.get("drink_until", "") or ""),
             "aroma_profile": str(w.get("aroma_profile", "") or ""),
+            "structure_profile": str(w.get("structure_profile", "") or ""),
             "vivino_rating": round(_safe_float(w.get("vivino_rating")), 1),
             "price":         round(_safe_float(w.get("price")), 2),
             "image_url":     "",
@@ -597,6 +603,7 @@ def _cellar_ai_summary(wines: list[dict]) -> list[dict]:
             "qty":         qty,
             "apogee":      f"{w.get('drink_from','?')}-{w.get('drink_until','?')}",
             "aromas":      w.get("aroma_profile", ""),
+            "structure":   w.get("structure_profile", ""),
         })
     return out
 
@@ -627,17 +634,21 @@ async def _gemini_pair_menu(
 
 
 async def _gemini_craving(
-    hass: HomeAssistant, api_key: str, wants: list[str], color: str, wines: list[dict]
+    hass: HomeAssistant, api_key: str, wants: list[str], wants_structure: list[str],
+    color: str, wines: list[dict]
 ) -> tuple[dict | None, dict, str | None]:
-    """« Envie de… » (v7.0.1) : l'utilisateur veut simplement boire un bon vin.
-    Il donne le profil aromatique recherché (+ couleur éventuelle) ; l'IA
-    choisit UNE bouteille de la cave au bon profil ET à la bonne apogée."""
+    """« Envie de… » (v7.0.1, enrichie v7.1.0) : l'utilisateur veut simplement
+    boire un bon vin. Il donne le profil aromatique et/ou la structure
+    recherchés (+ couleur éventuelle) ; l'IA choisit UNE bouteille de la cave
+    au bon profil ET à la bonne apogée."""
     sys = (
         "Tu es sommelier de la maison. L'utilisateur veut simplement boire un BON vin de sa cave, "
         "sans occasion ni plat particulier : il indique le profil aromatique recherché "
-        "(familles : Fruité, Floral, Boisé, Épicé, Minéral, Végétal, Grillé, Animal, Lacté, Terreux, Tertiaire) "
-        "et éventuellement une couleur. Choisis UNE SEULE bouteille parmi les vins fournis (id obligatoire, "
-        "n'invente rien) : le meilleur compromis entre le profil demandé (champ aromas de chaque vin) et la "
+        "(séries : Fruité, Floral, Végétal, Minéral, Épicé, Boisé, Empyreumatique, Animal, Fermentaire, "
+        "Sous-bois, Évolution) et/ou la structure souhaitée en bouche (tannique, souple, corsé, léger, "
+        "vif, rond, puissant, long en bouche), et éventuellement une couleur. "
+        "Choisis UNE SEULE bouteille parmi les vins fournis (id obligatoire, n'invente rien) : "
+        "le meilleur compromis entre le profil demandé (champs aromas et structure de chaque vin) et la "
         "fenêtre d'apogée — privilégie ABSOLUMENT un vin à boire maintenant, surtout proche de la fin de sa "
         "fenêtre ; jamais un vin trop jeune si une alternative prête existe. "
         "Réponds STRICTEMENT en JSON : "
@@ -648,7 +659,8 @@ async def _gemini_craving(
     color_lbl = {"red": "rouge", "white": "blanc", "rose": "rosé",
                  "sparkling": "effervescent", "dessert": "liquoreux"}.get(color or "", "")
     user = (
-        f"Profil aromatique recherché : {', '.join(wants)}\n"
+        f"Profil aromatique recherché : {', '.join(wants) or 'indifférent'}\n"
+        f"Structure recherchée : {', '.join(wants_structure) or 'indifférente'}\n"
         f"Couleur souhaitée : {color_lbl or 'indifférent'}\n\n"
         f"Vins disponibles (JSON) :\n{json.dumps(_cellar_ai_summary(wines), ensure_ascii=False)}"
     )
@@ -1480,18 +1492,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     @websocket_api.websocket_command({
         vol.Required("type"): "millesime/craving",
         vol.Required("wants"): [str],
+        vol.Optional("wants_structure"): [str],
         vol.Optional("color"): vol.Any(str, None),
         vol.Optional("cellar_id"): vol.Any(str, None),
     })
     @websocket_api.async_response
     async def ws_craving(hass: HomeAssistant, connection, msg: dict) -> None:
-        """« Envie de… » (v7.0.1) : une bouteille au profil aromatique voulu."""
+        """« Envie de… » (v7.0.1, structure v7.1.0) : une bouteille au profil voulu."""
         gkey = _gemini_key()
         if not gkey:
             connection.send_result(msg["id"], {"error": "no_key"})
             return
         wants = [w for w in (msg.get("wants") or []) if isinstance(w, str) and w.strip()]
-        if not wants:
+        wants_s = [w for w in (msg.get("wants_structure") or []) if isinstance(w, str) and w.strip()]
+        if not wants and not wants_s:
             connection.send_result(msg["id"], {"error": "empty_query"})
             return
         d = await hass.async_add_executor_job(_load, hass)
@@ -1500,7 +1514,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             connection.send_result(msg["id"], {"error": "empty_cellar"})
             return
         result, usage, err = await _gemini_craving(
-            hass, gkey, wants, (msg.get("color") or "").strip(), wines)
+            hass, gkey, wants, wants_s, (msg.get("color") or "").strip(), wines)
         connection.send_result(msg["id"],
             {"error": err} if err else {"result": result, "usage": usage})
 
@@ -2076,7 +2090,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         gemini_key = hass.data[DOMAIN][entry.entry_id].get("gemini_key", "")
         FIELDS = [
             "appellation", "region", "producer", "country", "tasting_notes",
-            "food_pairing", "drink_from", "drink_until", "aroma_profile",
+            "food_pairing", "drink_from", "drink_until", "aroma_profile", "structure_profile",
             "image_url", "vivino_url", "vivino_rating",
         ]
         # Options opt-in de la popup ♻️ : ces deux réglages ÉCRASENT une donnée déjà
