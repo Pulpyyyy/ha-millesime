@@ -1169,7 +1169,7 @@ class MillesimeCard extends HTMLElement {
       // viserait le viewport). Plancher 14px (confort des formulaires au doigt),
       // plafond 21px : une boîte de dialogue peut être un peu plus généreuse que la
       // carte, et sur Full HD l'ancien plafond 18px paraissait petit.
-      this._fsModalCss = 'clamp(15px, 1.7vw, 24px)';
+      this._fsModalCss = 'clamp(14px, 2vw, 24px)';   // plancher/pente d'origine, seul le plafond monte (21→24) pour grands écrans
     }
   }
 
@@ -8105,7 +8105,7 @@ const MODAL_CSS = `
 .sub-panel { display:none; }
 .sub-panel.active { display:block; }
 .sub-soon { text-align:center; padding:30px 8px; color:var(--mm-muted); font-size:0.9em; font-style:italic; }
-.occ-hint { font-size:0.92em; color:var(--mm-muted); margin-bottom:12px; line-height:1.45; }
+.occ-hint { font-size:0.82em; color:var(--mm-muted); margin-bottom:12px; line-height:1.4; }
 .occ-btns { display:flex; flex-wrap:wrap; gap:8px; }
 .occ-btn {
   padding:10px 16px; border-radius:18px; border:1px solid var(--mm-border);
@@ -8136,7 +8136,14 @@ const MODAL_CSS = `
 .apo-top-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .apo-top-name i { color:var(--mm-muted); font-style:normal; }
 .apo-top-until { color:var(--mm-accent); font-weight:600; white-space:nowrap; font-size:0.88em; }
-.apo-hint, .acc-hint { font-size:0.92em; color:var(--mm-muted); margin-bottom:12px; line-height:1.45; }
+.apo-hint, .acc-hint { font-size:0.82em; color:var(--mm-muted); margin-bottom:12px; line-height:1.4; }
+/* Grand écran uniquement (le mobile garde ses tailles d'origine, non testées) :
+   textes explicatifs des popups un peu plus lisibles. */
+@media (min-width: 800px) {
+  .mm-overlay .acc-hint, .mm-overlay .apo-hint, .mm-overlay .occ-hint { font-size:0.92em; line-height:1.45; }
+  .mm-overlay .mm-hint { font-size:0.9em; line-height:1.45; }
+  .mm-overlay .mm-photo-hint { font-size:0.9em; }
+}
 .apo-states { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .apo-state {
   display:flex; align-items:center; gap:8px; padding:12px 10px;
@@ -8346,7 +8353,7 @@ const MODAL_CSS = `
 .mm-opt-list .seg3-btn.active { background:var(--mm-accent); color:#fff; font-weight:600; }
 .mm-opt-list .seg3-lbl { font-size:0.92em; }
 /* Description sous les menus (disposition, orientation) : petit, gris clair, italique */
-.mm-hint { font-size:0.9em; font-style:italic; color:#c8c8c8; margin-top:7px; line-height:1.45; }
+.mm-hint { font-size:0.74em; font-style:italic; color:#c8c8c8; margin-top:7px; line-height:1.4; }
 .mm-header {
   display:flex; align-items:center; justify-content:space-between;
   padding:16px 20px 12px; border-bottom:1px solid var(--mm-border);
@@ -8532,7 +8539,7 @@ const MODAL_CSS = `
 }
 .mm-scan-btn:hover { border-color:var(--mm-accent); }
 .mm-photo-url { margin-top:4px; font-size:0.84em; }
-.mm-photo-hint { font-size:0.9em; color:var(--mm-muted); margin-top:5px; line-height:1.4; }
+.mm-photo-hint { font-size:0.72em; color:var(--mm-muted); margin-top:5px; line-height:1.35; }
 .hidden { display:none !important; }
 .mm-vivino-link  { display:inline-block; margin-top:8px; color:var(--mm-red); font-size:0.85em; text-decoration:none; border:1px solid rgba(192,57,43,0.3); padding:3px 10px; border-radius:20px; }
 .mm-detail-grid  { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-bottom:10px; }
