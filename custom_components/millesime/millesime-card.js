@@ -1,5 +1,5 @@
 /**
- * Millésime Card v7.0.2
+ * Millésime Card v7.1.0
  * Cave à vin pour Home Assistant
  * - Recherche texte avec suggestions temps réel
  * - Lecture d'étiquette par photo (Gemini Vision)
@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "7.0.2";
+const MILLESIME_CARD_VERSION = "7.1.0";
 
 // ── Budget quotidien Gemini (free tier) ─────────────────────────────────────
 // Estimation codée en dur : ~250 requêtes/jour (Gemini 2.5 Flash, quotas
@@ -751,96 +751,50 @@ const ERROR_MESSAGES = {
 const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const safeUrl = url => /^https?:\/\//i.test(url ?? "") ? url : "#";
 // Profils de bouteilles [rayon, hauteur] — SOURCE UNIQUE des deux vues : la 3D
-// les tourne (LatheGeometry), la 2D les projette à plat (silhouette SVG). Par type :
-// rouge → bourguignonne, blanc → flûte (Alsace), rosé → bordelaise, effervescent →
-// champenoise, liquoreux → ligérienne. Toutes les bouteilles sont en verre
-// transparent (le vin est visible au travers) — seuls les profils diffèrent.
-// Diamètre max STRICTEMENT identique partout (normalisation BOTTLE_R ci-dessous) :
-// seules les silhouettes diffèrent, l'espacement entre bouteilles reste constant.
-const BOTTLE_PROFILES = {
-  // Bordelaise (affinée v7.0.2, calée sur une 75 cl réelle ~30 cm × ⌀7,5 cm) :
-  // fût cylindrique DROIT sur ~60 % de la hauteur, épaule HAUTE et COURTE
-  // (le trait distinctif de la bordelaise), col fin, bague discrète
-  bordeaux: [
-    [0.00, 0.30], [0.19, 0.12], [0.32, 0.05], [0.405, 0.03], [0.44, 0.12], [0.445, 0.35],
-    [0.445, 2.20], [0.44, 2.32], [0.415, 2.44], [0.355, 2.56], [0.27, 2.66], [0.19, 2.74],
-    [0.15, 2.82], [0.135, 2.96], [0.13, 3.48], [0.128, 3.62], [0.152, 3.65], [0.152, 3.71],
-    [0.138, 3.72],
-    [0.00, 3.72],
-  ],
-  // Champenoise : verre épais, fût bombé (point le plus large au tiers bas),
-  // épaule pleine, pente en S continue jusqu'au goulot épais
-  champagne: [
-    [0.00, 0.34], [0.21, 0.14], [0.35, 0.06], [0.445, 0.04], [0.475, 0.16], [0.485, 0.45],
-    [0.49, 0.95], [0.485, 1.30], [0.465, 1.62], [0.43, 1.94], [0.375, 2.24], [0.305, 2.52],
-    [0.235, 2.78], [0.185, 3.02], [0.16, 3.56], [0.18, 3.60], [0.18, 3.72], [0.155, 3.73],
-    [0.00, 3.73],
-  ],
-  // Flûte élancée type Alsace : très fuselée — fût court, fuite continue
-  // sur presque toute la hauteur (disponible mais non mappée par défaut)
-  flute: [
-    [0.00, 0.14], [0.20, 0.07], [0.33, 0.04], [0.405, 0.03], [0.43, 0.10], [0.435, 0.55],
-    [0.435, 1.10], [0.415, 1.60], [0.365, 2.10], [0.295, 2.55], [0.225, 2.95], [0.165, 3.25],
-    [0.125, 3.62], [0.15, 3.65], [0.15, 3.71], [0.135, 3.72],
-    [0.00, 3.72],
-  ],
-  // Rosé : bordelaise au col allongé — fût droit plus court, épaule adoucie,
-  // long goulot fin (type rosé de Provence/Loire)
-  rose: [
-    [0.00, 0.28], [0.19, 0.11], [0.32, 0.05], [0.405, 0.03], [0.44, 0.12], [0.445, 0.35],
-    [0.445, 1.55], [0.43, 1.76], [0.385, 1.97], [0.305, 2.18], [0.225, 2.37], [0.165, 2.55],
-    [0.138, 2.72], [0.13, 3.48], [0.128, 3.62], [0.152, 3.65], [0.152, 3.71], [0.138, 3.72],
-    [0.00, 3.72],
-  ],
-  // Bourguignonne (rouge) : corps large, longue épaule conique
-  bourgogne: [
-    [0.00, 0.26], [0.20, 0.10], [0.34, 0.05], [0.435, 0.03], [0.465, 0.12], [0.47, 0.35],
-    [0.47, 1.53], [0.455, 1.78], [0.42, 2.08], [0.36, 2.38], [0.28, 2.63], [0.21, 2.85],
-    [0.16, 3.05], [0.14, 3.25], [0.135, 3.62], [0.16, 3.65], [0.16, 3.71], [0.145, 3.72],
-    [0.00, 3.72],
-  ],
-  // Ligérienne (liquoreux) : épaule douce — type Anjou / Vouvray
-  loire: [
-    [0.00, 0.18], [0.19, 0.08], [0.32, 0.04], [0.405, 0.03], [0.435, 0.10], [0.44, 0.45],
-    [0.44, 1.67], [0.425, 1.95], [0.375, 2.30], [0.29, 2.59], [0.205, 2.83], [0.15, 3.07],
-    [0.128, 3.58], [0.15, 3.62], [0.15, 3.71], [0.135, 3.72],
-    [0.00, 3.72],
-  ],
-};
-// v7.0.2 : bordelaise par DÉFAUT pour rouges et blancs — c'est la forme la plus
-// répandue et celle attendue dans une cave à dominante bordelaise. Les autres
-// silhouettes restent choisies par la fiche (champ shape, détecté par Gemini ou
-// manuel) ou déduites de la RÉGION via shapeKindOf ci-dessous.
-const TYPE_SHAPE = { red: "bordeaux", white: "bordeaux", rose: "rose", sparkling: "champagne", dessert: "loire" };
-
-// Déduction de la silhouette par région (v7.0.2) — appliquée UNIQUEMENT quand la
-// fiche ne précise pas de forme : un bourgogne reste bourguignon, un alsace en
-// flûte, un sauternes en bordelaise… Testée sur le champ region normalisé
-// (minuscules sans accents). Source unique pour la 3D ET la 2D.
-const REGION_SHAPES = [
-  [/bourgogne|beaujolais|chablis|macon|mercurey|pommard|meursault|volnay|gevrey|nuits|beaune|rhone|chateauneuf|gigondas|vacqueyras|hermitage|cote.?rotie|cornas|crozes|saint.?joseph|condrieu/, "bourgogne"],
-  [/alsace|riesling|gewurz/, "flute"],
-  [/sauternes|barsac|monbazillac|loupiac|cadillac|sainte.?croix/, "bordeaux"],
-  [/champagne|cremant|prosecco|cava|bulle/, "champagne"],
-];
-const shapeKindOf = (wine) => {
-  if (wine?.shape && BOTTLE_PROFILES[wine.shape]) return wine.shape;   // choix explicite de la fiche
-  if ((wine?.type || "red") === "sparkling") return "champagne";       // verre épais obligatoire
-  const reg = normKey(wine?.region || "") + " " + normKey(wine?.appellation || "");
-  if (reg.trim()) for (const [re, kind] of REGION_SHAPES) if (re.test(reg)) return kind;
-  return TYPE_SHAPE[wine?.type || "red"] || "bordeaux";
+// les tourne (LatheGeometry), la 2D les projette à plat (silhouette SVG).
+// ── v7.1.0 : PROFILS RECALCULÉS SUR DIMENSIONS RÉELLES 75 cl ─────────────────
+// Tables sources en MILLIMÈTRES (cotes CETIE/verriers), converties en unités de
+// scène via K_MM. Fini le gabarit unique : chaque forme a désormais SON rayon
+// et SA longueur — une flûte d'Alsace (360×⌀60, ratio 6:1) est réellement plus
+// longue et plus fine qu'une champenoise (310×⌀88). L'entraxe des emplacements
+// (SPACING) reste inchangé : la plus large (champenoise, 2r = 0,99) tient dans
+// les 1,06 unités avec du jour.
+const K_MM = 0.0113;                       // unités de scène par millimètre
+const BOTTLE_MM = {
+  // Bordelaise 300×⌀75 — fût droit ~62 %, épaule haute et courte (galbe validé)
+  bordeaux: { H: 300, D: 75, pts: [[10,0], [0,22], [4,33], [8,36.5], [12,37.5], [186,37.5], [188,37.2], [191,36.4], [193,35.1], [196,33.3], [198,31.2], [201,28.8], [203,26.4], [205,23.9], [208,21.5], [210,19.4], [213,17.6], [215,16.3], [218,15.5], [220,15.2], [278,14.6], [284,14.4], [287,15.6], [296,15.6], [298,14.7], [300,14.5], [300,0]] },
+  // Bourguignonne 295×⌀80 — SANS épaule : fût conique, longue pente fuyante
+  bourgogne: { H: 295, D: 80, pts: [[12,0], [0,24], [4,36], [9,39.5], [14,40], [130,40], [134,39.9], [138,39.8], [141,39.6], [145,39.5], [149,39.3], [153,39.1], [157,38.9], [160,38.7], [164,38.4], [168,38.2], [173,38], [177,37.5], [182,36.6], [187,35.5], [191,34.1], [196,32.4], [201,30.6], [205,28.6], [210,26.6], [215,24.6], [219,22.6], [224,20.8], [229,19.1], [233,17.7], [238,16.6], [243,15.7], [247,15.2], [252,15], [280,14.5], [285,14.3], [288,15.5], [293,15.5], [295,14.5], [295,0]] },
+  // Champenoise 310×⌀88 — verre épais, piqûre profonde, pente très longue
+  champagne: { H: 310, D: 88, pts: [[22,0], [0,27], [5,40], [11,43.5], [17,44], [140,44], [146,43.8], [152,43.3], [158,42.5], [164,41.4], [170,40], [175,38.4], [181,36.6], [187,34.7], [193,32.6], [199,30.5], [205,28.4], [211,26.3], [217,24.4], [223,22.6], [228,21], [234,19.6], [240,18.5], [246,17.7], [252,17.2], [258,17], [288,16.5], [293,16.5], [296,18.8], [303,19.2], [308,18.4], [310,13.5], [310,0]] },
+  // Flûte d'Alsace 360×⌀60 — ratio 6:1, col et fût qui se confondent
+  flute: { H: 360, D: 60, pts: [[8,0], [0,18], [4,27], [8,29.5], [12,30], [150,30], [158,29.9], [165,29.6], [172,29.1], [180,28.5], [188,27.6], [195,26.7], [202,25.6], [210,24.4], [218,23.2], [225,21.9], [232,20.6], [240,19.4], [248,18.2], [255,17.1], [262,16.2], [270,15.3], [278,14.7], [285,14.2], [292,13.9], [300,13.8], [344,13.2], [349,13], [352,14.2], [357,14.2], [360,13.3], [360,0]] },
+  // Ligérienne 310×⌀73 — élancée, épaule douce intermédiaire
+  loire: { H: 310, D: 73, pts: [[10,0], [0,22], [4,32], [8,35.8], [12,36.5], [170,36.5], [174,36.3], [178,35.7], [182,34.7], [186,33.3], [189,31.7], [193,29.8], [197,27.8], [201,25.7], [205,23.5], [209,21.5], [213,19.6], [216,18], [220,16.6], [224,15.6], [228,15], [232,14.8], [290,14.3], [295,14.1], [298,15.3], [305,15.3], [308,14.4], [310,14.2], [310,0]] },
+  // Provençale (rosé) 300×⌀72 — fine, col allongé
+  rose: { H: 300, D: 72, pts: [[9,0], [0,21], [4,31], [8,35.2], [12,36], [160,36], [164,35.7], [167,34.9], [171,33.6], [175,31.9], [179,29.8], [182,27.5], [186,25.1], [190,22.7], [193,20.4], [197,18.3], [201,16.6], [205,15.3], [208,14.5], [212,14.2], [282,13.6], [287,13.4], [290,14.6], [296,14.6], [300,13.7], [300,0]] },
 };
 
-// Rayon de fût COMMUN : toutes les bouteilles ont le même diamètre max — l'espacement
-// entre deux bouteilles est donc constant, quel que soit leur sens (tête-bêche ou non).
-// Chaque profil est normalisé radialement à la lecture (2D comme 3D).
-// v7.0.2 : 0.43 → 0.41 — bouteilles légèrement plus fines, proportions plus
-// réalistes par rapport à la clayette (elles paraissaient trop massives).
-const BOTTLE_R = 0.41;
-const _normProfile = (pts) => {
-  const k = BOTTLE_R / Math.max(...pts.map((p) => p[0]));
-  return pts.map(([r, y]) => [+(r * k).toFixed(3), y]);
-};
+// Métadonnées en unités de scène, calculées une fois : rayon de pose (r),
+// hauteur (h), demi-longueur (half) — utilisées PARTOUT (3D, 2D, fantômes,
+// positionnement, pyramide) : source unique, zéro littéral à désynchroniser.
+const BOTTLE_METAS = {};
+const BOTTLE_PROFILES = {};   // profils en unités [rayon, hauteur] (points du Lathe)
+for (const [kind, m] of Object.entries(BOTTLE_MM)) {
+  BOTTLE_PROFILES[kind] = m.pts.map(([h, r]) => [+(r * K_MM).toFixed(4), +(h * K_MM).toFixed(4)]);
+  BOTTLE_METAS[kind] = {
+    r:    +((m.D / 2) * K_MM).toFixed(4),
+    h:    +(m.H * K_MM).toFixed(4),
+    half: +((m.H * K_MM) / 2).toFixed(4),
+  };
+}
+// Rayon de la bordelaise = référence historique (pose, pyramide, fantômes)
+const BOTTLE_R = BOTTLE_METAS.bordeaux.r;
+// Les profils sont DÉJÀ en unités réelles : plus aucune re-normalisation
+// radiale (c'était le gabarit unique d'avant v7.1.0) — passe-plat conservé
+// pour ne pas toucher les appelants.
+const _normProfile = (pts) => pts;
+
 
 // Projection à plat d'un profil 3D → silhouette SVG (viewBox 10×26) + repères
 // d'habillage calculés (largeur de col/fût, haut et bas d'épaule).
@@ -1064,13 +1018,34 @@ const GLASS_SVG = `<svg viewBox="0 0 40 56" xmlns="http://www.w3.org/2000/svg">
 </svg>`;
 
 // Icône tire-bouchon colorée (manche bois + spirale métal) pour le bouton « À ouvrir »
-const CORKSCREW_SVG = `<svg class="cork-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="6.5" y="2" width="11" height="3.4" rx="1.5" fill="#8B5A2B" stroke="#6b4420" stroke-width="0.6"/>
-  <rect x="7.2" y="2.5" width="3" height="2.4" rx="0.8" fill="#A6713A"/>
-  <line x1="12" y1="5.4" x2="12" y2="9" stroke="#B8B8C0" stroke-width="1.7"/>
-  <path d="M12 9c2.3 0 2.3 2 0 2s-2.3 2 0 2 2.3 2 0 2 -2.3 2 0 2 2.3 2 0 2" stroke="#C9CAD2" stroke-width="1.6"/>
-  <path d="M12 22.6l-1.5-2.2h3z" fill="#9A9BA4"/>
-</svg>`;
+
+// ── Icônes HD des boutons du header (v7.1.0) ─────────────────────────────────
+// Tracés vectoriels 512×512 de game-icons.net (Delapouite & Lorc, CC BY 3.0 —
+// crédit dans le README). Choix utilisateur dans ⚙️ Options → Personnalisation,
+// mémorisé par appareil (localStorage).
+const HDR_ICON_PATHS = {
+  "corkscrew": "M263.1 35.94c-1.5.5-4.2 1.73-7.4 3.77-6.9 4.38-15.8 11.85-24 19.98-8.1 8.13-15.6 17.03-20 23.92-2 3.16-3.2 5.81-3.7 7.31 15.7 15.38 31.3 25.88 44.6 33.88 13.9 8.3 25.1 13.4 32.9 21.1l.6.7.5.7c45.5 68.3 19.7 42.6 88 88l.7.5.7.6c7.7 7.8 12.8 19.1 21.1 32.9 8 13.3 18.5 28.9 33.9 44.6 1.5-.5 4.2-1.7 7.3-3.7 6.9-4.4 15.8-11.9 24-20 8.1-8.2 15.6-17.1 20-24 2-3.2 3.2-5.9 3.7-7.4-11.6-11.6-32.3-31.3-62.6-41.4l-3.6-1.1-1.7-3.4c-21.5-43.1-66-87.5-109-109.2l-3.3-1.6-1.2-3.48c-10.2-30.37-29.9-51.02-41.5-62.68zm32.5 157.86l-26.4 26.4 32.5 32.5 26.4-26.3c-16.7-11.1-21.4-15.9-32.5-32.6zm-34.9 43.3c-7.4 9.5-8.4 17-7.5 34.5.5 9.8-2.6 18.7-3.3 19.2-.8.7-2.3.6-6.7-.9-4.1-1.4-10.6-4.7-17.4-8.2-7-3.5-14.7-7.5-22.9-10-8.1-2.4-17.6-2.9-23 2.4-5.6 5.6-4.5 15.7-1.8 24 2.7 8.2 7.1 16.1 10.7 23.3 3.8 7.1 6.9 13.5 8.2 17.1 1.4 3.9 1.1 3.9.6 4.5-.4.4-.5.6-4.4-.7-3.7-1.2-10-4.4-17.2-8.1-7.1-3.7-15-8.1-23.2-10.7-8.3-2.8-18.4-3.8-24 1.8-5.5 5.5-4.5 15.6-1.7 23.9 2.6 8.2 7.1 16.1 10.7 23.2 3.6 7.2 6.8 13.5 8.2 17.1 1.2 4 1 4.1.5 4.6s-.5.7-4.4-.7c-3.7-1.2-10.1-4.4-17.1-8.2-7.2-3.6-15.1-8-23.3-10.7-8.29-2.7-18.41-3.8-23.99 1.8-5.45 5.5-4.88 15.1-2.26 23.3 2.61 8.2 6.71 16 10.32 23 3.68 7 6.79 13.4 8.34 17.5 5.66 15-58.55 14.4-68.09 12.2 6.43 16.5 80.48 34 94.38 16.4 4.4-6.3 3-16 .2-24.3-2.9-8.2-7-16-10.7-22.9-3.4-6.8-6.5-12.9-7.6-16.6-1.1-3.6-.9-3.8-.3-4.3.5-.5.5-.7 4.4.5 3.7 1.4 10.1 4.5 17.2 8.2 7.1 3.7 14.9 8 23.3 10.7 8.2 2.8 18.4 3.8 23.9-1.7 5.6-5.6 4.5-15.7 1.8-24s-7.1-16.1-10.7-23.2c-3.8-7.2-7-13.5-8.3-17.2-1.2-3.9-1-4-.6-4.4.6-.6.7-.8 4.5.5 3.7 1.4 10 4.5 17.2 8.3 7.1 3.6 15 7.9 23.2 10.7 8.3 2.7 18.4 3.8 23.9-1.7 5.7-5.7 4.6-15.8 1.9-24.1-2.8-8.3-7.1-16.1-10.7-23.2-3.8-7.1-6.9-13.5-8.3-17.2-1.2-3.8-1-3.9-.5-4.4.6-.6.8-.9 4.4.2 3.5 1.2 9.3 4 16.2 7.3 6.7 3.5 14.5 7.7 22.6 10.4 8.1 3 17.5 4.5 24.4.9 11.1-6.4 11.6-21.4 9.6-33-1.7-10.2-.1-16.8 3.8-22.6z",
+  "wine-bottle": "M133.99 28v23.512h52.02V28h-52.02zm0 41.51v90.705c-26.01 17.34-43.347 39.014-43.347 56.353v260.735S90.64 494 107.98 494h103.967c17.411 0 17.41-17.34 17.41-17.34V216.568c0-17.34-17.338-39.014-43.347-56.353V69.51h-52.02zM107 252h106v162H107V252zm194.514 3l-2.051 6.154c-8.474 25.423-12.793 58.44-6.233 86.87 3.28 14.215 9.429 27.45 19.846 37.273 8.61 8.118 20.105 13.533 33.924 15.172v74.64C327.601 479.296 302 494 302 494h108s-25.601-14.705-45-18.89v-74.641c13.82-1.639 25.314-7.054 33.924-15.172 10.417-9.822 16.565-23.058 19.846-37.274 6.56-28.43 2.241-61.446-6.233-86.869l-2.05-6.154H301.513zM125 270v126h70V270h-70zm189.703 3h82.594c2.639 9.261 4.629 19.565 5.68 30h-93.954c1.051-10.435 3.041-20.739 5.68-30zm-6.486 48h95.566c-.116 8.04-.907 15.846-2.553 22.977-2.72 11.784-7.571 21.548-14.654 28.226C379.494 378.881 370.126 383 356 383c-14.125 0-23.494-4.12-30.576-10.797-7.083-6.678-11.935-16.442-14.654-28.226-1.646-7.131-2.437-14.938-2.553-22.977z",
+  "champagne-cork": "M255.4 23.36c4.3 9.66 13.2 22.08 25.9 34.75 18 17.99 42.6 36.94 68.5 53.39 25.9 16.5 53 30.6 75.6 39.2 11.3 4.2 21.6 7.1 29.7 8.3 3.4.5 6.4.7 8.9.6-22.2-33.8-56.4-66.36-94.5-91.13-37.3-24.25-78.1-40.9-114.1-45.11zm-18.1 4.13c-41.7 28.17-56 76.31-65.5 124.01 8.1 17.3 35.4 46.3 71.3 72.1 36.6 26.3 81.9 50.1 123.5 60.3 34.5-8.8 56.1-26.4 71.3-48.1 12.4-17.6 20.4-38 26.7-58.1-3.9.1-8-.3-12.2-.9-10-1.4-21.2-4.7-33.4-9.3-22.6-8.6-48.2-21.8-73.3-37.3l-52.5 48.1 24.4-66.8c-18.3-13.05-35.2-26.88-49-40.67-14.7-14.63-26.3-28.9-31.3-43.34zM184 197.5L48.21 359l-.22.3c-.5.5-.63.6-.63 1.7s.28 3.2 1.45 6c2.35 5.6 7.92 13.6 15.85 22.2.57.6 1.18 1.3 1.78 1.9l27.01-22.9-19.34 30.6c15.51 15 36.19 31.3 57.99 45.7 21.1 14 43.4 26.3 62.6 34.3l37.8-71.3-12.1 79.6c6 1.3 11.2 1.7 14.9 1.4 6-.6 7.6-1.8 8.9-5.1l.1-.2 87.2-191.3c-8.4-3.1-16.9-6.6-25.3-10.5L278.9 308l11.8-34.1c-20.6-10.6-40.3-22.9-58.1-35.7-18.7-13.4-35.3-27.2-48.6-40.7z",
+  "bow-tie": "M51.855 169.203C31.677 191.101 21 223.381 21 256s10.677 64.9 30.855 86.797c15.674-.505 44.822-4.243 73.961-11.527 21.772-5.443 43.342-13.134 58.973-21.8-5.558-6.025-8.448-13.975-10.55-22.91a107.81 107.81 0 0 1-1.323-6.603l-58.443 16.697-4.946-17.308 61.588-17.596c-.068-1.912-.115-3.83-.115-5.75s.047-3.838.115-5.75l-61.588-17.596 4.946-17.308 58.443 16.697a107.81 107.81 0 0 1 1.322-6.604c2.103-8.934 4.993-16.884 10.551-22.91-15.631-8.665-37.2-16.356-58.973-21.799-29.14-7.284-58.287-11.022-73.96-11.527zm408.29 0c-15.674.505-44.822 4.243-73.961 11.527-21.772 5.443-43.342 13.134-58.973 21.8 5.558 6.025 8.448 13.975 10.55 22.91.505 2.14.94 4.35 1.323 6.603l58.443-16.697 4.946 17.308-61.588 17.596c.068 1.912.115 3.83.115 5.75s-.047 3.838-.115 5.75l61.588 17.596-4.946 17.308-58.443-16.697a107.81 107.81 0 0 1-1.322 6.604c-2.103 8.934-4.993 16.884-10.551 22.91 15.631 8.665 37.2 16.356 58.973 21.799 29.14 7.284 58.287 11.022 73.96 11.527C480.324 320.899 491 288.619 491 256s-10.677-64.9-30.855-86.797zM256 205c-13.571 0-27.173.992-37.957 2.867-10.784 1.876-18.862 5.678-19.68 6.496-1.878 1.879-4.809 7.578-6.601 15.198C189.969 237.18 189 246.6 189 256c0 9.4.969 18.82 2.762 26.44 1.792 7.619 4.723 13.318 6.601 15.197.818.818 8.896 4.62 19.68 6.496C228.827 306.008 242.429 307 256 307c13.571 0 27.173-.992 37.957-2.867 10.784-1.876 18.862-5.678 19.68-6.496 1.878-1.879 4.809-7.578 6.601-15.198C322.031 274.82 323 265.4 323 256c0-9.4-.969-18.82-2.762-26.44-1.792-7.619-4.723-13.318-6.601-15.197-.818-.818-8.896-4.62-19.68-6.496C283.173 205.992 269.571 205 256 205z",
+  "grapes": "M277.28 18.094c2.42 33.67-.094 66.692-8.967 99.187-.552-2.168-1.15-4.308-1.813-6.436-9.355-30.034-29.53-55.765-61.313-75.313-21.642-16.548-60.26-23.695-113.437-8.343 2.25 22.26 45.452 24.822 60.156 26.844C123.012 60.4 91.11 85.214 48.53 90.25c39.324 20.744 92.66 4.396 129.064-11.688-1.873 17.715-13.69 29.033-24.53 59.594 47.832-11.062 70.85-37.418 72.155-62.562 11.173 12.212 18.763 25.81 23.436 40.812 3.505 11.25 5.34 23.392 5.594 36.344 3.873 4.97 6.9 10.635 8.813 16.78 5.315-3.01 11.198-5.134 17.437-6.155 6.107-14.92 12.983-27.09 20.53-36.156 14.88-17.87 30.967-24.548 53.5-20.19l.033-.155c32.603 22.698 24.114 60.97 12.25 89.375 21.587-6.676 33.4-19.928 33.437-42.97 17.947 11.77 25.423 31.093 30.563 52.064 7.22-21.503 5.772-44.784-12.782-64.844l43.345 16.5c-27.924-33.363-54.318-68.923-105.28-68.688-26.457-4.45-49.91 4.967-67.376 24.563 7.41-31.25 9.436-62.938 7.28-94.78h-18.72zM212.53 150.97c-19.002 0-34.218 15.184-34.218 34.186 0 6.81 1.963 13.127 5.344 18.438 3.66-.807 7.452-1.25 11.344-1.25 13.056 0 25.03 4.807 34.28 12.72 10.44-5.836 17.44-17.008 17.44-29.908 0-19.002-15.186-34.187-34.19-34.187zm-58.405 18.686c-19.003 0-34.22 15.185-34.22 34.188 0 15.977 10.75 29.295 25.47 33.125 4.004-10.795 11.44-19.943 20.97-26.126-4.267-7.615-6.72-16.384-6.72-25.688 0-5.082.74-9.997 2.094-14.656-2.44-.544-4.984-.844-7.595-.844zm134.906 11.688c-19.002 0-34.217 15.185-34.217 34.187 0 3.495.51 6.866 1.468 10.032 4.125-1.04 8.44-1.593 12.876-1.593 16.203 0 30.745 7.38 40.47 18.936 8.274-6.225 13.593-16.133 13.593-27.375 0-19-15.186-34.186-34.19-34.186zM195 221.03c-19.003 0-34.22 15.218-34.22 34.22S176 289.47 195 289.47s34.22-15.218 34.22-34.22-15.217-34.22-34.22-34.22zm147.156 7.032c-.594 0-1.195.002-1.78.032-3.13 12.737-10.908 23.675-21.407 30.937 2.01 5.575 3.092 11.566 3.092 17.814 0 4.15-.523 8.182-1.437 12.062 5.863 4.74 13.34 7.563 21.53 7.563 19.004 0 34.22-15.218 34.22-34.22s-15.216-34.188-34.22-34.188zm-73 14.594c-8.17 0-15.644 2.82-21.5 7.53.16 1.673.25 3.352.25 5.064 0 12.203-4.18 23.462-11.187 32.438 4.49 13.63 17.23 23.375 32.436 23.375 19.003 0 34.22-15.217 34.22-34.22 0-19.002-15.217-34.187-34.22-34.187zm-144.25 11.094c-19.003 0-34.187 15.216-34.187 34.22 0 11.956 6.024 22.397 15.218 28.5 4.38-20.14 20.305-36.045 40.437-40.44-2.357-5.47-3.817-11.402-4.188-17.624-5.063-2.95-10.953-4.656-17.28-4.656zm32.72 39.72c-19.004 0-34.22 15.184-34.22 34.186 0 19.003 15.217 34.22 34.22 34.22 19 0 34.186-15.217 34.186-34.22 0-7.704-2.484-14.777-6.718-20.47-10.17-1.946-19.338-6.793-26.563-13.686-.3-.008-.603-.03-.905-.03zM222 300.686c-4.825 2.887-10.135 5.02-15.78 6.25 2.737 6.375 4.28 13.366 4.28 20.72 0 10.833-3.3 20.933-8.938 29.343 6.227 6.618 15.09 10.72 24.97 10.72 19.002 0 34.218-15.218 34.218-34.22 0-1.527-.122-3.028-.313-4.5-16.79-2.815-30.95-13.604-38.437-28.313zm91.03 5.657c-7.686 11.375-19.688 19.607-33.592 22.375 5.016 12.622 17.287 21.467 31.78 21.467 19.003 0 34.22-15.185 34.22-34.187 0-.313-.024-.627-.032-.938-1.075.066-2.16.094-3.25.094-10.745 0-20.76-3.25-29.125-8.812zm-38 48.125c-4.6 10.558-12.534 19.36-22.467 25.03 3.98 14.483 17.154 25 32.968 25 19.004 0 34.19-15.185 34.19-34.188 0-.71-.022-1.425-.064-2.125-2.75.445-5.567.688-8.437.688-13.967 0-26.708-5.495-36.19-14.406zm-86.31 15.936c-5.773 4.222-12.433 7.27-19.626 8.875-.816 2.942-1.28 6.036-1.28 9.25 0 19.004 15.184 34.19 34.186 34.19 19.002 0 34.22-15.186 34.22-34.19 0-1.006-.042-2.015-.126-3-3.103.575-6.3.876-9.563.876-14.775 0-28.19-6.147-37.81-16zm-61.282.625c-2.582 4.822-4.032 10.332-4.032 16.22 0 19.002 15.217 34.188 34.22 34.188.992 0 1.966-.044 2.936-.125-7.16-9.024-11.437-20.424-11.437-32.782 0-2.914.26-5.77.72-8.56-8.234-1.228-15.854-4.355-22.407-8.94zm122.968 38.72c-1.208 2.733-2.647 5.342-4.28 7.813 10.19 8.923 16.945 21.68 17.968 35.968 17.506-.66 31.472-14.26 32.75-31.592-3.65.802-7.43 1.25-11.313 1.25-13.452 0-25.763-5.1-35.124-13.438zm-17.094 21.313c-8.777 6.49-19.612 10.343-31.312 10.343-6.638 0-12.98-1.245-18.844-3.5-3.78 5.503-6 12.167-6 19.406 0 19.003 15.185 34.22 34.188 34.22 19.002 0 34.22-15.217 34.22-34.22 0-10.61-4.755-19.998-12.25-26.25z",
+  "wine-glass": "M148.97 22.47l-6.25.093-2.564 6.156c-13.235 37.556-21.28 79-21.28 118.093 0 53.777 14.848 93.17 39.874 118.875 18.945 19.458 43.36 30.696 70.156 35 17.09 48.115 16.085 101.005-2.562 148.687-30.555 5.118-60.254 18.273-86.313 39.5h231.22c-26.066-21.23-55.75-34.384-86.313-39.5-18.667-47.734-19.62-100.686-2.468-148.844 26.58-4.382 50.84-15.552 69.75-34.842 25.184-25.692 40.186-65.08 40.186-118.875 0-39.093-8.045-80.537-21.28-118.094l-2.188-6.25h-219.97zm6.75 18.686h199.843c7.25 21.815 12.64 44.904 15.593 67.72h-231.03c2.953-22.816 8.344-45.905 15.593-67.72zm-17.47 86.406h234.78c.45 6.49.69 12.912.69 19.25 0 50.357-13.716 84.26-34.845 105.813-21.13 21.554-50.295 31.406-83.53 31.406-33.238 0-62.247-9.863-83.22-31.405s-34.563-55.437-34.563-105.813c0-6.338.24-12.76.688-19.25z"
+};
+const HDR_ICON_SETS = {
+  open: [["corkscrew", "Tire-bouchon"], ["wine-bottle", "Bouteille"], ["champagne-cork", "Bouchon"]],
+  som:  [["bow-tie", "Nœud papillon"], ["grapes", "Grappe"], ["wine-glass", "Verre"]],
+};
+const hdrIconPref = (kind) => {
+  const def = kind === "open" ? "corkscrew" : "bow-tie";
+  try {
+    const v = localStorage.getItem(`millesime-ico-${kind}`);
+    if (v && HDR_ICON_PATHS[v]) return v;
+  } catch (e) {}
+  return def;
+};
+const hdrIconSVG = (name, size = 16) =>
+  `<svg viewBox="0 0 512 512" width="${size}" height="${size}" class="hdr-ico" aria-hidden="true">` +
+  `<path fill="currentColor" d="${HDR_ICON_PATHS[name] || HDR_ICON_PATHS.corkscrew}"/></svg>`;
 
 // ── Ombres de la vue 3D : deux implémentations conservées, au choix ───────────
 // false (DÉFAUT, ACTIF) : ombre de CONTACT — un halo radial léger posé sous chaque
@@ -1698,6 +1673,7 @@ class MillesimeCard extends HTMLElement {
     if (type === "racklist")  box.innerHTML = this._rackListHTML();
     if (type === "openpage")  box.innerHTML = this._openPageHTML();
     if (type === "options")   box.innerHTML = this._optionsHTML();
+    if (type === "custom")    box.innerHTML = this._customHTML();
     if (type === "moverack") box.innerHTML = this._moveRackHTML(opts.rack);
     if (type === "sensors")   box.innerHTML = this._sensorsHTML();
     if (type === "cellars")   box.innerHTML = this._cellarsHTML();
@@ -1714,6 +1690,7 @@ class MillesimeCard extends HTMLElement {
     if (type === "rack")     this._bindRackForm(box, opts.rack);
     if (type === "bottle")    this._bindBottleForm(box, opts.wine, opts.slot);
     if (type === "detail")    this._bindDetailButtons(box, opts.wine);
+    if (type === "detail")    this._bindGloss(box);   // glossaires ℹ️ arômes/structure (v7.1.0)
     if (type === "duplicate") this._bindAddSlotForm(box, opts.wine);
     if (type === "slotedit")  this._bindSlotEdit(box, opts.wine, opts.slotIdx);
     if (type === "history") {
@@ -1728,6 +1705,7 @@ class MillesimeCard extends HTMLElement {
     if (type === "racklist")  this._bindRackList(box);
     if (type === "openpage")  this._bindOpenPage(box);
     if (type === "options")   this._bindOptionsModal(box);
+    if (type === "custom")    this._bindCustomModal(box);
     if (type === "moverack") this._bindMoveRack(box, opts.rack);
     if (type === "sensors")   this._bindSensors(box);
     if (type === "envhistory") this._bindEnvHistory(box, opts.entity, opts.kind);
@@ -2580,25 +2558,34 @@ class MillesimeCard extends HTMLElement {
 
   // ── Fiche détail bouteille ─────────────────────────────────────────────────────
 
-  // ── Profil aromatique (v7.0.0, refondu v7.0.1) ──────────────────────────────
-  // Format backend : "Fruité:45|Boisé:20|Épicé:15|…" sur 11 familles fixes.
+  // ── Profil aromatique (v7.0.0, refondu v7.0.1, nomenclature v7.1.0) ─────────
+  // Format backend : "Fruité:45|Boisé:20|Épicé:15|…" sur les 11 SÉRIES
+  // AROMATIQUES œnologiques (v7.1.0 : Empyreumatique, Fermentaire, Sous-bois,
+  // Évolution remplacent Grillé, Lacté, Terreux, Tertiaire — anciens noms
+  // mappés à la lecture via AROMA_LEGACY, rétro-compatibilité totale).
   // Parsé avec tolérance (ordre libre, familles inconnues ignorées, valeurs
   // bornées 0-100). Rendu au choix : radar ou barres horizontales, en SVG
   // natif — réglage dans ⚙️ Options (this._aromaMode). Depuis v7.0.1 : section
   // TOUJOURS visible sur la fiche (plus de repli), axes du radar ADAPTATIFS
   // selon la couleur du vin (AROMA_AXES_BY_TYPE) + toute famille présente,
   // couleurs du polygone reprises du type de vin.
-  static AROMA_FAMILIES = ["Fruité", "Floral", "Boisé", "Épicé", "Minéral", "Végétal", "Grillé", "Animal", "Lacté", "Terreux", "Tertiaire"];
+  static AROMA_FAMILIES = ["Fruité", "Floral", "Végétal", "Minéral", "Épicé", "Boisé", "Empyreumatique", "Animal", "Fermentaire", "Sous-bois", "Évolution"];
+
+  // v7.1.0 : rétro-compatibilité — les profils générés avant la nomenclature
+  // experte utilisent les anciens noms de familles ; on les mappe à la lecture
+  // pour que les fiches existantes s'affichent sans relancer l'IA.
+  static AROMA_LEGACY = { "grille": "Empyreumatique", "lacte": "Fermentaire", "terreux": "Sous-bois", "tertiaire": "Évolution" };
 
   // v7.0.1 : axes PERTINENTS par couleur de vin — un blanc n'a pas d'axe
-  // « Animal », un rouge n'a guère de « Lacté ». Le radar affiche les axes de
-  // la couleur + toute famille non listée mais présente dans le profil.
+  // « Animal », un rouge n'a guère de « Fermentaire ». Le radar affiche les
+  // axes de la couleur + toute famille non listée mais présente dans le profil.
+  // v7.1.0 : nomenclature experte (séries aromatiques œnologiques).
   static AROMA_AXES_BY_TYPE = {
-    red:       ["Fruité", "Boisé", "Épicé", "Végétal", "Animal", "Terreux", "Grillé", "Tertiaire"],
-    white:     ["Fruité", "Floral", "Minéral", "Boisé", "Végétal", "Lacté", "Grillé", "Tertiaire"],
-    rose:      ["Fruité", "Floral", "Minéral", "Végétal", "Épicé", "Lacté"],
-    sparkling: ["Fruité", "Floral", "Minéral", "Grillé", "Lacté", "Tertiaire"],
-    dessert:   ["Fruité", "Floral", "Épicé", "Boisé", "Lacté", "Tertiaire"],
+    red:       ["Fruité", "Boisé", "Épicé", "Végétal", "Animal", "Sous-bois", "Empyreumatique", "Évolution"],
+    white:     ["Fruité", "Floral", "Minéral", "Boisé", "Végétal", "Fermentaire", "Empyreumatique", "Évolution"],
+    rose:      ["Fruité", "Floral", "Minéral", "Végétal", "Épicé", "Fermentaire"],
+    sparkling: ["Fruité", "Floral", "Minéral", "Empyreumatique", "Fermentaire", "Évolution"],
+    dessert:   ["Fruité", "Floral", "Épicé", "Boisé", "Fermentaire", "Évolution"],
   };
 
   _aromaAxesFor(profile, type) {
@@ -2614,6 +2601,9 @@ class MillesimeCard extends HTMLElement {
     const norm = (s) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     const fams = this.constructor.AROMA_FAMILIES;
     const byNorm = Object.fromEntries(fams.map(f => [norm(f), f]));
+    // v7.1.0 : les anciens noms (Grillé, Lacté, Terreux, Tertiaire) sont mappés
+    // vers la nomenclature experte — les profils existants restent lisibles
+    Object.assign(byNorm, this.constructor.AROMA_LEGACY);
     const out = {};
     for (const part of str_.split(/[|,;]/)) {
       const m = part.match(/^\s*([^:%]+?)\s*[:\s]\s*(\d{1,3})\s*%?\s*$/);
@@ -2690,13 +2680,40 @@ class MillesimeCard extends HTMLElement {
   _aromaSectionHTML(w) {
     const profile = this._parseAromaProfile(w.aroma_profile);
     if (!profile) return "";
-    // v7.0.1 : toujours visible sur la fiche — plus de menu repliable
+    // v7.0.1 : toujours visible sur la fiche — v7.1.0 : glossaire ℹ️ intégré
+    const g = this._glossHTML("aroma", "fiche-a");
     return `
       <div class="aroma-box">
-        <div class="aroma-summary aroma-summary--static">🌸 Profil aromatique</div>
+        <div class="aroma-summary aroma-summary--static">🌸 Profil aromatique ${g.btn}</div>
         <div class="aroma-body">
+          ${g.panel}
           ${this._aromaMode === "bars" ? this._aromaBarsSVG(profile, w.type) : this._aromaRadarSVG(profile, w.type)}
           <div class="aroma-legend">Estimation IA du profil au stade actuel du vin — indicatif, à affiner à la dégustation.</div>
+        </div>
+      </div>`;
+  }
+
+  // ── Structure en bouche (v7.1.0) — barres 6 axes, toujours visible ─────────
+  _structureSectionHTML(w) {
+    const sp = this._parseStructureProfile(w.structure_profile);
+    if (!sp) return "";
+    const t = WINE_TYPES[w.type] || WINE_TYPES.red;
+    const g = this._glossHTML("structure", "fiche-s");
+    const rows = this.constructor.STRUCTURE_AXES
+      .filter(a => sp[a] != null)
+      .map(a => `
+        <div class="st-row">
+          <span class="st-lbl">${a}</span>
+          <div class="st-trk"><div class="st-fil" style="width:${sp[a]}%;background:${t.color}"></div></div>
+          <span class="st-val">${sp[a]}</span>
+        </div>`).join("");
+    return `
+      <div class="aroma-box">
+        <div class="aroma-summary aroma-summary--static">🍷 Structure ${g.btn}</div>
+        <div class="aroma-body">
+          ${g.panel}
+          ${rows}
+          <div class="aroma-legend">Profil de dégustation estimé par l'IA (0–100 par axe) — lancez « Compléter les fiches » pour l'obtenir sur les vins qui ne l'ont pas encore.</div>
         </div>
       </div>`;
   }
@@ -2743,6 +2760,7 @@ class MillesimeCard extends HTMLElement {
         </div>
         ${b.tasting_notes ? `<div class="mm-notes mm-tasting">🍷 ${esc(b.tasting_notes)}</div>` : ""}
         ${this._aromaSectionHTML(b)}
+        ${this._structureSectionHTML(b)}
         ${b.food_pairing  ? `<div class="mm-notes mm-pairing">🍽️ ${esc(b.food_pairing)}</div>`  : ""}
         ${b.notes
           ? `<div class="mm-notes">"${esc(b.notes)}"</div>`
@@ -4419,15 +4437,28 @@ class MillesimeCard extends HTMLElement {
     const total  = wines.reduce((s, w) => s + (w.slots?.length || 0), 0);
     const value  = wines.reduce((s, w) => s + (w.price || 0) * (w.slots?.length || 0), 0);
     const nRack = data.cellar?.racks?.length || 0;
-    // v7.0.2 : rouge Millésime + icône verre à vin SVG (colorable, contrairement
-    // à l'emoji) — même cellule de grille que l'ancien sélecteur de vue, donc
-    // même taille et alignement que Casier / Vin.
+    // v7.1.0 : rangée d'actions refondue — « À ouvrir » remonte de la rangée
+    // capteurs (rouge, icône personnalisable), Sommelier au centre (rouge,
+    // icône personnalisable), « + Casier »/« + Vin » fusionnés en « ➕ Ajouter »
+    // (gris : la couleur est réservée aux fonctions du vin) avec petit menu.
+    const occActive = !!this._occasionFilter;
+    const occTitle = occActive
+      ? `Filtre actif : ${esc((EVENT_TYPES.find(e => e.v === this._occasionFilter) || {}).l || "")}`
+      : "À ouvrir : accords, envies, apogée, occasions";
+    const openBtn = `
+      <button class="btn-rack btn-open-top ${occActive ? "btn-open-top--active" : ""}" id="btn-open-page" title="${occTitle}">
+        ${hdrIconSVG(hdrIconPref("open"))}À ouvrir</button>`;
     const somBtn = `
       <button class="btn-rack btn-sommelier" id="btn-sommelier-top" title="Sommelier IA : conseil d'achat &amp; opportunité">
-        <svg class="somm-ico" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M8 21h8"/><path d="M12 15v6"/><path d="M7 3h10l-.7 6.3a4.6 4.6 0 0 1-8.6 0z"/>
-        </svg>Sommelier</button>`;
-    // Menu déroulant des repères 3D : désormais dans la fenêtre Options (_optionsHTML)
+        ${hdrIconSVG(hdrIconPref("som"))}Sommelier</button>`;
+    const addBtn = `
+      <div class="add-wrap">
+        <button class="btn-rack btn-add" id="btn-add-main" title="Ajouter un vin ou un casier">➕ Ajouter</button>
+        <div class="add-menu" id="add-menu" hidden>
+          <button class="add-mi" id="btn-add-bottle">🍷 Un vin</button>
+          <button class="add-mi" id="btn-add-rack">🗄️ Un casier</button>
+        </div>
+      </div>`;
 
     return `
       <div class="header">
@@ -4453,9 +4484,9 @@ class MillesimeCard extends HTMLElement {
             <button class="btn-icon btn-options-top" id="btn-options" title="Options" aria-label="Options">⚙️</button>
           </div>
           <div class="header-actions">
+            ${openBtn}
             ${somBtn}
-            <button class="btn-rack" id="btn-add-rack" title="Ajouter un casier">➕ Casier</button>
-            <button class="btn-primary" id="btn-add-bottle">+ Vin</button>
+            ${addBtn}
             <button class="btn-icon btn-journal-top" id="btn-journal" title="Journal de dégustation">📓</button>
           </div>
         </div>
@@ -4484,6 +4515,10 @@ class MillesimeCard extends HTMLElement {
           <button class="mm-opt-item" id="btn-refresh">
             <span class="mm-opt-emoji">♻️</span>
             <span class="mm-opt-txt"><b>Compléter les fiches</b><small>Fusionne les doublons puis remplit les champs vides via l'IA</small></span>
+          </button>
+          <button class="mm-opt-item" id="btn-custom">
+            <span class="mm-opt-emoji">🎨</span>
+            <span class="mm-opt-txt"><b>Personnalisation</b><small>Icônes des boutons « À ouvrir » et « Sommelier »</small></span>
           </button>
           <button class="mm-opt-item" id="btn-cellars">
             <span class="mm-opt-emoji">🏰</span>
@@ -4559,6 +4594,44 @@ class MillesimeCard extends HTMLElement {
       this._shelfGap = Math.max(60, Math.min(180, v));
     }
     return this._shelfGap;
+  }
+
+  // ── Personnalisation (v7.1.0) : choix des icônes des boutons du header ─────
+  _customHTML() {
+    const row = (kind, title) => `
+      <div class="ico-grp">${title}</div>
+      <div class="ico-choices" data-kind="${kind}">
+        ${HDR_ICON_SETS[kind].map(([name, lbl]) => `
+          <button type="button" class="ico-choice ${hdrIconPref(kind) === name ? "sel" : ""}" data-ico="${name}">
+            <span class="ico-check">✓</span>
+            ${hdrIconSVG(name, 27)}
+            <span class="ico-lbl">${lbl}</span>
+          </button>`).join("")}
+      </div>`;
+    return `
+      <div class="mm-header">
+        <span class="mm-title">🎨 Personnalisation</span>
+        <button class="mm-close" data-close>✕</button>
+      </div>
+      <div class="mm-body">
+        <div class="occ-hint">Choisissez l'icône de chaque bouton — appliquée en direct, mémorisée sur cet appareil.</div>
+        ${row("open", "🍾 Icône du bouton « À ouvrir »")}
+        ${row("som", "🤵 Icône du bouton « Sommelier »")}
+        <div class="mm-hint">Icônes : game-icons.net (Delapouite &amp; Lorc), licence CC BY 3.0.</div>
+      </div>`;
+  }
+
+  _bindCustomModal(box) {
+    box.querySelectorAll(".ico-choices").forEach((grp) => {
+      const kind = grp.dataset.kind;
+      grp.querySelectorAll(".ico-choice").forEach((btn) =>
+        btn.addEventListener("click", () => {
+          try { localStorage.setItem(`millesime-ico-${kind}`, btn.dataset.ico); } catch (e) {}
+          grp.querySelectorAll(".ico-choice").forEach(b => b.classList.toggle("sel", b === btn));
+          this._render();   // le header derrière la fenêtre change d'icône immédiatement
+        })
+      );
+    });
   }
 
   _bindOptionsModal(box) {
@@ -4665,6 +4738,7 @@ class MillesimeCard extends HTMLElement {
       });
     });
     box.querySelector("#btn-cellars")?.addEventListener("click", () => this._openModal("cellars"));
+    box.querySelector("#btn-custom")?.addEventListener("click", () => this._openModal("custom"));   // v7.1.0
     box.querySelector("#btn-sensors")?.addEventListener("click", () => this._openModal("sensors"));
   }
 
@@ -4807,11 +4881,8 @@ class MillesimeCard extends HTMLElement {
     const cellar = this._data?.cellar || {};
     const temp = this._sensorVal(cellar.temp_entity);
     const humid = this._sensorVal(cellar.humid_entity);
-    const occActive = !!this._occasionFilter;
-    const occLabel = occActive
-      ? esc((EVENT_TYPES.find(e => e.v === this._occasionFilter) || {}).l || "À ouvrir")
-      : "À ouvrir…";
-
+    // v7.1.0 : « À ouvrir » a rejoint la rangée d'actions du header — les
+    // capteurs occupent désormais toute la largeur.
     return `
       <div class="env-row">
         <div class="env-box ${cellar.temp_entity ? "env-clickable" : "env-empty"}" id="env-temp" title="Température">
@@ -4820,9 +4891,6 @@ class MillesimeCard extends HTMLElement {
         <div class="env-box ${cellar.humid_entity ? "env-clickable" : "env-empty"}" id="env-humid" title="Hygrométrie">
           <span class="env-value">💧 ${humid ? `${humid.value}${humid.unit || "%"}` : "—"}</span>
         </div>
-        <button class="env-box env-clickable env-open ${occActive ? "env-open-active" : ""}" id="btn-open-page" title="À ouvrir : filtrer par occasion">
-          ${CORKSCREW_SVG}<span class="env-open-label">${occLabel}</span>
-        </button>
       </div>`;
   }
 
@@ -5295,36 +5363,164 @@ class MillesimeCard extends HTMLElement {
   // sommelier IA propose UNE bouteille de la cave — bon profil, bonne apogée —
   // avec son PRIX affiché pour aider à trancher. Repli local (scoring sur
   // aroma_profile) si l'IA est indisponible.
+  // ── Structure (v7.1.0) ─────────────────────────────────────────────────────
+  // Axes de dégustation stockés (0-100 indépendants) + chips grand public de
+  // « Envie de… » mappées sur ces axes (+1 = recherché élevé, -1 = recherché bas)
+  static STRUCTURE_AXES = ["Tanins", "Corps", "Acidité", "Gras", "Alcool", "Persistance"];
+  static STRUCTURE_CHIPS = [
+    { l: "Tannique",        axis: "Tanins",      dir: +1 },
+    { l: "Souple",          axis: "Tanins",      dir: -1 },
+    { l: "Corsé",           axis: "Corps",       dir: +1 },
+    { l: "Léger",           axis: "Corps",       dir: -1 },
+    { l: "Vif & frais",     axis: "Acidité",     dir: +1 },
+    { l: "Rond & moelleux", axis: "Gras",        dir: +1 },
+    { l: "Puissant",        axis: "Alcool",      dir: +1 },
+    { l: "Long en bouche",  axis: "Persistance", dir: +1 },
+  ];
+
+  // Glossaires ℹ️ (v7.1.0) — définitions d'une ligne pour les non-initiés
+  static GLOSSARY = {
+    aroma: [
+      ["Fruité", "fruits frais, mûrs ou confits : agrumes, fruits rouges, noirs, exotiques"],
+      ["Floral", "rose, violette, acacia, tilleul"],
+      ["Végétal", "herbe coupée, buis, poivron, menthe"],
+      ["Minéral", "pierre à fusil, craie, silex, iode"],
+      ["Épicé", "poivre, réglisse, cannelle, girofle"],
+      ["Boisé", "vanille, cèdre, notes de fût"],
+      ["Empyreumatique", "fumé, grillé, torréfié, café, cacao"],
+      ["Animal", "cuir, gibier, musc"],
+      ["Fermentaire", "beurre, brioche, levure — issus de la fermentation"],
+      ["Sous-bois", "champignon, humus, truffe, feuille morte"],
+      ["Évolution", "fruits secs, miel, cire : la maturité du vin"],
+    ],
+    structure: [
+      ["Tanins", "astringence qui assèche le palais"],
+      ["Corps", "densité et volume en bouche"],
+      ["Acidité", "fraîcheur, vivacité qui fait saliver"],
+      ["Gras", "onctuosité, texture enveloppante"],
+      ["Alcool", "chaleur perçue en fin de bouche"],
+      ["Persistance", "durée des arômes après la gorgée, en caudalies"],
+    ],
+    envieStructure: [
+      ["Tannique", "du grip, des tanins présents"],
+      ["Souple", "tanins fondus, tout en douceur"],
+      ["Corsé", "riche et dense"],
+      ["Léger", "facile, digeste"],
+      ["Vif & frais", "la tension qui désaltère"],
+      ["Rond & moelleux", "caressant, enrobé"],
+      ["Puissant", "intense et chaleureux"],
+      ["Long en bouche", "des arômes qui durent"],
+    ],
+  };
+
+  // Bouton ℹ️ + panneau glossaire dépliable (un tap ouvre, un tap referme)
+  _glossHTML(key, id) {
+    const rows = (this.constructor.GLOSSARY[key] || [])
+      .map(([t, d]) => `<p class="gl-row"><b>${esc(t)}</b> — ${esc(d)}</p>`).join("");
+    return {
+      btn: `<button type="button" class="gl-info" data-gl="${id}" aria-label="Définitions" title="Définitions">i</button>`,
+      panel: `<div class="gl-panel" id="gl-${id}" hidden>${rows}</div>`,
+    };
+  }
+
+  _bindGloss(box) {
+    box.querySelectorAll(".gl-info").forEach((b) =>
+      b.addEventListener("click", () => {
+        const p = box.querySelector(`#gl-${b.dataset.gl}`);
+        if (!p) return;
+        p.hidden = !p.hidden;
+        b.classList.toggle("on", !p.hidden);
+      })
+    );
+  }
+
   _envieHTML() {
     const fams = this.constructor.AROMA_FAMILIES;
+    // v7.1.0 : classe PROPRE .envie-chip (plus de .occ-btn partagé — c'était la
+    // cause de la fermeture de la fenêtre à chaque sélection de critère)
     const chips = fams.map(f =>
-      `<button type="button" class="occ-btn envie-chip ${(this._envieWants || []).includes(f) ? "active" : ""}" data-fam="${esc(f)}">${esc(f)}</button>`
+      `<button type="button" class="envie-chip ${(this._envieWants || []).includes(f) ? "active" : ""}" data-fam="${esc(f)}">${esc(f)}</button>`
+    ).join("");
+    const sChips = this.constructor.STRUCTURE_CHIPS.map(c =>
+      `<button type="button" class="envie-chip envie-chip--s ${(this._envieWantsS || []).includes(c.l) ? "active" : ""}" data-schip="${esc(c.l)}">${esc(c.l)}</button>`
     ).join("");
     const colorOpts = [`<option value="">🍷 Peu importe la couleur</option>`]
       .concat(Object.entries(WINE_TYPES).map(([v, t]) =>
         `<option value="${v}" ${this._envieColor === v ? "selected" : ""}>${t.emoji} ${t.label}</option>`))
       .join("");
+    const gA = this._glossHTML("aroma", "envie-a");
+    const gS = this._glossHTML("envieStructure", "envie-s");
     return `
-      <div class="occ-hint">Envie d'un bon vin, tout simplement ? Choisissez le profil aromatique du moment :
+      <div class="occ-hint">Envie d'un bon vin, tout simplement ? Choisissez le profil du moment :
         le sommelier propose <b>une seule bouteille</b> de votre cave, au bon profil et à la bonne apogée — avec son prix.</div>
+      <div class="envie-grp">🌸 Arômes ${gA.btn}</div>
+      ${gA.panel}
       <div class="envie-chips" id="envie-chips">${chips}</div>
+      <div class="envie-grp">🍷 Structure ${gS.btn}</div>
+      ${gS.panel}
+      <div class="envie-chips" id="envie-chips-s">${sChips}</div>
       <select class="mm-input envie-color" id="envie-color">${colorOpts}</select>
       <button class="acc-go envie-go" id="envie-go">🍷 Envie de… trouver mon vin</button>
       <div class="acc-list" id="envie-result"></div>`;
   }
 
-  // Repli local : score = somme des intensités des familles choisies dans le
-  // profil aromatique du vin, bonus si « à boire maintenant », malus si trop
-  // jeune ou dépassé — puis meilleur score.
-  _envieLocalPick(wants, color) {
+  // Repli local : score = intensités des familles aromatiques choisies
+  // + adéquation de STRUCTURE (v7.1.0 : sur structure_profile si présent,
+  // sinon heuristique par type/région), bonus apogée « à boire maintenant ».
+  _parseStructureProfile(str_) {
+    if (!str_ || typeof str_ !== "string") return null;
+    const norm = (s) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const byNorm = Object.fromEntries(this.constructor.STRUCTURE_AXES.map(a => [norm(a), a]));
+    const out = {};
+    for (const part of str_.split(/[|,;]/)) {
+      const m = part.match(/^\s*([^:%]+?)\s*[:\s]\s*(\d{1,3})\s*%?\s*$/);
+      if (!m) continue;
+      const ax = byNorm[norm(m[1])];
+      if (ax) out[ax] = Math.max(0, Math.min(100, parseInt(m[2])));
+    }
+    return Object.keys(out).length >= 2 ? out : null;
+  }
+
+  _envieStructureScore(w, wantsS) {
+    if (!wantsS.length) return 0;
+    const chips = this.constructor.STRUCTURE_CHIPS.filter(c => wantsS.includes(c.l));
+    const sp = this._parseStructureProfile(w.structure_profile);
+    if (sp) {
+      // Données réelles : dir +1 → l'axe compte positivement ; dir -1 → on
+      // récompense un axe BAS (100 - valeur)
+      return chips.reduce((a, c) => {
+        const v = sp[c.axis];
+        if (v == null) return a;
+        return a + (c.dir > 0 ? v : 100 - v);
+      }, 0);
+    }
+    // Heuristique de secours (fiches pas encore complétées) : type + région
+    const reg = ((w.region || "") + " " + (w.appellation || "")).toLowerCase();
+    let s = 0;
+    for (const c of chips) {
+      if (c.l === "Tannique")
+        s += (w.type === "red" ? 40 : 0) + (/madiran|cahors|bordeaux|medoc|saint-est|sud-ouest/.test(reg) ? 30 : 0);
+      if (c.l === "Souple")   s += (w.type === "red" && /bourgogne|beaujolais|loire/.test(reg) ? 50 : 20);
+      if (c.l === "Corsé")    s += (/chateauneuf|gigondas|madiran|cahors|priorat/.test(reg) ? 60 : (w.type === "red" ? 25 : 5));
+      if (c.l === "Léger")    s += (w.type === "rose" || /beaujolais|gamay|loire/.test(reg) ? 55 : 15);
+      if (c.l === "Vif & frais") s += (w.type === "white" || w.type === "sparkling" ? 50 : 10);
+      if (c.l === "Rond & moelleux") s += (w.type === "dessert" ? 60 : /meursault|chardonnay/.test(reg) ? 45 : 15);
+      if (c.l === "Puissant") s += (/chateauneuf|amarone|barolo|madiran/.test(reg) ? 60 : (w.type === "red" ? 25 : 5));
+      if (c.l === "Long en bouche") s += 20;   // neutre sans donnée
+    }
+    return s;
+  }
+
+  _envieLocalPick(wants, wantsS, color) {
     const wines = (this._data?.wines || [])
       .filter(w => (w.slots || []).length)
       .filter(w => !color || (w.type || "red") === color);
     let best = null, bestScore = -1;
     for (const w of wines) {
       const prof = this._parseAromaProfile(w.aroma_profile);
-      if (!prof) continue;
-      let s = wants.reduce((a, f) => a + (prof[f] || 0), 0);
+      if (!prof && !wantsS.length) continue;
+      let s = prof ? wants.reduce((a, f) => a + (prof[f] || 0), 0) : 0;
+      s += this._envieStructureScore(w, wantsS);
       const st = this._apogeeState(w);
       if (st === "now") s += 60;
       else if (st === "soon") s += 15;
@@ -5356,14 +5552,25 @@ class MillesimeCard extends HTMLElement {
 
   _bindEnvie(box) {
     const result = box.querySelector("#envie-result");
-    // Sélection multiple des familles aromatiques (chips)
-    box.querySelectorAll(".envie-chip").forEach((chip) =>
+    this._bindGloss(box.querySelector('[data-panel="envie"]') || box);
+    // Rangée ARÔMES (multi-sélection)
+    box.querySelectorAll("#envie-chips .envie-chip").forEach((chip) =>
       chip.addEventListener("click", () => {
         const f = chip.dataset.fam;
         this._envieWants = this._envieWants || [];
         if (this._envieWants.includes(f)) this._envieWants = this._envieWants.filter(x => x !== f);
         else this._envieWants.push(f);
         chip.classList.toggle("active", this._envieWants.includes(f));
+      })
+    );
+    // Rangée STRUCTURE (v7.1.0, multi-sélection)
+    box.querySelectorAll("#envie-chips-s .envie-chip").forEach((chip) =>
+      chip.addEventListener("click", () => {
+        const c = chip.dataset.schip;
+        this._envieWantsS = this._envieWantsS || [];
+        if (this._envieWantsS.includes(c)) this._envieWantsS = this._envieWantsS.filter(x => x !== c);
+        else this._envieWantsS.push(c);
+        chip.classList.toggle("active", this._envieWantsS.includes(c));
       })
     );
     box.querySelector("#envie-color")?.addEventListener("change", (e) => {
@@ -5379,8 +5586,9 @@ class MillesimeCard extends HTMLElement {
     };
     box.querySelector("#envie-go")?.addEventListener("click", async () => {
       const wants = this._envieWants || [];
-      if (!wants.length) {
-        if (result) result.innerHTML = `<div class="acc-empty">Choisissez au moins une famille aromatique ci-dessus.</div>`;
+      const wantsS = this._envieWantsS || [];
+      if (!wants.length && !wantsS.length) {
+        if (result) result.innerHTML = `<div class="acc-empty">Choisissez au moins un critère (arôme ou structure) ci-dessus.</div>`;
         return;
       }
       const wines = this._data?.wines || [];
@@ -5389,23 +5597,24 @@ class MillesimeCard extends HTMLElement {
         return;
       }
       const est = this._estimateTokens(JSON.stringify(
-        wines.map(w => (w.name || "") + (w.aroma_profile || "")))) + 250;
+        wines.map(w => (w.name || "") + (w.aroma_profile || "") + (w.structure_profile || "")))) + 250;
       const prog = this._aiProgressOpen("Sommelier — envie du moment", est);
       if (result) result.innerHTML = "";
       try {
         prog.step(1);
         const req = this._hass.connection.sendMessagePromise({
           type: "millesime/craving",
-          wants, color: this._envieColor || null, cellar_id: this._cellarId || null,
+          wants, wants_structure: wantsS,
+          color: this._envieColor || null, cellar_id: this._cellarId || null,
         });
         prog.step(2);
         const res = await req;
         if (res?.error) {
-          // IA indisponible → repli local silencieux sur les profils aromatiques
-          const local = this._envieLocalPick(wants, this._envieColor || "");
+          // IA indisponible → repli local silencieux (arômes + structure)
+          const local = this._envieLocalPick(wants, wantsS, this._envieColor || "");
           if (local) {
             prog.close();
-            showResult(local, { match: "Sélection locale (IA indisponible) : meilleur profil aromatique correspondant dans votre cave." });
+            showResult(local, { match: "Sélection locale (IA indisponible) : meilleur profil correspondant dans votre cave." });
           } else {
             prog.fail(res.error === "no_key"
               ? "Clé Gemini absente : configurez-la dans l'intégration"
@@ -5426,7 +5635,7 @@ class MillesimeCard extends HTMLElement {
         showResult(w, { match: r.match, apogee: r.apogee, serve: r.serve });
       } catch (e) {
         // Erreur réseau → même repli local
-        const local = this._envieLocalPick(wants, this._envieColor || "");
+        const local = this._envieLocalPick(wants, wantsS, this._envieColor || "");
         if (local) { prog.close(); showResult(local, { match: "Sélection locale (hors ligne) : meilleur profil correspondant." }); }
         else prog.fail("Erreur réseau : réessayez");
       }
@@ -5591,8 +5800,10 @@ class MillesimeCard extends HTMLElement {
     this._bindApogee(box);
     this._bindAccords(box);
     this._bindEnvie(box);
-    // Occasion : sélection unique → ferme la page + surbrillance dans la cave
-    box.querySelectorAll(".occ-btn").forEach((b) =>
+    // Occasion : sélection unique → ferme la page + surbrillance dans la cave.
+    // v7.1.0 : bind SCOPÉ au panneau Occasions — avant, il capturait aussi les
+    // chips « Envie de… » (même classe) et fermait la fenêtre à chaque critère.
+    box.querySelectorAll('[data-panel="occasions"] .occ-btn').forEach((b) =>
       b.addEventListener("click", () => {
         this._occasionFilter = b.dataset.occ || "";
         this._closeModal();
@@ -5829,8 +6040,8 @@ class MillesimeCard extends HTMLElement {
 
   // Profils de révolution (r, y) par forme de bouteille
   _bottleProfile(THREE, kind = "bordeaux") {
-    // Profils partagés avec la 2D (BOTTLE_PROFILES) — source unique, normalisés
-    // au rayon commun BOTTLE_R (diamètre identique pour toutes les bouteilles)
+    // Profils partagés avec la 2D (BOTTLE_PROFILES) — source unique en unités
+    // RÉELLES (v7.1.0) : chaque forme a son rayon et sa longueur propres
     return _normProfile(BOTTLE_PROFILES[kind] || BOTTLE_PROFILES.bordeaux).map(([x, y]) => new THREE.Vector2(x, y));
   }
 
@@ -5897,85 +6108,77 @@ class MillesimeCard extends HTMLElement {
     // Bouteille couchée le long de Z, goulot vers le spectateur (+Z), posée sur le dos.
     // `rest` = rayon max (hauteur de repos) ; l'étiquette est placée sur le bas du fût,
     // bande centrée vers le haut (après rotateX(π/2), "haut" = -cosθ → bande sur θ=π).
+    // v7.1.0 : mkSet piloté par BOTTLE_METAS — demi-longueur, rayon de pose et
+    // hauteur PROPRES à chaque forme (fini le 1.86/3.72 universel). Toutes les
+    // cotes d'accessoires ci-dessous sont issues des tables MILLIMÉTRIQUES
+    // réelles (converties via K_MM) : capsule sur la bague, bouchon dans le
+    // goulot, collerette sur le col, étiquette sur le fût droit.
     const mkSet = (kind, o) => {
-      const xf = (g) => { g.rotateX(Math.PI / 2); g.translate(0, o.rest, -1.86); return g; };
+      const meta = BOTTLE_METAS[kind] || BOTTLE_METAS.bordeaux;
+      const xf = (g) => { g.rotateX(Math.PI / 2); g.translate(0, meta.r, -meta.half); return g; };
       const set = {
-        rest:   o.rest,
-        // Extrémité avant (pointe du bouchon, plaque bombée comprise sur
-        // l'effervescent) en coordonnées locales — pour l'alignement au bord avant
-        tip:    o.corkY + o.corkH / 2 - 1.86 + (o.muselet ? 0.085 : 0),
+        rest:   meta.r,               // hauteur de pose = rayon réel de la forme
+        half:   meta.half,            // demi-longueur réelle (positionnement, tilt, drag)
+        hUnits: meta.h,
+        // Extrémité avant (pointe du bouchon, plaque comprise sur l'effervescent)
+        tip:    o.corkY + o.corkH / 2 - meta.half + (o.muselet ? 0.09 : 0),
         body:   xf(new THREE.LatheGeometry(this._bottleProfile(THREE, kind), 48)),
-        // capPts (optionnel) : coiffe galbée en profil de révolution (champenoise) —
-        // taille resserrée sur le col puis renflement épousant la tête du bouchon.
-        // Sinon capsule cylindrique/conique classique (capR/capR2).
         cap:    o.capPts
           ? xf(new THREE.LatheGeometry(o.capPts.map(([r, y]) => new THREE.Vector2(r, y)), 24))
           : xf(new THREE.CylinderGeometry(o.capR, o.capR2 || o.capR, o.capH, 24).translate(0, o.capY, 0)),
-        // corkR2 (optionnel) : taille basse ≠ tête → bouchon champignon (champenoise)
         cork:   xf(new THREE.CylinderGeometry(o.corkR, o.corkR2 || o.corkR, o.corkH, 18).translate(0, o.corkY, 0)),
-        // Tête bombée + cercles concentriques : réservés au bouchon champignon
-        // (sur les vins tranquilles, le petit bouchon droit rendait mieux sans)
-        // Calotte écrasée (0.26) : son apex reste SOUS la plaque métallique — seul
-        // l'anneau de liège déborde autour, le centre reste métal
         corkTop: o.muselet
           ? xf(new THREE.SphereGeometry(o.corkR, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2)
               .scale(1, 0.26, 1).translate(0, o.corkY + o.corkH / 2, 0))
           : null,
-        // colR2 (optionnel) : collerette conique épousant le col (champenoise)
         collar: xf(new THREE.CylinderGeometry(o.colR, o.colR2 || o.colR, o.colH, 24, 1, true).translate(0, o.colY, 0)),
-        label:  xf(new THREE.CylinderGeometry(o.labelR, o.labelR, o.labelH, 32, 1, true, Math.PI - 1.05, 2.1).translate(0, o.labelY, 0)),
+        label:  xf(new THREE.CylinderGeometry(meta.r + 0.01, meta.r + 0.01, o.labelH, 32, 1, true, Math.PI - 1.05, 2.1).translate(0, o.labelY, 0)),
       };
       if (o.muselet) {
-        // Muselet : ceinture autour de la bague + 4 brins inclinés sur la tête + plaque
-        const ring = new THREE.TorusGeometry(0.19, 0.012, 8, 28);
+        // Muselet recalé sur les cotes réelles : ceinture sur la bague, brins
+        // jusqu'au bord de la plaque, plaque bombée + sertissage sur la tête
+        const beltY = o.musBeltY, headY = o.corkY + o.corkH / 2;
+        const ring = new THREE.TorusGeometry(o.musBeltR, 0.012, 8, 28);
         ring.rotateX(Math.PI / 2);
-        ring.translate(0, 3.67, 0);
+        ring.translate(0, beltY, 0);
         const wires = [0, Math.PI / 2, Math.PI, -Math.PI / 2].map((a) => {
-          const wg = new THREE.CylinderGeometry(0.012, 0.012, 0.30, 6);
-          wg.translate(0, 0.15, 0);    // pied du brin à l'origine
-          wg.rotateZ(0.15);            // presque droits, jusqu'au bord de la plaque
-          wg.translate(0.19, 3.67, 0);
+          const wg = new THREE.CylinderGeometry(0.012, 0.012, headY + 0.05 - beltY, 6);
+          wg.translate(0, (headY + 0.05 - beltY) / 2, 0);
+          wg.rotateZ(0.15);
+          wg.translate(o.musBeltR, beltY, 0);
           wg.rotateY(a);
           return wg;
         });
-        // Rebord serti autour de la plaque (définit le cercle, accroche la lumière)
-        const rim = new THREE.TorusGeometry(0.145, 0.012, 8, 28);
+        const rim = new THREE.TorusGeometry(0.155, 0.012, 8, 28);
         rim.rotateX(Math.PI / 2);
-        rim.translate(0, 3.964, 0);
-        // Les 4 encoches : griffes du fil qui mordent sur le bord de la plaque,
-        // dans l'axe de chaque brin
+        rim.translate(0, headY + 0.052, 0);
         const clips = [0, Math.PI / 2, Math.PI, -Math.PI / 2].map((a) => {
-          const cg = new THREE.BoxGeometry(0.075, 0.02, 0.028); // radial × épaisseur × tangentiel
-          cg.translate(0.140, 3.976, 0);                        // à cheval sur le rebord
+          const cg = new THREE.BoxGeometry(0.075, 0.02, 0.028);
+          cg.translate(0.150, headY + 0.064, 0);
           cg.rotateY(a);
           return cg;
         });
         set.muselet = [ring, rim, ...wires, ...clips].map(xf);
-        // Plaque BOMBÉE (emboutie) : une face plate renvoie un reflet uniforme et
-        // paraît plate — la calotte fait glisser le reflet sur la courbure
-        set.plaque  = xf(new THREE.SphereGeometry(0.145, 22, 12, 0, Math.PI * 2, 0, Math.PI / 2)
-          .scale(1, 0.22, 1).translate(0, 3.962, 0));
-        // Blason : décalque circulaire posé juste au-dessus de la calotte
-        set.plaqueDecal = xf(new THREE.CircleGeometry(0.112, 24).rotateX(-Math.PI / 2).translate(0, 3.999, 0));
+        set.plaque  = xf(new THREE.SphereGeometry(0.155, 22, 12, 0, Math.PI * 2, 0, Math.PI / 2)
+          .scale(1, 0.22, 1).translate(0, headY + 0.050, 0));
+        set.plaqueDecal = xf(new THREE.CircleGeometry(0.118, 24).rotateX(-Math.PI / 2).translate(0, headY + 0.088, 0));
       }
       return set;
     };
-    // Mêmes formes que la vue 2D (profils partagés normalisés) : diamètre commun
-    // BOTTLE_R partout → rest et labelR identiques pour toutes les formes.
-    // v7.0.2 : rest/labelR DÉRIVÉS de BOTTLE_R (plus de littéraux à désynchroniser)
-    const REST = BOTTLE_R, LBL_R = BOTTLE_R + 0.01;
-    const setBordeaux  = mkSet("bordeaux",  { rest: REST, capR: 0.158, capR2: 0.140, capH: 0.30, capY: 3.56, corkR: 0.125, corkH: 0.14, corkY: 3.55, colR: 0.15,  colH: 0.18, colY: 3.15, labelR: LBL_R, labelH: 0.95, labelY: 1.05 });
-    const setLoire     = mkSet("loire",     { rest: REST, capR: 0.150, capR2: 0.140, capH: 0.30, capY: 3.56, corkR: 0.12,  corkH: 0.14, corkY: 3.55, colR: 0.16,  colH: 0.16, colY: 3.28, labelR: LBL_R, labelH: 0.90, labelY: 1.00 });
-    const setFlute     = mkSet("flute",     { rest: REST, capR: 0.150, capR2: 0.135, capH: 0.30, capY: 3.56, corkR: 0.12,  corkH: 0.14, corkY: 3.55, colR: 0.155, colH: 0.16, colY: 3.30, labelR: LBL_R, labelH: 0.85, labelY: 0.95 });
-    const setRose      = mkSet("rose",      { rest: REST, capR: 0.155, capR2: 0.138, capH: 0.32, capY: 3.55, corkR: 0.12,  corkH: 0.14, corkY: 3.55, colR: 0.148, colH: 0.18, colY: 3.05, labelR: LBL_R, labelH: 0.90, labelY: 0.98 });
-    const setBourgogne = mkSet("bourgogne", { rest: REST, capR: 0.162, capR2: 0.148, capH: 0.30, capY: 3.56, corkR: 0.125, corkH: 0.14, corkY: 3.55, colR: 0.155, colH: 0.18, colY: 3.28, labelR: LBL_R, labelH: 0.95, labelY: 1.00 });
-    // Champenoise : coiffe conique épousant la pente du col, collerette en jupe
-    // descendant loin sur le col (continuité avec la coiffe), bouchon champignon plus large
-    const setChampagne = mkSet("champagne", { rest: REST,
-      capPts: [[0.195, 3.22], [0.175, 3.36], [0.163, 3.50], [0.162, 3.58], [0.174, 3.66], [0.197, 3.72], [0.21, 3.755], [0.205, 3.775], [0.12, 3.78]],
-      corkR: 0.195, corkR2: 0.135, corkH: 0.18, corkY: 3.82,
-      colR: 0.19, colR2: 0.26, colH: 0.60, colY: 2.92,
-      labelR: LBL_R, labelH: 0.85, labelY: 0.95, muselet: true });
+    // Cotes d'accessoires par forme — millimètres réels convertis (K_MM) :
+    // capsule couvrant la bague, bouchon affleurant, collerette décorative,
+    // étiquette centrée sur le fût cylindrique de CHAQUE silhouette.
+    const setBordeaux  = mkSet("bordeaux",  { capR: 0.19, capR2: 0.172, capH: 0.316, capY: 3.249, corkR: 0.136, corkH: 0.136, corkY: 3.333, colR: 0.181,   colH: 0.203, colY: 2.904, labelH: 1.073, labelY: 1.158 });
+    const setLoire     = mkSet("loire",     { capR: 0.185, capR2: 0.168, capH: 0.328, capY: 3.35, corkR: 0.132, corkH: 0.136, corkY: 3.424, colR: 0.175, colH: 0.203, colY: 3.062, labelH: 1.073, labelY: 1.102 });
+    const setFlute     = mkSet("flute",     { capR: 0.176, capR2: 0.16, capH: 0.328, capY: 3.915, corkR: 0.13, corkH: 0.136, corkY: 3.989, colR: 0.168, colH: 0.203, colY: 3.627, labelH: 0.96, labelY: 0.989 });
+    const setRose      = mkSet("rose",      { capR: 0.18, capR2: 0.163, capH: 0.35, capY: 3.226, corkR: 0.13, corkH: 0.136, corkY: 3.311, colR: 0.169,   colH: 0.203, colY: 2.881, labelH: 1.017, labelY: 1.051 });
+    const setBourgogne = mkSet("bourgogne", { capR: 0.188, capR2: 0.171, capH: 0.339, capY: 3.175,   corkR: 0.134, corkH: 0.136, corkY: 3.266, colR: 0.177, colH: 0.203, colY: 2.859, labelH: 1.073, labelY: 1.045 });
+    const setChampagne = mkSet("champagne", {
+      capPts: [[0.209, 3.028], [0.194, 3.232], [0.19, 3.39], [0.192, 3.435], [0.206, 3.48], [0.22, 3.526], [0.232, 3.565], [0.226, 3.588], [0.136, 3.593]],
+      corkR: 0.22, corkR2: 0.153, corkH: 0.203, corkY: 3.706,
+      colR: 0.201, colR2: 0.26, colH: 0.565, colY: 2.746,
+      labelH: 0.96, labelY: 0.989,
+      muselet: true, musBeltY: 3.526, musBeltR: 0.24400000000000002 });
     // v7.0.2 : sélection UNIFIÉE par silhouette (shapeKindOf : fiche → région →
     // type) — geoByKind indexe par forme, geoByType reste le repli par type.
     const geoByKind = {
@@ -5993,20 +6196,24 @@ class MillesimeCard extends HTMLElement {
     // Emplacement vide : projection à plat d'une bordelaise (couchée comme les
     // bouteilles, orientée selon la parité du slot) — un peu plus étroite que les
     // vraies bouteilles pour bien se distinguer
+    // v7.1.0 : le fantôme reste une bordelaise — demi-longueur RÉELLE
+    const GHOST_HALF = BOTTLE_METAS.bordeaux.half;
+    const GHOST_DZ_PUNT = 2.0 - GHOST_HALF;          // piqûre devant : cul au bord
+    const GHOST_DZ_NECK = 2.0 - (GHOST_HALF + 0.11); // goulot devant : verre au bord
     const ghostPts = _normProfile(BOTTLE_PROFILES.bordeaux).slice(1, -1)
       .map(([r, y]) => [r * 0.85, y]);
     const ghostShape = new THREE.Shape();
     ghostPts.forEach(([r, y], i) => {
-      const yy = 1.86 - y;                       // goulot → +Z après rotateX(-π/2)
+      const yy = GHOST_HALF - y;                       // goulot → +Z après rotateX(-π/2)
       if (i === 0) ghostShape.moveTo(r, yy); else ghostShape.lineTo(r, yy);
     });
-    [...ghostPts].reverse().forEach(([r, y]) => ghostShape.lineTo(-r, 1.86 - y));
+    [...ghostPts].reverse().forEach(([r, y]) => ghostShape.lineTo(-r, GHOST_HALF - y));
     const emptyGeo = new THREE.ShapeGeometry(ghostShape);
     emptyGeo.rotateX(-Math.PI / 2);
     // Contour de la silhouette (remplace l'anneau)
     const ghostEdge = new THREE.BufferGeometry().setFromPoints(
-      ghostPts.map(([r, y]) => new THREE.Vector3(r, 0, -(1.86 - y)))
-        .concat([...ghostPts].reverse().map(([r, y]) => new THREE.Vector3(-r, 0, -(1.86 - y))))
+      ghostPts.map(([r, y]) => new THREE.Vector3(r, 0, -(GHOST_HALF - y)))
+        .concat([...ghostPts].reverse().map(([r, y]) => new THREE.Vector3(-r, 0, -(GHOST_HALF - y))))
     );
 
     // ── Ombre de contact (MODE ACTIF, SHADOWS_3D_PCF=false) : halo doux posé sur
@@ -6319,6 +6526,16 @@ class MillesimeCard extends HTMLElement {
     // les « ombres » sombres gênaient la lecture, surtout en superposition
     const emptyMat = new THREE.MeshBasicMaterial({ color: 0x202020, transparent: true, opacity: 0.32, side: THREE.DoubleSide });
     const ringMat  = new THREE.LineBasicMaterial({ color: 0x3a3a3a, transparent: true, opacity: 0.42 });
+    // v7.1.0 : en SUPERPOSITION, les fantômes des couches AU-DESSUS de la
+    // rangée de base sont invisibles au repos (l'accumulation d'ombres gênait
+    // la lecture) — ils restent tappables (le raycaster ignore l'opacité) et
+    // réapparaissent le temps d'un glisser/déposer pour montrer les cibles.
+    const emptyMatUp = new THREE.MeshBasicMaterial({ color: 0x202020, transparent: true, opacity: 0, side: THREE.DoubleSide });
+    const ringMatUp  = new THREE.LineBasicMaterial({ color: 0x3a3a3a, transparent: true, opacity: 0 });
+    const showUpperGhosts = (on) => {
+      emptyMatUp.opacity = on ? 0.32 : 0;
+      ringMatUp.opacity  = on ? 0.42 : 0;
+    };
     const goldMat  = new THREE.MeshBasicMaterial({ color: 0xC9A84C });
 
     // ── Construction des casiers, étagère par étagère (fidèle à la grille 2D) ──
@@ -6346,7 +6563,8 @@ class MillesimeCard extends HTMLElement {
       // v7.0.1 : empilement en PYRAMIDE — les couches supérieures reposent dans
       // les creux de la couche du dessous (décalage d'un demi-entraxe, géré plus
       // bas) ; la hauteur de couche correspond à l'emboîtement réel :
-      // dy = √((2r)² − (S/2)²) ≈ 0.63 pour r = 0.41 (v7.0.2) et S = 1.06.
+      // dy = √((2r)² − (S/2)²) ≈ 0.66 pour r = 0.424 (bordelaise réelle, v7.1.0)
+      // et S = 1.06 — les formes plus fines s'emboîtent un peu plus, marge OK.
       const LAYER_DY = 0.66;                                   // hauteur d'une couche emboîtée
       const shelfStep = SHELF_DY + (levels - 1) * LAYER_DY;    // pas entre clayettes
       const total = rack.slots || cols * (rack.shelves || 2) * levels;
@@ -6419,7 +6637,7 @@ class MillesimeCard extends HTMLElement {
           const entry = slotOf[`${rack.id}:${i}`];
           const x    = -halfW + SPACING / 2 + c * SPACING + stackOff;
           // Pas de décalage avant/arrière : bouteilles parallèles, entièrement sur la
-          // clayette (3.72 de long pour 4.0 de profondeur — un décalage ferait déborder)
+          // clayette (3.3 à 4.1 de long selon la forme pour 4.0 de profondeur)
           const stag = 0;
           // Tête-bêche : parité de base + sens de départ (orient) ; côte à côte/semi : orient = sens commun
           const baseParity = layout === "alternating" ? i % 2
@@ -6430,10 +6648,12 @@ class MillesimeCard extends HTMLElement {
           if (!entry) {
             // Même alignement au bord avant que les vraies bouteilles (la silhouette
             // n'a pas de bouchon : le verre est placé là où serait celui d'une bordelaise)
-            const gdz = parity === 1 ? 2.0 - 1.86 : 2.0 - 1.98;
-            const disc = new THREE.Mesh(emptyGeo, emptyMat);
+            const gdz = parity === 1 ? GHOST_DZ_PUNT : GHOST_DZ_NECK;
+            // v7.1.0 : couche haute de superposition → matériaux invisibles au repos
+            const upper = layout === "stacked" && !isBase;
+            const disc = new THREE.Mesh(emptyGeo, upper ? emptyMatUp : emptyMat);
             disc.position.set(x, shelfY + 0.012, stag + gdz);
-            const ring = new THREE.LineLoop(ghostEdge, ringMat);
+            const ring = new THREE.LineLoop(ghostEdge, upper ? ringMatUp : ringMat);
             ring.position.set(x, shelfY + 0.013, stag + gdz);
             if (parity === 1) disc.rotation.y = ring.rotation.y = Math.PI;
             disc.userData = { empty: true, slot: i, rackId: rack.id, base: { x, shelfY, fi, i, parity }, ring };
@@ -6523,7 +6743,10 @@ class MillesimeCard extends HTMLElement {
           const sc = sizeScale(entry.size || wine.size);   // format de LA bouteille
           // Plafond de longueur par forme : bouchon compris, la bouteille ne doit
           // jamais déborder de la planche (profondeur 4.0, marge 0.02)
-          const scL = Math.min(sc.l, 3.98 / (set.tip + 1.86));
+          // v7.1.0 : la flûte (4.07 u) peut déborder légèrement de la clayette
+          // (4.0 u) comme en vraie cave — le clamp ne bride plus que les
+          // grands formats (magnum et au-delà)
+          const scL = Math.min(sc.l, 4.40 / (set.tip + set.half));
           g.scale.set(sc.r, sc.r, scL);
           // Alignement au bord avant de la clayette (z = +2) : pointe du bouchon au
           // bord pour les bouteilles à l'endroit, culot au bord pour les tête-bêche.
@@ -6532,7 +6755,7 @@ class MillesimeCard extends HTMLElement {
           g.position.set(
             x + set.rest * sc.r * Math.sin(roll),
             shelfY + set.rest * sc.r * (1 - Math.cos(roll)),
-            stag + (parity === 1 ? 2.0 - 1.86 * scL : 2.0 - set.tip * scL)
+            stag + (parity === 1 ? 2.0 - set.half * scL : 2.0 - set.tip * scL)
           );
           if (tilt) {
             // Semi-couché : bouteille couchée inclinée ~32°. L'extrémité choisie est
@@ -6544,15 +6767,15 @@ class MillesimeCard extends HTMLElement {
             g.rotation.set(0, 0, 0);
             if (puntDown) g.rotation.y = Math.PI;           // amène la piqûre vers l'avant
             g.rotation.x = TILT;                            // bascule l'extrémité avant vers le bas
-            const half = 1.86 * scL;
+            const half = set.half * scL;
             // Distance du centre à l'extrémité BASSE selon l'orientation (la pointe
             // du bouchon est un peu plus longue que la piqûre) → levage exact pour
             // que cette extrémité repose sur la planche sans passer dessous.
-            const downDist = (puntDown ? 1.86 : set.tip) * scL;
+            const downDist = (puntDown ? set.half : set.tip) * scL;
             g.position.set(
               x,
               shelfY + downDist * Math.sin(TILT) + 0.02,
-              stag + (puntDown ? 2.0 - 1.86 * scL : 2.0 - set.tip * scL)
+              stag + (puntDown ? 2.0 - set.half * scL : 2.0 - set.tip * scL)
             );
           }
           g.userData = {
@@ -6560,7 +6783,7 @@ class MillesimeCard extends HTMLElement {
             // Pour la dépose optimiste exacte : coordonnées du slot + paramètres
             // de placement de CETTE bouteille (forme/format)
             base: { x, shelfY, fi, i, parity },
-            rest: set.rest, tip: set.tip, scR: sc.r, scL,
+            rest: set.rest, tip: set.tip, half: set.half, scR: sc.r, scL,
           };
 
           if (wine.id === this._selected) {
@@ -6646,7 +6869,7 @@ class MillesimeCard extends HTMLElement {
       // casier) pour qu'elles ne percutent pas la clayette/les repères du dessus.
       const nextRack = racks[fi + 1];
       const nextTilted = nextRack && (nextRack.layout || "side_by_side") === "semi_lying";
-      const tiltReserve = nextTilted ? 1.45 : 0;
+      const tiltReserve = nextTilted ? 1.60 : 0;   // v7.1.0 : marge élargie (flûte semi-couchée plus haute)
       yCursor = yBot - SHELF_DY - RACK_GAP - markReserve - tiltReserve;
     });
 
@@ -6850,6 +7073,7 @@ class MillesimeCard extends HTMLElement {
       if (!drag.active) {
         if (Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 7) return;
         drag.active = true;
+        showUpperGhosts(true);   // v7.1.0 : cibles des couches hautes visibles pendant le drag
         // Profondeur NDC de la bouteille : la déprojection doit se faire dans son
         // plan caméra, pas au milieu du frustum (sinon elle saute hors de la vue)
         drag.ndcZ = drag.orig.clone().project(cam).z;
@@ -6900,12 +7124,13 @@ class MillesimeCard extends HTMLElement {
       group.position.set(
         base.x + ud.rest * ud.scR * Math.sin(roll),
         base.shelfY + ud.rest * ud.scR * (1 - Math.cos(roll)),
-        base.parity === 1 ? 2.0 - 1.86 * ud.scL : 2.0 - ud.tip * ud.scL
+        base.parity === 1 ? 2.0 - ud.half * ud.scL : 2.0 - ud.tip * ud.scL
       );
     };
 
     const endDrag = (commit) => {
       if (!drag) return;
+      showUpperGhosts(false);   // v7.1.0 : les cibles des couches hautes se rangent
       const wasActive = drag.active;
       const src = drag.ud;
       const group = drag.group, orig = drag.orig;
@@ -6932,7 +7157,7 @@ class MillesimeCard extends HTMLElement {
         // ⚠ t === tObj.userData : capturer la destination AVANT de réécrire le userData
         const destRackId = t.rackId, destSlot = t.slot;
         placeExact(group, tObj.userData.base);
-        const gdz = srcBase.parity === 1 ? 2.0 - 1.86 : 2.0 - 1.98;
+        const gdz = srcBase.parity === 1 ? GHOST_DZ_PUNT : GHOST_DZ_NECK;
         const ry  = srcBase.parity === 1 ? Math.PI : 0;
         tObj.position.set(srcBase.x, srcBase.shelfY + 0.012, gdz);
         tObj.rotation.y = ry;
@@ -7121,6 +7346,19 @@ class MillesimeCard extends HTMLElement {
     s.getElementById("btn-bottlelist")?.addEventListener("click", () => this._openModal("bottlelist"));
     s.getElementById("btn-racklist")?.addEventListener("click", () => this._openModal("racklist"));
     s.getElementById("btn-journal")?.addEventListener("click", () => this._openModal("journal"));
+    // v7.1.0 : menu « ➕ Ajouter » (fusion + Casier / + Vin) — les items gardent
+    // leurs ids historiques, donc leurs handlers d'ouverture restent inchangés.
+    const addMenu = s.getElementById("add-menu");
+    s.getElementById("btn-add-main")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (addMenu) addMenu.hidden = !addMenu.hidden;
+    });
+    addMenu?.querySelectorAll(".add-mi").forEach(mi =>
+      mi.addEventListener("click", () => { addMenu.hidden = true; }));
+    s.addEventListener("click", (e) => {
+      if (addMenu && !addMenu.hidden && !e.composedPath().includes(s.getElementById("btn-add-main")))
+        addMenu.hidden = true;
+    });
     s.getElementById("sel-cellar")?.addEventListener("change", (e) => this._switchCellar(e.target.value));
     s.getElementById("btn-add-rack")?.addEventListener("click",   () => this._openModal("rack"));
 
@@ -7440,33 +7678,45 @@ const CARD_CSS = `<style>
 /* Colonne droite : stats en haut, boutons en dessous */
 .header-right { display:flex; flex-direction:column; gap:7px; flex:1; min-width:0; }
 /* Stats et actions : MÊME grille (3 colonnes égales + colonne icône à droite) → alignement parfait */
-.header-stats   { display:grid; grid-template-columns:1fr 1fr 1fr 40px; gap:5px; align-items:stretch; }
-.header-actions { display:grid; grid-template-columns:1fr 1fr 1fr 40px; gap:5px; align-items:stretch; }
-.btn-options-top, .btn-journal-top { width:40px; height:auto; align-self:stretch; display:flex; align-items:center; justify-content:center; font-size:clamp(1.0em,2cqi,1.25em); }
+/* v7.1.0 : hauteur de référence UNIQUE pour les DEUX rangées du header — la
+   rangée d'actions se cale sur la hauteur des pilules de compteurs. */
+.header-right { --hdrh: clamp(40px, 7.2cqi, 46px); }
+.header-stats   { display:grid; grid-template-columns:1fr 1fr 1fr 40px; gap:5px; align-items:stretch; grid-auto-rows:var(--hdrh); }
+.header-actions { display:grid; grid-template-columns:1fr 1fr 1fr 40px; gap:5px; align-items:stretch; grid-auto-rows:var(--hdrh); }
+.header-stats > *, .header-actions > * { height:var(--hdrh); box-sizing:border-box; }
+.btn-options-top, .btn-journal-top { width:40px; display:flex; align-items:center; justify-content:center; font-size:clamp(1.0em,2cqi,1.25em); }
 .stat { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:5px 6px; background:var(--bg-2); border-radius:8px; border:1px solid var(--border); }
 .stat-value { font-size:clamp(1.05em,2.1cqi,1.5em); font-weight:700; color:var(--cream); font-family:var(--font-serif); line-height:1; }
 .stat-label { font-size:clamp(0.54em,0.95cqi,0.66em); color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-top:2px; }
 .stat-clickable { cursor:pointer; transition:all 0.15s; }
 .stat-clickable:hover { background:var(--bg-3); border-color:var(--header-accent,var(--red)); }
 .stat-clickable:active { transform:scale(0.97); }
-/* Bouton "Casier" : bleu distinct de "+Vin" (plus clair/cyan) */
 .btn-rack {
-  height:38px; box-sizing:border-box; width:100%; min-width:0;
-  display:flex; align-items:center; justify-content:center; gap:3px;
+  height:var(--hdrh); box-sizing:border-box; width:100%; min-width:0;
+  display:flex; align-items:center; justify-content:center; gap:5px;
   background:#2BA5C7; color:#fff; border:none; border-radius:8px;
   font-size:clamp(0.82em,1.4cqi,1.0em); font-weight:600; padding:0 6px; white-space:nowrap; cursor:pointer;
   transition:filter 0.15s;
 }
 .btn-rack:hover { filter:brightness(1.1); }
-/* v7.0.2 : bouton Sommelier IA — rouge Millésime, icône verre SVG blanche */
-.btn-sommelier { background:#7B1D2E; display:flex; align-items:center; justify-content:center; gap:6px; }
-.btn-sommelier .somm-ico { flex:0 0 auto; }
-/* Boutons de la rangée actions (vue + casier + vin) */
-.header-actions .btn-icon, .header-actions .view-select, .header-actions .btn-primary {
-  height:38px; box-sizing:border-box; width:100%; min-width:0;
+.hdr-ico { flex:0 0 auto; width:clamp(14px,2.6cqi,17px); height:auto; }
+/* v7.1.0 : la couleur signe les FONCTIONS DU VIN — À ouvrir et Sommelier en
+   rouge Millésime, Ajouter (action générique) en gris moyen */
+.btn-open-top { background:#7B1D2E; }
+.btn-open-top--active { box-shadow:inset 0 0 0 2px #d8b25c; }   /* filtre occasion actif */
+.btn-sommelier { background:#7B1D2E; }
+.add-wrap { position:relative; min-width:0; }
+.btn-add { background:#4a4f57; }
+.add-menu {
+  position:absolute; top:calc(var(--hdrh) + 5px); right:0; z-index:30; min-width:150px;
+  background:var(--bg-2); border:1px solid var(--border); border-radius:11px; padding:5px;
+  box-shadow:0 10px 26px rgba(0,0,0,0.45);
 }
-.header-actions .btn-primary { font-size:clamp(0.82em,1.4cqi,1.0em); padding:0 6px; white-space:nowrap; }
-.header-actions .view-select { padding:0 4px; font-size:clamp(0.78em,1.3cqi,0.95em); }
+.add-mi {
+  display:flex; align-items:center; gap:8px; width:100%; padding:11px 12px; border:none;
+  background:transparent; color:var(--cream); font-size:0.92em; border-radius:8px; cursor:pointer; text-align:left;
+}
+.add-mi:hover { background:var(--bg-3); }
 
 /* ── Ligne d'options repliable (sous le verre du logo) ── */
 /* Zone de progression « Compléter les fiches » (sous l'en-tête) */
@@ -7526,10 +7776,6 @@ const CARD_CSS = `<style>
 .env-clickable:active { transform:scale(0.97); }
 .env-empty { opacity:0.5; }
 /* Bouton « À ouvrir » (même gabarit que les zones T°/hygro) */
-.env-open { border:none; }
-.env-open .cork-icon { flex-shrink:0; width:clamp(15px,3cqi,21px); height:auto; }
-.env-open-label { font-size:clamp(0.82em,1.5cqi,1.0em); font-weight:600; color:var(--cream); white-space:nowrap; }
-.env-open-active { background:var(--accent); }
 .env-open-active .env-open-label { color:#fff; }
 .filters {
   display:flex; gap:clamp(8px,1.5cqi,14px); padding:clamp(8px,1.5cqi,11px) clamp(14px,2.4cqi,22px);
@@ -7952,11 +8198,47 @@ const MODAL_CSS = `
 .mm-body .seg3--sub .seg3-btn.active { background:#7B1D2E; }
 /* Filtres du Profil de garde (v7.0.1) */
 .apo-filters { display:flex; gap:8px; margin-bottom:12px; }
+/* ── Personnalisation des icônes (v7.1.0) ── */
+.ico-grp { font-size:0.78em; color:var(--mm-muted); letter-spacing:0.4px; margin:14px 0 7px; }
+.ico-choices { display:flex; gap:8px; }
+.ico-choice {
+  position:relative; flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; gap:6px;
+  padding:13px 4px 9px; border:1.5px solid var(--mm-border); border-radius:11px;
+  background:var(--mm-bg2); color:var(--mm-text); cursor:pointer; transition:all 0.13s;
+}
+.ico-choice:hover { border-color:#7B1D2E; }
+.ico-choice.sel { border-color:#7B1D2E; background:rgba(123,29,46,0.16); }
+.ico-choice .ico-check { position:absolute; top:4px; right:7px; color:#C0392B; font-size:0.72em; visibility:hidden; }
+.ico-choice.sel .ico-check { visibility:visible; }
+.ico-lbl { font-size:0.68em; color:var(--mm-muted); }
+/* ── Glossaires ℹ️ (v7.1.0) ── */
+.gl-info {
+  display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px;
+  margin-left:6px; border-radius:50%; border:1px solid var(--mm-muted); background:transparent;
+  color:var(--mm-muted); font-size:0.68em; font-style:italic; font-family:serif; cursor:pointer; vertical-align:middle;
+}
+.gl-info.on { border-color:#7B1D2E; background:#7B1D2E; color:#fff; }
+.gl-panel { background:var(--mm-bg0); border:1px solid #5a2a33; border-radius:9px; padding:8px 11px; margin:6px 0 10px; }
+.gl-row { font-size:0.74em; line-height:1.55; color:var(--mm-muted); margin:3px 0; }
+.gl-row b { color:var(--mm-text); }
+/* ── Structure en bouche (v7.1.0) ── */
+.st-row { display:flex; align-items:center; gap:9px; margin:7px 0; }
+.st-lbl { flex:0 0 82px; font-size:0.8em; color:var(--mm-text); text-align:right; }
+.st-trk { flex:1; height:9px; background:var(--mm-border); border-radius:5px; overflow:hidden; opacity:0.9; }
+.st-fil { height:100%; border-radius:5px; }
+.st-val { flex:0 0 26px; font-size:0.72em; color:var(--mm-muted); font-variant-numeric:tabular-nums; }
+/* ── Chips « Envie de… » : classe autonome (v7.1.0, ex .occ-btn) ── */
+.envie-grp { font-size:0.8em; color:var(--mm-muted); letter-spacing:0.3px; margin:12px 0 7px; display:flex; align-items:center; }
+.envie-chip {
+  border:1px solid var(--mm-border); border-radius:17px; padding:7px 13px;
+  background:var(--mm-bg2); color:var(--mm-muted); font-size:0.82em; cursor:pointer; transition:all 0.13s;
+}
+.envie-chip:hover { border-color:#7B1D2E; color:var(--mm-text); }
+.envie-chip.active { background:#7B1D2E; border-color:#7B1D2E; color:#fff; }
 .apo-fsel { flex:1; min-width:0; }
 .apo-top-until--past { color:#e05a5a; font-weight:700; }
 /* Envie de… (v7.0.1) */
 .envie-chips { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
-.envie-chip.active { background:#7B1D2E; border-color:#7B1D2E; color:#fff; }
 .envie-color { margin-bottom:12px; }
 /* v7.0.2 : boutons d'action PLEINE LARGEUR harmonisés (Envie de…, Choisir dans
    ma cave, audits Sommelier) — même gabarit partout : 42 px, rayon 10, rouge
