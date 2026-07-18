@@ -1569,7 +1569,7 @@ class MillesimeCard extends HTMLElement {
       overlay.style.fontFamily = this._fontSans || "'Inter', sans-serif";
       overlay.style.fontSize   = this._fsModalCss || ((this._fsBase || 14) + 'px');
       const box = document.createElement("div");
-      box.style.cssText = "background:#111;border:1px solid #333;border-radius:14px;padding:22px 24px;max-width:360px;width:90%;color:#EDE0CC;font-size:1em;line-height:1.6;box-shadow:0 8px 32px rgba(0,0,0,0.6)";
+      box.style.cssText = "background:#111;border:1px solid #333;border-radius:14px;padding:22px 24px;max-width:25.7em;width:90%;color:#EDE0CC;font-size:1em;line-height:1.6;box-shadow:0 8px 32px rgba(0,0,0,0.6)";
       const p = document.createElement("p");
       p.textContent = message;
       p.style.cssText = "margin:0 0 18px";
@@ -8033,7 +8033,7 @@ const MODAL_CSS = `
 .mm-box {
   background:var(--mm-bg1); border:1px solid var(--mm-border); border-top:none;
   border-radius:0 0 20px 20px;
-  width:100%; max-width:520px; overflow-x:hidden;
+  width:100%; max-width:37em; overflow-x:hidden;   /* em : suit la police (≈520px à 14px, s'élargit sur grand écran) */
   /* dvh = hauteur de vue dynamique : tient compte des barres mobiles (Safari iOS) */
   max-height:calc(100dvh - max(16px, env(safe-area-inset-top)) - env(safe-area-inset-bottom));
   display:flex; flex-direction:column;
@@ -8041,7 +8041,7 @@ const MODAL_CSS = `
   overflow:hidden;
 }
 /* Liste des bouteilles : occupe toute la largeur dispo (PC comme mobile) */
-.mm-box-wide { max-width:min(680px, 95vw); }
+.mm-box-wide { max-width:min(48.6em, 95vw); }
 /* ── Liste des bouteilles : arborescence Couleur → Région → Châteaux ── */
 .vlist { display:flex; flex-direction:column; }
 .vlist-color-head { display:flex; align-items:center; gap:10px; padding:11px 2px 7px; margin-top:6px;
