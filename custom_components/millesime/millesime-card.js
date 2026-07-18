@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "7.1.3";
+const MILLESIME_CARD_VERSION = "7.1.4";
 
 // ── Budget quotidien Gemini (free tier) ─────────────────────────────────────
 // Estimation codée en dur : ~250 requêtes/jour (Gemini 2.5 Flash, quotas
@@ -1169,7 +1169,7 @@ class MillesimeCard extends HTMLElement {
       // viserait le viewport). Plancher 14px (confort des formulaires au doigt),
       // plafond 21px : une boîte de dialogue peut être un peu plus généreuse que la
       // carte, et sur Full HD l'ancien plafond 18px paraissait petit.
-      this._fsModalCss = 'clamp(14px, 2vw, 24px)';   // plafond ajusté (dynamique)
+      this._fsModalCss = 'clamp(14px, 2vw, 21px)';   // plafond ajusté (dynamique)
     }
   }
 
@@ -7646,7 +7646,7 @@ const CARD_CSS = `<style>
   /* Défaut FLUIDE de la base typographique posé ici (feuille de style) et non plus
      en inline → un override card-mod « :host { --fs-base: … } » peut le surcharger.
      Seule la config YAML font_size: repasse en inline (choix explicite, prioritaire). */
-  --fs-base: clamp(13px, 3.1cqi, 20px);
+  --fs-base: clamp(13px, 3.1cqi, 18px);
   /* Le responsive est piloté par la largeur de la CARTE (container query), pas du
      viewport : une carte dans une colonne étroite se compacte même sur grand écran. */
   container-type: inline-size; container-name: mm;
