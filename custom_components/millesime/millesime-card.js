@@ -1169,7 +1169,7 @@ class MillesimeCard extends HTMLElement {
       // viserait le viewport). Plancher 14px (confort des formulaires au doigt),
       // plafond 21px : une boîte de dialogue peut être un peu plus généreuse que la
       // carte, et sur Full HD l'ancien plafond 18px paraissait petit.
-      this._fsModalCss = 'clamp(14px, 2vw, 21px)';
+      this._fsModalCss = 'clamp(15px, 1.7vw, 24px)';
     }
   }
 
