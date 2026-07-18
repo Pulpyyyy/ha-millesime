@@ -7,7 +7,7 @@
  * - Journal de dégustation, recherche dans la cave, déplacement de casier
  */
 
-const MILLESIME_CARD_VERSION = "7.1.0";
+const MILLESIME_CARD_VERSION = "7.1.1";
 
 // ── Budget quotidien Gemini (free tier) ─────────────────────────────────────
 // Estimation codée en dur : ~250 requêtes/jour (Gemini 2.5 Flash, quotas
