@@ -3506,6 +3506,9 @@ class MillesimeCard extends HTMLElement {
 
     const panel = document.createElement("div");
     panel.className = "mm-bottle-panel";
+    // Hors conteneur (document.body) → poser la base fluide comme les modales,
+    // sinon le contenu en em retombe sur la police par défaut du body.
+    panel.style.fontSize = this._fsModalCss || ((this._fsBase || 14) + 'px');
     panel.innerHTML = `
       ${wine.image_url
         ? `<div class="bp-photo"><img src="${esc(wine.image_url)}" alt=""></div>`
@@ -4808,6 +4811,7 @@ class MillesimeCard extends HTMLElement {
     return new Promise((resolve) => {
       const overlay = document.createElement("div");
       overlay.style.cssText = "position:fixed;inset:0;z-index:100000;background:#000;display:flex;flex-direction:column;";
+      overlay.style.fontSize = this._fsModalCss || ((this._fsBase || 14) + 'px');   // police dynamique (boutons en em)
       const video = document.createElement("video");
       video.autoplay = true; video.playsInline = true; video.muted = true;
       video.style.cssText = "flex:1;min-height:0;width:100%;object-fit:contain;background:#000;";
