@@ -1569,7 +1569,10 @@ class MillesimeCard extends HTMLElement {
       overlay.style.fontFamily = this._fontSans || "'Inter', sans-serif";
       overlay.style.fontSize   = this._fsModalCss || ((this._fsBase || 14) + 'px');
       const box = document.createElement("div");
-      box.style.cssText = "background:#111;border:1px solid #333;border-radius:14px;padding:22px 24px;max-width:25.7em;width:90%;color:#EDE0CC;font-size:1em;line-height:1.6;box-shadow:0 8px 32px rgba(0,0,0,0.6)";
+      // Mobile : largeur d'origine (intouchée) ; grand écran : plus de taille figée → s'ajuste au contenu.
+      const _confW = (typeof window !== "undefined" && window.innerWidth >= 800)
+        ? "width:fit-content;max-width:min(60vw,36rem)" : "max-width:360px;width:90%";
+      box.style.cssText = "background:#111;border:1px solid #333;border-radius:14px;padding:22px 24px;" + _confW + ";color:#EDE0CC;font-size:1em;line-height:1.6;box-shadow:0 8px 32px rgba(0,0,0,0.6)";
       const p = document.createElement("p");
       p.textContent = message;
       p.style.cssText = "margin:0 0 18px";
@@ -3464,7 +3467,7 @@ class MillesimeCard extends HTMLElement {
       st.id = "mm-bpanel-css";
       st.textContent = `
         .mm-bottle-panel {
-          position:fixed; z-index:999998; width:16.4em; max-width:calc(100vw - 16px);
+          position:fixed; z-index:999998; width:230px; max-width:calc(100vw - 16px);
           background:#15110E; border:1px solid #2E2620; border-radius:12px;
           padding:11px 13px; box-shadow:0 8px 28px rgba(0,0,0,0.6);
           font-family:Inter, sans-serif; color:#EDE0CC; pointer-events:none;
@@ -3494,6 +3497,10 @@ class MillesimeCard extends HTMLElement {
         .mm-bottle-panel .bp-label { font-size:7px; max-width:128px; margin:0 auto 9px; }
         .mm-bottle-panel .bp-photo { max-width:120px; margin:0 auto 9px; border-radius:8px; overflow:hidden; background:#15110d; }
         .mm-bottle-panel .bp-photo img { display:block; width:100%; max-height:150px; object-fit:contain; }
+        /* Grand écran (≥800px) : plus de largeur figée — l'aperçu se dimensionne à son contenu */
+        @media (min-width: 800px) {
+          .mm-bottle-panel { width:fit-content; max-width:min(40vw, 30rem); }
+        }
       `;
       document.head.appendChild(st);
     }
@@ -8033,7 +8040,7 @@ const MODAL_CSS = `
 .mm-box {
   background:var(--mm-bg1); border:1px solid var(--mm-border); border-top:none;
   border-radius:0 0 20px 20px;
-  width:100%; max-width:37em; overflow-x:hidden;   /* em : suit la police (≈520px à 14px, s'élargit sur grand écran) */
+  width:100%; max-width:520px; overflow-x:hidden;
   /* dvh = hauteur de vue dynamique : tient compte des barres mobiles (Safari iOS) */
   max-height:calc(100dvh - max(16px, env(safe-area-inset-top)) - env(safe-area-inset-bottom));
   display:flex; flex-direction:column;
@@ -8041,7 +8048,7 @@ const MODAL_CSS = `
   overflow:hidden;
 }
 /* Liste des bouteilles : occupe toute la largeur dispo (PC comme mobile) */
-.mm-box-wide { max-width:min(48.6em, 95vw); }
+.mm-box-wide { max-width:min(680px, 95vw); }
 /* ── Liste des bouteilles : arborescence Couleur → Région → Châteaux ── */
 .vlist { display:flex; flex-direction:column; }
 .vlist-color-head { display:flex; align-items:center; gap:10px; padding:11px 2px 7px; margin-top:6px;
@@ -8143,6 +8150,9 @@ const MODAL_CSS = `
   .mm-overlay .acc-hint, .mm-overlay .apo-hint, .mm-overlay .occ-hint { font-size:0.92em; line-height:1.45; }
   .mm-overlay .mm-hint { font-size:0.9em; line-height:1.45; }
   .mm-overlay .mm-photo-hint { font-size:0.9em; }
+  /* Plus de largeur figée sur grand écran : les modales se dimensionnent fluide (vw), plafond en rem */
+  .mm-box      { width:clamp(34rem, 60vw, 60rem); max-width:none; }
+  .mm-box-wide { width:min(90vw, 80rem); max-width:none; }
 }
 .apo-states { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .apo-state {
