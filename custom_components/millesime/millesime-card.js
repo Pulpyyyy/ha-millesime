@@ -909,6 +909,25 @@ const rackStyleOf = (i) => ({
 const normKey = (s) => String(s ?? "").trim().toLowerCase()
   .normalize("NFD").replace(/\p{Diacritic}/gu, "");
 
+// ── Silhouette d'une bouteille : fiche → région → type ──────────────────────
+// Rétabli : la refonte des profils v7.1.0 avait supprimé ces trois définitions,
+// d'où « shapeKindOf is not defined » au montage de la 3D (et TYPE_SHAPE manquant
+// dans BOTTLE_MINI). Déduction : forme explicite de la fiche, sinon région, sinon type.
+const TYPE_SHAPE = { red: "bordeaux", white: "bordeaux", rose: "rose", sparkling: "champagne", dessert: "loire" };
+const REGION_SHAPES = [
+  [/bourgogne|beaujolais|chablis|macon|mercurey|pommard|meursault|volnay|gevrey|nuits|beaune|rhone|chateauneuf|gigondas|vacqueyras|hermitage|cote.?rotie|cornas|crozes|saint.?joseph|condrieu/, "bourgogne"],
+  [/alsace|riesling|gewurz/, "flute"],
+  [/sauternes|barsac|monbazillac|loupiac|cadillac|sainte.?croix/, "bordeaux"],
+  [/champagne|cremant|prosecco|cava|bulle/, "champagne"],
+];
+const shapeKindOf = (wine) => {
+  if (wine?.shape && BOTTLE_PROFILES[wine.shape]) return wine.shape;   // choix explicite de la fiche
+  if ((wine?.type || "red") === "sparkling") return "champagne";       // verre épais obligatoire
+  const reg = normKey(wine?.region || "") + " " + normKey(wine?.appellation || "");
+  if (reg.trim()) for (const [re, kind] of REGION_SHAPES) if (re.test(reg)) return kind;
+  return TYPE_SHAPE[wine?.type || "red"] || "bordeaux";
+};
+
 let _bmUid = 0;
 const BOTTLE_MINI = (color, w = null, type = "red", flipped = false, size = null, shapeOverride = "") => {
   const sp = BOTTLE_SHAPES[(shapeOverride && BOTTLE_SHAPES[shapeOverride]) ? shapeOverride : (TYPE_SHAPE[type] || "bordeaux")];
