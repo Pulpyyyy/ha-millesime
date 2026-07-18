@@ -140,11 +140,96 @@ remove_bottle:
       required: true
 
 rename_cellar:
-  name: Renommer la cave
-  description: Change le nom de la cave.
+  name: Renommer une cave
+  description: Change le nom d'une cave (la première cave si cellar_id est omis).
   fields:
+    cellar_id:
+      description: ID de la cave (optionnel, première cave par défaut)
     name:
       description: Nouveau nom
+      required: true
+
+add_cellar:
+  name: Ajouter une cave
+  description: Crée une nouvelle cave vide dans l'instance.
+  fields:
+    name:
+      description: Nom de la cave
+      example: "Cave du garage"
+
+remove_cellar:
+  name: Supprimer une cave
+  description: Supprime une cave vide (refusé si elle contient des casiers ou si c'est la dernière).
+  fields:
+    cellar_id:
+      description: ID de la cave
+      required: true
+
+add_rack:
+  name: Ajouter un casier
+  description: Ajoute un casier dans une cave.
+  fields:
+    cellar_id:
+      description: ID de la cave (optionnel, première cave par défaut)
+    name:
+      description: Nom du casier
+      example: "Bordeaux"
+    columns:
+      description: Nombre de colonnes
+      example: 8
+    shelves:
+      description: Nombre d'étagères
+      example: 2
+    layout:
+      description: "Disposition : side_by_side, alternating, alternating_2d, quinconce, semi_lying ou stacked"
+      example: "side_by_side"
+    levels:
+      description: "Niveaux de superposition (2 à 4) — uniquement pour la disposition stacked"
+      example: 3
+    orientation:
+      description: "Sens de départ : punt (piqûre devant) ou neck (goulot devant)"
+
+update_rack:
+  name: Modifier un casier
+  description: Modifie un casier existant (recherché dans toutes les caves).
+  fields:
+    rack_id:
+      description: ID du casier
+      required: true
+    name:
+      description: Nouveau nom
+    columns:
+      description: Nombre de colonnes
+    shelves:
+      description: Nombre d'étagères
+    layout:
+      description: Disposition
+    levels:
+      description: "Niveaux de superposition (2 à 4, disposition stacked)"
+    orientation:
+      description: Sens de départ
+
+swap_slots:
+  name: Permuter deux emplacements
+  description: Échange atomiquement les positions de deux bouteilles (fonctionne cave pleine).
+  fields:
+    wine_id_a:
+      description: ID du premier vin
+      required: true
+    slot_idx_a:
+      description: Index de l'emplacement dans les slots du premier vin (défaut 0)
+    wine_id_b:
+      description: ID du second vin
+      required: true
+    slot_idx_b:
+      description: Index de l'emplacement dans les slots du second vin (défaut 0)
+
+remove_rack:
+  name: Supprimer un casier
+  description: Supprime un casier et retire ses bouteilles.
+  fields:
+    rack_id:
+      description: ID du casier
       required: true
 
 duplicate_bottle:
@@ -161,7 +246,7 @@ duplicate_bottle:
 
 value_snapshot:
   name: Enregistrer la valeur
-  description: Enregistre la valeur actuelle de la cave dans l'historique.
+  description: Enregistre la valeur actuelle de chaque cave dans son historique.
   fields: {}
 
 drink_bottle:
@@ -185,3 +270,28 @@ delete_tasting:
     tasting_id:
       description: ID de l'entrée du journal
       required: true
+
+refresh_wines:
+  name: Rafraîchir les fiches
+  description: >
+    Fusionne les doublons (même nom, millésime, type) puis complète les fiches
+    via Gemini. Ne complète que les champs vides, sauf options ci-dessous.
+  fields:
+    update_prices:
+      description: Écrase le prix existant par le prix moyen constaté par Gemini
+      example: false
+    tighten_apogee:
+      description: >
+        Recalcule la fenêtre d'apogée (drink_from/drink_until) des vins dont
+        l'écart dépasse 12 ans, si le nouveau résultat est lui-même raisonnable
+      example: false
+
+import_vinotag:
+  name: Importer un export Vinotag
+  description: >
+    Importe le fichier millesime_import_vinotag.csv déposé dans le dossier de
+    configuration ; placement automatique dans les emplacements libres de la
+    cave cible (un casier « Import » est créé si la capacité manque).
+  fields:
+    cellar_id:
+      description: ID de la cave cible (optionnel, première cave par défaut)
