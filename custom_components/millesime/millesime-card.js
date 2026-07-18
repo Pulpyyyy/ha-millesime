@@ -1565,9 +1565,9 @@ class MillesimeCard extends HTMLElement {
       const overlay = document.createElement("div");
       overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:100000;display:flex;align-items:center;justify-content:center";
       overlay.style.setProperty('--font-sans', this._fontSans || "'Inter', sans-serif");
-      overlay.style.setProperty('--fs-base',  this._liveFs());
+      overlay.style.setProperty('--fs-base',  this._fsModalCss || ((this._fsBase || 14) + 'px'));
       overlay.style.fontFamily = this._fontSans || "'Inter', sans-serif";
-      overlay.style.fontSize   = this._liveFs();
+      overlay.style.fontSize   = this._fsModalCss || ((this._fsBase || 14) + 'px');
       const box = document.createElement("div");
       box.style.cssText = "background:#111;border:1px solid #333;border-radius:14px;padding:22px 24px;max-width:360px;width:90%;color:#EDE0CC;font-size:1em;line-height:1.6;box-shadow:0 8px 32px rgba(0,0,0,0.6)";
       const p = document.createElement("p");
@@ -1651,17 +1651,6 @@ class MillesimeCard extends HTMLElement {
 
   // ── Modal ─────────────────────────────────────────────────────────────────────
 
-  // Taille de police RÉELLE de la carte à l'instant T, lue sur .card (qui suit sa
-  // largeur via cqi). Les popups vivent sur document.body (hors conteneur) : on y
-  // recopie cette valeur pour qu'elles suivent la carte, au lieu du clamp viewport
-  // (_fsModalCss) qui se bloquait à 21px sur grand écran. Repli sur _fsModalCss si
-  // la carte n'est pas encore mesurable.
-  _liveFs() {
-    const card = this.shadowRoot?.querySelector('.card');
-    const px = card ? parseFloat(getComputedStyle(card).fontSize) : 0;
-    return px ? `${px}px` : (this._fsModalCss || ((this._fsBase || 14) + 'px'));
-  }
-
   _openModal(type, opts = {}) {
     this._closeModal();
     // v7.0.1 : ouvrir une fiche de vin quitte la surbrillance en cours —
@@ -1684,9 +1673,9 @@ class MillesimeCard extends HTMLElement {
       .forEach(p => { if (themeVars[p]) overlay.style.setProperty(`--${p}`, themeVars[p]); });
     overlay.style.setProperty('--font-serif', this._fontSerif || "'Playfair Display', serif");
     overlay.style.setProperty('--font-sans',  this._fontSans  || "'Inter', sans-serif");
-    overlay.style.setProperty('--fs-base',    this._liveFs());
+    overlay.style.setProperty('--fs-base',    this._fsModalCss || ((this._fsBase || 14) + 'px'));
     overlay.style.fontFamily = this._fontSans || "'Inter', sans-serif";
-    overlay.style.fontSize   = this._liveFs();
+    overlay.style.fontSize   = this._fsModalCss || ((this._fsBase || 14) + 'px');
     const box = document.createElement("div");
     box.className = "mm-box" + ((type === "bottlelist" || type === "racklist") ? " mm-box-wide" : "");
 
@@ -3519,7 +3508,7 @@ class MillesimeCard extends HTMLElement {
     panel.className = "mm-bottle-panel";
     // Hors conteneur (document.body) → poser la base fluide comme les modales,
     // sinon le contenu en em retombe sur la police par défaut du body.
-    panel.style.fontSize = this._liveFs();
+    panel.style.fontSize = this._fsModalCss || ((this._fsBase || 14) + 'px');
     panel.innerHTML = `
       ${wine.image_url
         ? `<div class="bp-photo"><img src="${esc(wine.image_url)}" alt=""></div>`
@@ -4822,7 +4811,7 @@ class MillesimeCard extends HTMLElement {
     return new Promise((resolve) => {
       const overlay = document.createElement("div");
       overlay.style.cssText = "position:fixed;inset:0;z-index:100000;background:#000;display:flex;flex-direction:column;";
-      overlay.style.fontSize = this._liveFs();   // police dynamique (boutons en em)
+      overlay.style.fontSize = this._fsModalCss || ((this._fsBase || 14) + 'px');   // police dynamique (boutons en em)
       const video = document.createElement("video");
       video.autoplay = true; video.playsInline = true; video.muted = true;
       video.style.cssText = "flex:1;min-height:0;width:100%;object-fit:contain;background:#000;";
